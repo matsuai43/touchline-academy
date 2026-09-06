@@ -24,3 +24,10 @@ LICENSE追加（コードはMIT、players.png と favicon.svg は対象外で権
 　(4) WebMCP検証は未実施。
 調査メモ: アプリ内ブラウザでは選手ダイアログを閉じるとオーバーレイが残り操作不能になる事象を確認したが、
 　Playwright(Chrome)・視差軽減設定・バックグラウンドタブのいずれでも再現せず、当該ブラウザ固有の描画挙動と判断してコード変更はしていない。
+
+2026-09-06 追記: GitHubとCloudflare Pagesの自動連携をユーザーが設定完了。Git Provider=Yes。
+コミット8978d57からCloudflare側がビルドしたデプロイ 18e02c76 が本番に反映され、本番URLに対するブラウザテスト3件も合格。
+これにより当初要件（GitHub新規リポジトリ作成・連携・Cloudflare公開）はすべて充足。
+NODE_VERSIONの指定は不要だった（PagesのV3ビルドイメージ既定のNode22がpackage.jsonのengines>=22.13.0を満たすため）。
+6.2のlibuv assertionはWindowsローカル固有で、CloudflareのLinuxビルダーでは発生せず自動ビルドが成功することを確認。プロジェクト側の不具合ではない。
+残りは任意項目のみ: lint既存指摘33件、WebMCP未検証、モバイルのトースト重なり、長期プレイの人手QA。

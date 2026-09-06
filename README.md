@@ -19,7 +19,7 @@ Node.js 24以降、npmを使用。`npm ci` → `npm run build` → `npm start`�
 Cloudflare Pagesの公開対象は `dist/client` だけです。サーバー、Functions、DB、APIキーは不要です。
 
 ## 費用・保存
-公開は `npx wrangler pages deploy dist/client --project-name touchline-academy` の直接アップロードで行います。GitHubリポジトリとPagesの自動連携は未設定のため、更新時はビルドしてこのコマンドを実行してください。
+公開はGitHubの`main`へのpushでCloudflare Pagesが自動ビルド・デプロイします（ビルドコマンド `npm run build`、出力 `dist/client`）。手動で公開する場合は `npx wrangler pages deploy dist/client --project-name touchline-academy`。
 Cloudflare Pagesの静的配信とpages.devサブドメインを使用。独自ドメインを購入せず、有料契約や外部AI APIをゲーム内で使いません。
 静的リクエストは無料・無制限。Freeプランは500ビルド/月、20,000ファイル、1ファイル25MiBなどの条件があります（2026-09-06確認）。
 https://developers.cloudflare.com/pages/functions/pricing/

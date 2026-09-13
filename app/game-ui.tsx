@@ -11,6 +11,9 @@ import MatchCinema from './match-cinema';
 import { personalities } from '@/lib/development';
 import { formationSlots, detailInfo } from '@/lib/squad';
 import { SquadPanel, SquadProfile, SquadTeamToggle } from './squad-ui';
+import { LifeEventPanel } from './life-ui';
+import { AudioSettingsPanel } from './audio-ui';
+import { playScene, playSfx, primeAudio } from '@/lib/audio';
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -257,6 +260,9 @@ export default function Game() {
   };
   const dispatch = (a: Action) => {
     if (!stateRef.current) throw Error('準備中です');
+    // ユーザー操作（このディスパッチ）を起点に AudioContext を起動・再開する。
+    // 設定でBGM/SEがオフの間は無音のまま（lib/audio.ts 側でガード済み）。
+    primeAudio();
     const next = act(stateRef.current, a);
     persist(next);
     setNotice(
@@ -295,6 +301,23 @@ export default function Game() {
     setS(fresh);
     setWelcome(true);
   }, []);
+  const lastGoalLogRef = useRef<string | null>(null);
+  useEffect(() => {
+    // 場面に応じてBGMを切り替える。設定でBGMがオフの間は lib/audio.ts 側が
+    // 無音のまま場面だけを記憶するので、常に呼んでよい。
+    if (!s) return;
+    if (s.match) {
+      const latest = s.match.logs[0] ?? null;
+      if (latest && latest.includes('GOAL') && latest !== lastGoalLogRef.current) {
+        playSfx('goal');
+      }
+      lastGoalLogRef.current = latest;
+      playScene(s.match.done ? (s.match.won ? 'victory' : 'defeat') : 'match');
+    } else {
+      lastGoalLogRef.current = null;
+      playScene(s.pending ? 'prematch' : 'clubhouse');
+    }
+  }, [s]);
   useEffect(() => {
     if (!notice) return;
     const id = setTimeout(() => setNotice(''), 6500);
@@ -591,21 +614,32 @@ export default function Game() {
                     </div>
                     <button
                       className="secondary"
-                      onClick={() => run({ type: 'event', choice: 'team' })}
+                      onClick={() => {
+                        playSfx('click');
+                        run({ type: 'event', choice: 'team' });
+                      }}
                     >
                       全員で話し合う <small>連携＋7 / 士気＋8</small>
                     </button>
                     <button
                       className="secondary"
-                      onClick={() =>
-                        run({ type: 'event', choice: 'individual' })
-                      }
+                      onClick={() => {
+                        playSfx('click');
+                        run({ type: 'event', choice: 'individual' });
+                      }}
                     >
                       個別に指導する{' '}
                       <small>{focus?.name || '部員1人'}の全能力＋2</small>
                     </button>
                   </section>
                 )}
+                <LifeEventPanel
+                  state={s}
+                  onChoose={(choiceId) => {
+                    playSfx('click');
+                    run({ type: 'life', choiceId });
+                  }}
+                />
                 {s.pending ? (
                   <section className="fixture-banner">
                     <div className="fixture-icon">
@@ -627,7 +661,10 @@ export default function Game() {
                     </button>
                     <button
                       className="primary"
-                      onClick={() => run({ type: 'start' })}
+                      onClick={() => {
+                        playSfx('whistle');
+                        run({ type: 'start' });
+                      }}
                     >
                       試合へ進む <ArrowRight size={18} />
                     </button>
@@ -647,7 +684,7 @@ export default function Game() {
                       value={plan}
                       onValueChange={(v) => setPlan(v as Training)}
                       aria-label="練習メニュー"
-                      disabled={!!s.pending || !!s.event}
+                      disabled={!!s.pending || !!s.event || !!s.v3.life.current}
                     >
                       {(Object.keys(training) as Training[]).map((key) => {
                         const t = training[key],
@@ -684,8 +721,11 @@ export default function Game() {
                       </div>
                       <button
                         className="primary"
-                        disabled={!!s.pending || !!s.event}
-                        onClick={() => run({ type: 'train', training: plan })}
+                        disabled={!!s.pending || !!s.event || !!s.v3.life.current}
+                        onClick={() => {
+                          playSfx('click');
+                          run({ type: 'train', training: plan });
+                        }}
                       >
                         この練習で1週間進める <ArrowRight size={18} />
                       </button>
@@ -954,6 +994,9 @@ export default function Game() {
           <button
             className="primary"
             onClick={() => {
+              // ここがほぼ全ての新規プレイヤーにとって最初の操作になるため、
+              // ここで AudioContext を起動しておく（実際に音が鳴るのは設定でオンにしてから）。
+              primeAudio();
               persist(newGame(school));
               setWelcome(false);
             }}
@@ -1108,6 +1151,8 @@ export default function Game() {
           <p className="muted">
             ブラウザのデータ削除やプライベートモード終了でセーブが消えることがあります。定期的な書き出しをおすすめします。
           </p>
+          <h3>サウンド</h3>
+          <AudioSettingsPanel />
         </DialogContent>
       </Dialog>
       <AlertDialog
@@ -1290,6 +1335,7 @@ function MatchView({
         <button
           className="primary match-advance"
           onClick={() => {
+            playSfx('click');
             const next = run({ type: m.done ? 'finish' : 'segment' });
             if (next)
               requestAnimationFrame(() =>

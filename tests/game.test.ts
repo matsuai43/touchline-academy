@@ -2,9 +2,13 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {newGame,act,validateSave,overall,strength,autoLineup,slots,ROSTER_MIN,ROSTER_MAX,type State,type Training} from '../lib/game.ts';
 import {formationSlots,positionFitMult,basePos} from '../lib/squad.ts';
+import {getCurrentLifeEvent} from '../lib/school-life.ts';
 
 function play(s:State){s=act(s,{type:'start'});while(!s.match!.done)s=act(s,{type:'segment'});return act(s,{type:'finish'});}
-function step(s:State,t:Training='balance'){if(s.event)s=act(s,{type:'event',choice:'team'});s=act(s,{type:'train',training:t});if(s.pending)s=play(s);return s;}
+// 学校生活イベント（W3）が出ている週は、解決するまで 'train' が進められない。
+// テストは常に先頭の選択肢を選んで先へ進める。
+function resolveLife(s:State){const cur=getCurrentLifeEvent(s);if(!cur)return s;return act(s,{type:'life',choiceId:cur.event.choices[0].id});}
+function step(s:State,t:Training='balance'){if(s.event)s=act(s,{type:'event',choice:'team'});s=resolveLife(s);s=act(s,{type:'train',training:t});if(s.pending)s=play(s);return s;}
 void test('18 players, three balanced classes, unique starting eleven',()=>{const s=newGame('試験高校',42);assert.equal(s.players.length,18);assert.equal(new Set(s.lineup).size,11);for(const y of [1,2,3])assert.equal(s.players.filter(p=>p.year===y).length,6);assert.deepEqual(validateSave(JSON.parse(JSON.stringify(s))),s);});
 void test('training grows players; focused training grows faster; original stays immutable',()=>{const s=newGame('',42),id=s.players[0].id;const focused=act(s,{type:'focus',id});const a=act(s,{type:'train',training:'attack'}),b=act(focused,{type:'train',training:'attack'});assert.equal(s.week,0);assert.equal(a.week,1);const gain=a.players[0].stats.shoot-s.players[0].stats.shoot;assert.ok(gain>0);assert.ok(Math.abs((b.players[0].stats.shoot-s.players[0].stats.shoot)/gain-1.5)<.01);});
 void test('rest restores fatigue and training cannot skip pending fixtures',()=>{let s=newGame('',12);s.players.forEach(p=>p.fatigue=80);s=act(s,{type:'train',training:'rest'});assert.equal(s.players[0].fatigue,47);s.week=3;s=act(s,{type:'train',training:'balance'});assert.ok(s.pending);assert.throws(()=>act(s,{type:'train',training:'balance'}));});

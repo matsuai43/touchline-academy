@@ -29,6 +29,7 @@ import {
   type SquadAction,
   type DetailPos,
 } from './squad.ts';
+import { handleLife, maybeTriggerLifeEvent, type LifeAction } from './school-life.ts';
 export type Position = 'GK' | 'DF' | 'MF' | 'FW';
 export type Stat = 'shoot' | 'pass' | 'defend' | 'speed' | 'mental' | 'keep';
 export type Training =
@@ -506,6 +507,7 @@ function finishWeek(s: State) {
 export type Action =
   | DevelopmentAction
   | SquadAction
+  | LifeAction
   | { type: 'train'; training: Training }
   | { type: 'event'; choice: 'team' | 'individual' }
   | { type: 'formation'; formation: Formation }
@@ -523,8 +525,9 @@ export function act(old: State, a: Action): State {
   hydrateV3(s);
   if (handleDevelopment(s, a as DevelopmentAction)) return s;
   if (handleSquad(s, a as SquadAction)) return s;
+  if (handleLife(s, a)) return s;
   if (a.type === 'train') {
-    if (s.pending || s.match || s.event)
+    if (s.pending || s.match || s.event || s.v3.life.current)
       throw Error('試合または部内イベントを先に終えてください。');
     if (!(a.training in training)) throw Error('練習メニューが不正です。');
     const t = training[a.training];
@@ -589,6 +592,7 @@ export function act(old: State, a: Action): State {
           '主将からの提案',
           '雨の日のミーティング',
         ]);
+      if (!s.event) maybeTriggerLifeEvent(s);
     }
     return s;
   }

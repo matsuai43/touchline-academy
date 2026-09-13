@@ -8,6 +8,7 @@ import {
   type Training,
 } from '../lib/game.ts';
 import { commandFactors } from '../lib/development.ts';
+import { getCurrentLifeEvent } from '../lib/school-life.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 const start = () => {
@@ -16,8 +17,16 @@ const start = () => {
   s = act(s, { type: 'train', training: 'rest' });
   return act(s, { type: 'start' });
 };
+// 学校生活イベント（W3）が出ている週は、解決するまで 'train' が進められない。
+// テストは常に先頭の選択肢を選んで先へ進める。
+function resolveLife(s: State) {
+  const cur = getCurrentLifeEvent(s);
+  if (!cur) return s;
+  return act(s, { type: 'life', choiceId: cur.event.choices[0].id });
+}
 function next(s: State, t: Training = 'rest') {
   if (s.event) s = act(s, { type: 'event', choice: 'team' });
+  s = resolveLife(s);
   s = act(s, { type: 'train', training: t });
   if (s.pending) {
     s = act(s, { type: 'start' });

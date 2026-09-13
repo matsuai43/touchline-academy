@@ -5,3 +5,6 @@ TOUCHLINE ACADEMY / クレジット
 詳しい第三者ライセンス: /THIRD_PARTY_NOTICES.txt
 選手・校名・大会は架空。実在の人物、学校、企業、既存ゲームとの提携はありません。
 無料・広告なし・アカウント不要。保存はこの端末のブラウザ内のみ。
+
+v2.0 (2026-09-13): 18 player portraits and 4 manager portraits generated with built-in image_gen. No reference photographs or third-party game assets used.
+2D match highlights: original Canvas animation driven by the game's actual goal/save events. No licensed video footage or audio.

@@ -1,8 +1,8 @@
 適用範囲 / Scope
 このMITライセンスは本リポジトリのソースコード（.ts, .tsx, .css, .mjs, 設定ファイル, ドキュメント）に適用されます。
-本作のために制作したアートワーク（public/players.png, public/favicon.svg）はMITの対象外で、著作権を留保します。
+本作のために制作したアートワーク（public/players.png, public/character-atlas.png, public/character-extra.png, public/favicon.svg）はMITの対象外で、著作権を留保します。
 The MIT terms below cover the source code in this repository. The original artwork
-(public/players.png, public/favicon.svg) is excluded and all rights to it are reserved.
+(public/players.png, public/character-atlas.png, public/character-extra.png, public/favicon.svg) is excluded and all rights to it are reserved.
 第三者パッケージのライセンスは public/THIRD_PARTY_NOTICES.txt を参照してください。
 
 MIT License

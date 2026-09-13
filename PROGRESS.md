@@ -31,3 +31,5 @@ LICENSE追加（コードはMIT、players.png と favicon.svg は対象外で権
 NODE_VERSIONの指定は不要だった（PagesのV3ビルドイメージ既定のNode22がpackage.jsonのengines>=22.13.0を満たすため）。
 6.2のlibuv assertionはWindowsローカル固有で、CloudflareのLinuxビルダーでは発生せず自動ビルドが成功することを確認。プロジェクト側の不具合ではない。
 残りは任意項目のみ: lint既存指摘33件、WebMCP未検証、モバイルのトースト重なり、長期プレイの人手QA。
+
+2026-09-13 v2更新: 18選手と4マネージャーの画像、個性と声かけ成長、詳細采配、試合ハイライトCanvas、半年方針、スカウト・入学、スマホUIを実装。機能19テスト合格・ブラウザ6テスト合格・型チェック合格。目視QA済。既存GitHub HEADとローカル親コミットは一致。公開更新は最終チェック後に実行予定。設計とClaude引き継ぎはCLAUDE_HANDOFF.md。上限時中断条件を継続。

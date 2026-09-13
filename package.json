@@ -1,6 +1,6 @@
 {
   "name": "touchline-academy",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -11,7 +11,7 @@
     "start": "node scripts/serve.mjs",
     "lint": "oxlint",
     "format": "oxfmt",
-    "test": "node --experimental-strip-types --test tests/game.test.ts",
+    "test": "node --experimental-strip-types --test tests/game.test.ts tests/development.test.ts",
     "typecheck": "tsc --noEmit",
     "test:browser": "playwright test"
   },

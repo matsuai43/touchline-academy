@@ -16,6 +16,15 @@ import {
   type MatchDetails,
   type DevelopmentAction,
 } from './development.ts';
+import { hydrateV3, validateV3, type V3State } from './v3.ts';
+import {
+  skillMatchFactors,
+  playerFatigueMult,
+  grantMatchAchievements,
+  trainSquadSkills,
+  handleSquad,
+  type SquadAction,
+} from './squad.ts';
 export type Position = 'GK' | 'DF' | 'MF' | 'FW';
 export type Stat = 'shoot' | 'pass' | 'defend' | 'speed' | 'mental' | 'keep';
 export type Training =
@@ -71,6 +80,7 @@ export type Match = {
 };
 export type State = {
   development: Development;
+  v3: V3State;
   version: 1;
   seed: number;
   school: string;
@@ -316,6 +326,7 @@ export function newGame(
 ): State {
   const s: State = {
     development: null!,
+    v3: null!,
     version: 1,
     seed,
     school: school.trim().slice(0, 20) || '風見ヶ丘高校',
@@ -353,6 +364,7 @@ export function newGame(
     for (const pos of positions[y - 1]) s.players.push(makePlayer(s, y, pos));
   autoLineup(s);
   s.development = newDevelopment(s);
+  hydrateV3(s);
   return s;
 }
 export function dateLabel(s: State) {
@@ -433,6 +445,7 @@ function finishWeek(s: State) {
     s.morale = 75;
     applyIntake(s, fresh);
     autoLineup(s);
+    hydrateV3(s);
     log(
       s,
       `${grads.length}人が卒業。新入生${grads.length}人が入部しました。${s.season}年目の春です。`,
@@ -442,6 +455,7 @@ function finishWeek(s: State) {
 }
 export type Action =
   | DevelopmentAction
+  | SquadAction
   | { type: 'train'; training: Training }
   | { type: 'event'; choice: 'team' | 'individual' }
   | { type: 'formation'; formation: Formation }
@@ -456,7 +470,9 @@ export type Action =
   | { type: 'finish' };
 export function act(old: State, a: Action): State {
   const s = hydrateDevelopment(structuredClone(old));
+  hydrateV3(s);
   if (handleDevelopment(s, a as DevelopmentAction)) return s;
+  if (handleSquad(s, a as SquadAction)) return s;
   if (a.type === 'train') {
     if (s.pending || s.match || s.event)
       throw Error('試合または部内イベントを先に終えてください。');
@@ -491,6 +507,7 @@ export function act(old: State, a: Action): State {
     );
     s.morale = clamp(s.morale + (a.training === 'rest' ? 5 : -1));
     s.funds += 2;
+    trainSquadSkills(s, a.training);
     developmentWeek(s, a.training);
     log(
       s,
@@ -658,18 +675,21 @@ function simulateSegment(s: State) {
         : m.tactic === 'press'
           ? (stat('defend') + stat('speed')) / 2
           : rating;
+  const command = commandFactors(s);
+  const skillFx = skillMatchFactors(s);
   const ratio = clamp(
     (rating * 0.65 +
       tacticQuality * 0.35 +
       s.cohesion * 0.09 +
       (s.morale - 50) * 0.1) /
-      m.fixture.strength,
+      m.fixture.strength +
+      skillFx.ratioBonus +
+      (m.home < m.away ? skillFx.comebackBonus : 0),
     0.4,
     1.9,
   );
   const push =
     m.mentality === 'attack' ? 1.32 : m.mentality === 'safe' ? 0.75 : 1;
-  const command = commandFactors(s);
   m.details.highlights = [];
   const homeRate =
       0.29 *
@@ -677,11 +697,13 @@ function simulateSegment(s: State) {
       advantage *
       push *
       (m.tactic === 'press' ? 1.15 : 1) *
-      command.attack,
+      command.attack *
+      skillFx.attack,
     awayRate =
       (0.28 / ratio / advantage) *
       (m.mentality === 'attack' ? 1.3 : m.mentality === 'safe' ? 0.73 : 1) *
-      command.defense;
+      command.defense *
+      skillFx.defense;
   let goal = false;
   const events: [number, string][] = [];
   for (let i = 0; i < 3; i++) {
@@ -691,7 +713,8 @@ function simulateSegment(s: State) {
       if (rand(s) < rate * 1.9) {
         m.shots[side]++;
         const chance = clamp(
-          0.15 + rand(s) * 0.22 + (side === 0 ? (stat('shoot') - 55) / 500 : 0),
+          (0.15 + rand(s) * 0.22 + (side === 0 ? (stat('shoot') - 55) / 500 : 0)) *
+            (side === 0 ? skillFx.finish : skillFx.oppFinish),
           0.1,
           0.5,
         );
@@ -770,7 +793,8 @@ function simulateSegment(s: State) {
   for (const p of team)
     p.fatigue = clamp(
       p.fatigue +
-        (m.tactic === 'press' ? 8 : 5) +
+        (m.tactic === 'press' ? 8 : 5) *
+          playerFatigueMult(s, p.id) +
         (m.mentality === 'attack' ? 1 : 0) +
         command.fatigue +
         (m.details.commands.player === p.id &&
@@ -787,7 +811,14 @@ function simulateSegment(s: State) {
     if (m.home === m.away && m.fixture.kind !== 'friendly') {
       m.won =
         rand(s) <
-        clamp(0.5 + (stat('mental') - m.fixture.strength) / 180, 0.25, 0.75);
+        clamp(
+          0.5 +
+            (stat('mental') - m.fixture.strength) / 180 +
+            (skillFx.pkMult - 1) +
+            (1 - skillFx.pkStopMult),
+          0.25,
+          0.75,
+        );
       m.penalties = m.won ? '5 - 4' : '4 - 5';
       m.logs.unshift(
         `PK戦 ${m.penalties}。${m.won ? '勝利！' : '惜しくも敗退。'}`,
@@ -847,6 +878,7 @@ function simulateSegment(s: State) {
       s,
       `${m.fixture.label}：${s.school} ${m.home} - ${m.away} ${m.fixture.opponent}${m.penalties ? '（PK ' + m.penalties + '）' : ''}`,
     );
+    grantMatchAchievements(s);
   }
 }
 export function validateSave(x: unknown): State {
@@ -976,5 +1008,7 @@ export function validateSave(x: unknown): State {
     )
       throw Error('試合データが不正です。');
   }
-  return validateDevelopment(hydrateDevelopment(structuredClone(s)));
+  const hydrated = hydrateDevelopment(structuredClone(s));
+  hydrateV3(hydrated);
+  return validateV3(validateDevelopment(hydrated));
 }

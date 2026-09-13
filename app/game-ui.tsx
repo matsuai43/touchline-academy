@@ -9,6 +9,7 @@ import {
 } from './development-ui';
 import MatchCinema from './match-cinema';
 import { personalities } from '@/lib/development';
+import { SquadPanel, SquadProfile, SquadTeamToggle } from './squad-ui';
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -48,14 +49,6 @@ import {
 } from '@/components/ui/alert-dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Progress } from '@/components/ui/progress';
-import {
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-} from '@/components/ui/table';
 import {
   act,
   newGame,
@@ -241,8 +234,7 @@ export default function Game() {
     [welcome, setWelcome] = useState(false),
     [school, setSchool] = useState('風見ヶ丘高校'),
     [reset, setReset] = useState(false),
-    [pendingImport, setPendingImport] = useState<State | null>(null),
-    [filter, setFilter] = useState('all');
+    [pendingImport, setPendingImport] = useState<State | null>(null);
   const stateRef = useRef<State | null>(null),
     fileRef = useRef<HTMLInputElement>(null),
     actionRef = useRef<(a: Action) => State>(() => {
@@ -789,100 +781,7 @@ export default function Game() {
                       </button>
                     </div>
                   </section>
-                  <section className="panel roster-panel">
-                    <div className="section-head">
-                      <div>
-                        <span className="eyebrow">SQUAD LIST</span>
-                        <h2>
-                          部員一覧 <span className="muted">18名</span>
-                        </h2>
-                      </div>
-                      <span className="muted">重点育成は成長1.5倍</span>
-                    </div>
-                    <Choices
-                      label="学年で絞り込み"
-                      value={filter}
-                      onChange={setFilter}
-                      items={[
-                        { value: 'all', label: '全員' },
-                        ...['1', '2', '3'].map((v) => ({
-                          value: v,
-                          label: v + '年',
-                        })),
-                      ]}
-                    />
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>選手 / 学年</TableHead>
-                          <TableHead>適性</TableHead>
-                          <TableHead>総合</TableHead>
-                          <TableHead>疲労</TableHead>
-                          <TableHead>起用</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {s.players
-                          .filter((p) => filter === 'all' || p.year === +filter)
-                          .sort((a, b) => overall(b) - overall(a))
-                          .map((p) => (
-                            <TableRow key={p.id}>
-                              <TableCell>
-                                <button
-                                  className="player-link"
-                                  onClick={() => setSelected(p.id)}
-                                >
-                                  <Portrait
-                                    index={p.identity.portrait}
-                                    name={p.name}
-                                    size="tiny"
-                                  />
-                                  <span className="roster-name">
-                                    {p.name}
-                                    {s.focus === p.id && (
-                                      <span className="focus-dot">★</span>
-                                    )}
-                                    <small>
-                                      {p.year}年 /{' '}
-                                      {p.injury
-                                        ? `調整 ${p.injury}週`
-                                        : personalities[p.identity.personality]
-                                            .name}
-                                    </small>
-                                  </span>
-                                </button>
-                              </TableCell>
-                              <TableCell>
-                                <span className={`position pos-${p.pos}`}>
-                                  {p.pos}
-                                </span>
-                              </TableCell>
-                              <TableCell>
-                                <b className="overall">{overall(p)}</b>
-                              </TableCell>
-                              <TableCell>
-                                <span
-                                  className={
-                                    p.fatigue > 65 ? 'danger-text' : ''
-                                  }
-                                >
-                                  {Math.round(p.fatigue)}
-                                </span>
-                              </TableCell>
-                              <TableCell>
-                                <span
-                                  className={
-                                    s.lineup.includes(p.id) ? 'lime' : 'muted'
-                                  }
-                                >
-                                  {s.lineup.includes(p.id) ? '先発' : '控え'}
-                                </span>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                      </TableBody>
-                    </Table>
-                  </section>
+                  <SquadPanel s={s} run={run} onSelect={setSelected} />
                 </div>
               </TabsContent>
               <TabsContent value="season">
@@ -1100,20 +999,32 @@ export default function Game() {
                   <Meter key={k} label={stats[k]} value={player.stats[k]} />
                 ))}
               </div>
+              {s.v3.squad.players[player.id] && (
+                <SquadProfile ps={s.v3.squad.players[player.id]} />
+              )}
               {!s.match && (
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    run({
-                      type: 'focus',
-                      id: s.focus === player.id ? null : player.id,
-                    })
-                  }
-                >
-                  {s.focus === player.id
-                    ? '★ 重点育成を解除'
-                    : '重点育成に指定する / 成長1.5倍'}
-                </button>
+                <div className="profile-actions">
+                  <button
+                    className="secondary"
+                    onClick={() =>
+                      run({
+                        type: 'focus',
+                        id: s.focus === player.id ? null : player.id,
+                      })
+                    }
+                  >
+                    {s.focus === player.id
+                      ? '★ 重点育成を解除'
+                      : '重点育成に指定する / 成長1.5倍'}
+                  </button>
+                  {s.v3.squad.players[player.id] && (
+                    <SquadTeamToggle
+                      p={player}
+                      ps={s.v3.squad.players[player.id]}
+                      run={run}
+                    />
+                  )}
+                </div>
               )}
               <h3>
                 {s.match ? '交代する先発選手を選ぶ' : '先発の起用先を選ぶ'}

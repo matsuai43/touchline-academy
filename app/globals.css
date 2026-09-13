@@ -3131,3 +3131,153 @@ footer button {
     scroll-margin-top: 115px;
   }
 }
+
+/* --- W1: 詳細ポジション・アーキタイプ・特殊能力・A/Bチーム --- */
+.squad-panel .squad-group + .squad-group {
+  margin-top: 22px;
+}
+.squad-group-title {
+  font-size: 14px;
+  color: #c7d6d0;
+  margin: 14px 0 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.squad-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin: 10px 0 4px;
+}
+.squad-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip-filter {
+  border: 1px solid var(--border);
+  background: #182226;
+  color: #9eb0b8;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  min-height: 30px;
+}
+.chip-filter.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: #223225;
+}
+.squad-sort {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #9eb0b8;
+  margin-left: auto;
+}
+.squad-sort select {
+  background: #182226;
+  color: #e0e8e7;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.detail-badge {
+  letter-spacing: 0.02em;
+}
+.archetype-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 7px;
+  background: #232338;
+  color: #b6b6ec;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.team-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #253941;
+  color: #9ecada;
+}
+.team-badge.team-A {
+  background: #2c3d22;
+  color: #c6f16a;
+}
+.team-badge.team-B {
+  background: #3a2f22;
+  color: #e6b975;
+}
+.skill-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 260px;
+}
+.skill-chip {
+  font-size: 10.5px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #1f3327;
+  color: #a9e08a;
+  border: 1px solid rgba(198, 241, 106, 0.25);
+  white-space: nowrap;
+}
+.skill-chip.negative {
+  background: #3a2226;
+  color: #e8a3a3;
+  border-color: rgba(232, 163, 163, 0.3);
+}
+.skill-empty {
+  font-size: 12px;
+}
+.squad-profile {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin: 6px 0 10px;
+  background: #131c20;
+}
+.squad-profile-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.squad-skills {
+  margin-top: 10px;
+}
+.squad-skills h4 {
+  font-size: 13px;
+  color: #c7d6d0;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+@media (max-width: 480px) {
+  .squad-sort {
+    margin-left: 0;
+    width: 100%;
+  }
+  .skill-chips {
+    max-width: 100%;
+  }
+  .chip-filter {
+    min-height: 34px;
+  }
+}

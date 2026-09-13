@@ -33,3 +33,18 @@ NODE_VERSIONの指定は不要だった（PagesのV3ビルドイメージ既定�
 残りは任意項目のみ: lint既存指摘33件、WebMCP未検証、モバイルのトースト重なり、長期プレイの人手QA。
 
 2026-09-13 v2更新: 18選手と4マネージャーの画像、個性と声かけ成長、詳細采配、試合ハイライトCanvas、半年方針、スカウト・入学、スマホUIを実装。機能19テスト合格・ブラウザ6テスト合格・型チェック合格。目視QA済。既存GitHub HEADとローカル親コミットは一致。公開更新は最終チェック後に実行予定。設計とClaude引き継ぎはCLAUDE_HANDOFF.md。上限時中断条件を継続。
+
+2026-09-13 Claude検証: v2はコミットbace38cからCloudflareがビルドし、デプロイc2530d80として本番反映済み。
+「公開更新は最終チェック後に実行予定」は解消済み。本番URLに対しドメイン19件・ブラウザ6件合格、型チェック合格。
+character-atlas.png / character-extra.png の配信も確認。目視QAで6要望すべての実装を確認（個性のある顔と性格、
+詳細采配＋声かけ成長、Canvasハイライト、半年方針、5経歴のスカウト、マネージャー、スマホUI）。
+lint: 41→29件。tests/game.test.tsのfloating promise10件をdevelopment.test.tsと同じvoid testへ統一し、
+JSXのアポストロフィ2件をエスケープ。残29件は着手しない判断で、内訳は以下のとおり。
+ - components/ui 18件: shadcn由来の未改変ファイル。
+ - prefer-tag-over-role 5件: canvasへのrole=imgやrole=statusは適切なARIA実装で、ルール側の誤検出。
+ - label-has-associated-control 2件: <label>が独自RadioGroupItemを包む正しい書き方をlinterが追えないだけ。
+ - react-compiler 3件（EffectSetState×2, Refs×1）: 動作中のパターンで、稼働中の本番を触る利は無いと判断。
+ - no-html-link-for-pages 1件: ロゴの / リンクは静的単一ページのため意図どおり。
+既知の軽微事項: モバイルのスカウト画面は候補18人で約9000px（経歴フィルタで緩和）。
+character-atlas.pngのタイル境界に赤黄のフリンジがあるが、スプライト表示域外のため実画面には出ない。
+

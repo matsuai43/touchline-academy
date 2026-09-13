@@ -714,7 +714,7 @@ export default function Game() {
                       <ClipboardList />
                     </span>
                     <div>
-                      <span className="eyebrow">COACH'S NOTE</span>
+                      <span className="eyebrow">COACH&apos;S NOTE</span>
                       <p>{coachTip}</p>
                     </div>
                   </section>
@@ -1411,7 +1411,7 @@ function MatchView({
           </div>
         </section>
         <section className="panel command-panel" id="match-tactics">
-          <span className="eyebrow">MANAGER'S DECISION</span>
+          <span className="eyebrow">MANAGER&apos;S DECISION</span>
           <h2>
             {m.done
               ? '試合終了'

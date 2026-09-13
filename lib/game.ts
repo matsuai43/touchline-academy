@@ -23,7 +23,11 @@ import {
   grantMatchAchievements,
   trainSquadSkills,
   handleSquad,
+  formationSlots,
+  positionFitMult,
+  basePos,
   type SquadAction,
+  type DetailPos,
 } from './squad.ts';
 export type Position = 'GK' | 'DF' | 'MF' | 'FW';
 export type Stat = 'shoot' | 'pass' | 'defend' | 'speed' | 'mental' | 'keep';
@@ -239,6 +243,31 @@ const rivals = [
 ];
 export const clamp = (n: number, min = 0, max = 100) =>
   Math.min(max, Math.max(min, n));
+// 部員数の上限・下限。11人（先発フル）を割らず、30人（サッカーの部としての現実的な上限）を超えない。
+export const ROSTER_MIN = 11;
+export const ROSTER_MAX = 30;
+// 新入生の学年内ポジション構成（初期3学年18人と同じ比率: GK2:DF6:MF6:FW4）。
+// 卒業で空いた枠を超えて部員を増やすときの「純増分」はここから重み付きで選ぶ。
+const INTAKE_POS_POOL: Position[] = [
+  'GK',
+  'DF',
+  'DF',
+  'MF',
+  'MF',
+  'FW',
+  'DF',
+  'DF',
+  'MF',
+  'MF',
+  'FW',
+  'FW',
+  'GK',
+  'DF',
+  'DF',
+  'MF',
+  'MF',
+  'FW',
+];
 function rand(s: State) {
   s.seed = (Math.imul(s.seed, 1664525) + 1013904223) >>> 0;
   return s.seed / 4294967296;
@@ -258,29 +287,34 @@ export function overall(p: Player) {
   };
   return Math.round(weights[p.pos].reduce((a, k) => a + p.stats[k], 0) / 3);
 }
+// 旧来の粗い4分類。フォーメーションのスロットは formationSlots() が返す DetailPos が
+// 正であり、slots() はそこから basePos() で丸めた互換ビュー（並び順は完全に一致する）。
 export function slots(f: Formation): Position[] {
-  return [
-    'GK',
-    ...Array(+f[0]).fill('DF'),
-    ...Array(+f[2]).fill('MF'),
-    ...Array(+f[4]).fill('FW'),
-  ];
+  return formationSlots(f).map(basePos);
 }
 export function roster(s: State) {
   return s.lineup.map((id) => s.players.find((p) => p.id === id)!);
 }
 export function strength(s: State) {
+  const dslots = formationSlots(s.formation);
   return Math.round(
-    roster(s).reduce((a, p, i) => a + effective(p, slots(s.formation)[i]), 0) /
-      11,
+    roster(s).reduce((a, p, i) => a + effective(s, p, dslots[i]), 0) / 11,
   );
 }
-function effective(p: Player, slot: Position) {
+// スロットが要求する詳細ポジションへの適性で総合力を減衰させる。
+// 完全一致=1.0、同じ basePos 内の別ポジション=0.92 程度、basePos をまたぐ場合は
+// 現行どおり重いペナルティ（GK とフィールドプレイヤーの相互起用が最も重い）。
+function effective(s: State, p: Player, slot: DetailPos) {
+  const ps = s.v3?.squad?.players[p.id];
+  const fit = ps
+    ? positionFitMult(ps.detail, slot)
+    : p.pos === basePos(slot)
+      ? 1
+      : p.pos === 'GK' || basePos(slot) === 'GK'
+        ? 0.48
+        : 0.8;
   return (
-    overall(p) *
-    (p.pos === slot ? 1 : p.pos === 'GK' || slot === 'GK' ? 0.48 : 0.8) *
-    (1 - p.fatigue * 0.004) *
-    (p.injury ? 0.5 : 1)
+    overall(p) * fit * (1 - p.fatigue * 0.004) * (p.injury ? 0.5 : 1)
   );
 }
 function makePlayer(s: State, year: number, pos: Position): Player {
@@ -315,8 +349,8 @@ function makePlayer(s: State, year: number, pos: Position): Player {
 }
 export function autoLineup(s: State) {
   const left = [...s.players];
-  s.lineup = slots(s.formation).map((slot) => {
-    left.sort((a, b) => effective(b, slot) - effective(a, slot));
+  s.lineup = formationSlots(s.formation).map((slot) => {
+    left.sort((a, b) => effective(s, b, slot) - effective(s, a, slot));
     return left.shift()!.id;
   });
 }
@@ -362,9 +396,9 @@ export function newGame(
   ];
   for (let y = 1; y <= 3; y++)
     for (const pos of positions[y - 1]) s.players.push(makePlayer(s, y, pos));
+  hydrateV3(s);
   autoLineup(s);
   s.development = newDevelopment(s);
-  hydrateV3(s);
   return s;
 }
 export function dateLabel(s: State) {
@@ -411,6 +445,15 @@ export function calendar(
     return { kind: 'friendly', round: 0, label: '練習試合' };
   return null;
 }
+// 新入生の人数。学校評判と施設で 6〜12人の目安に決まり、部員が上限30人を超えないよう
+// クランプする（下限も ROSTER_MIN を割らないように補う）。
+function intakeSize(s: State, remaining: number): number {
+  const base = 6 + Math.round(s.reputation / 17) + (s.facilities - 1);
+  const n = clamp(Math.round(base + rand(s) * 4 - 1), 6, 12);
+  const floor = Math.max(0, ROSTER_MIN - remaining);
+  const ceil = Math.max(0, ROSTER_MAX - remaining);
+  return Math.min(Math.max(n, floor), ceil);
+}
 function finishWeek(s: State) {
   s.week++;
   if (s.week === 48) {
@@ -429,7 +472,14 @@ function finishWeek(s: State) {
       p.fatigue = 0;
       p.injury = 0;
     });
-    const fresh = grads.map((p) => makePlayer(s, 1, p.pos));
+    // 卒業した枠は同じポジションで補充し、評判・施設で伸びた分は幅広いポジションで純増させる。
+    const n = intakeSize(s, s.players.length);
+    const gradPos = grads.map((p) => p.pos);
+    const fresh: Player[] = [];
+    for (let i = 0; i < n; i++)
+      fresh.push(
+        makePlayer(s, 1, i < gradPos.length ? gradPos[i] : pick(s, INTAKE_POS_POOL)),
+      );
     s.players.push(...fresh);
     s.week = 0;
     s.season++;
@@ -444,11 +494,11 @@ function finishWeek(s: State) {
     s.funds += 25;
     s.morale = 75;
     applyIntake(s, fresh);
-    autoLineup(s);
     hydrateV3(s);
+    autoLineup(s);
     log(
       s,
-      `${grads.length}人が卒業。新入生${grads.length}人が入部しました。${s.season}年目の春です。`,
+      `${grads.length}人が卒業。新入生${fresh.length}人が入部しました。部員は${s.players.length}人です。${s.season}年目の春です。`,
     );
   }
   syncHalf(s);
@@ -896,7 +946,8 @@ export function validateSave(x: unknown): State {
     !num(s.week, 0, 47) ||
     !Number.isInteger(s.week) ||
     !Array.isArray(s.players) ||
-    s.players.length !== 18 ||
+    s.players.length < ROSTER_MIN ||
+    s.players.length > ROSTER_MAX ||
     !['4-3-3', '4-4-2', '3-4-3'].includes(s.formation)
   )
     throw Error('このセーブは対応していないか、壊れています。');
@@ -921,7 +972,7 @@ export function validateSave(x: unknown): State {
   }
   const ids = s.players.map((p) => p.id);
   if (
-    new Set(ids).size !== 18 ||
+    new Set(ids).size !== s.players.length ||
     !Array.isArray(s.lineup) ||
     s.lineup.length !== 11 ||
     new Set(s.lineup).size !== 11 ||

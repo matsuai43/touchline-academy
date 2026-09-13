@@ -2,6 +2,8 @@ import {
   newGame,
   act,
   validateSave,
+  ROSTER_MIN,
+  ROSTER_MAX,
   type State,
   type Training,
 } from '../lib/game.ts';
@@ -112,7 +114,7 @@ void test('scouts enforce reputation, information, weekly budgets, offers and sp
   assert.equal(recruit.year, 1);
   assert.equal(recruit.pos, c.pos);
   assert.equal(recruit.identity.portrait, c.portrait);
-  assert.equal(s.players.length, 18);
+  assert.ok(s.players.length >= ROSTER_MIN && s.players.length <= ROSTER_MAX);
   assert.equal(s.development.intake.length, 1);
   assert.ok(!s.development.candidates.some((p) => p.promised));
   validateSave(s);

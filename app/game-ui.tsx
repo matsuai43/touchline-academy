@@ -9,6 +9,7 @@ import {
 } from './development-ui';
 import MatchCinema from './match-cinema';
 import { personalities } from '@/lib/development';
+import { formationSlots, detailInfo } from '@/lib/squad';
 import { SquadPanel, SquadProfile, SquadTeamToggle } from './squad-ui';
 
 import { useEffect, useRef, useState } from 'react';
@@ -165,6 +166,7 @@ function Pitch({
   onPick?: (p: Player) => void;
   live?: boolean;
 }) {
+  const detailSlots = formationSlots(s.formation);
   const positions = slots(s.formation);
   const team = roster(s);
   return (
@@ -188,13 +190,16 @@ function Pitch({
           order = positions.slice(0, i).filter((x) => x === pos).length,
           x = ((order + 1) / (members + 1)) * 100,
           y = pos === 'GK' ? 86 : pos === 'DF' ? 65 : pos === 'MF' ? 42 : 19;
+        const slotDetail = detailSlots[i],
+          slotName = detailInfo[slotDetail].name;
         return (
           <button
             className={`pitch-player ${p.pos !== pos ? 'mismatch' : ''} ${p.injury ? 'injured' : ''}`}
             key={p.id}
             style={{ left: `${x}%`, top: `${y}%` }}
             onClick={() => onPick?.(p)}
-            aria-label={`${p.name} ${pos} 総合${overall(p)} 疲労${Math.round(p.fatigue)}`}
+            title={`起用先：${slotName}（${slotDetail}）`}
+            aria-label={`${p.name} ${slotName} 総合${overall(p)} 疲労${Math.round(p.fatigue)}`}
           >
             <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
             <span className="number">{i + 1}</span>
@@ -402,7 +407,7 @@ export default function Game() {
     );
   const focus = s.players.find((p) => p.id === s.focus),
     player = s.players.find((p) => p.id === selected),
-    fatigue = s.players.reduce((a, p) => a + p.fatigue, 0) / 18;
+    fatigue = s.players.reduce((a, p) => a + p.fatigue, 0) / s.players.length;
   const nextFixture = Array.from({ length: 48 - s.week }, (_, i) => ({
     week: s.week + i,
     f: calendar(s.week + i, s),
@@ -537,7 +542,7 @@ export default function Game() {
                         <span>
                           <Flag size={16} /> {s.best}
                         </span>
-                        <span>部員 18名</span>
+                        <span>部員 {s.players.length}名</span>
                       </div>
                     </div>
                   </section>
@@ -758,7 +763,8 @@ export default function Game() {
                     />
                     <Pitch s={s} onPick={(p) => setSelected(p.id)} />
                     <p className="muted instruction">
-                      選手を押すと能力と起用先を変更できます。適性外の配置は総合力が下がります。黄色の輪は適性外です。
+                      選手を押すと能力と起用先を変更できます。起用先は詳細ポジション（例:
+                      CB・DM・CFなど）で決まり、同じ系統内なら低下はわずか、系統をまたぐ配置は総合力が大きく下がります。黄色の輪はGK/DF/MF/FWの系統をまたぐ適性外です。
                     </p>
                     <div className="facility">
                       <div>
@@ -1048,7 +1054,7 @@ export default function Game() {
                     }}
                   >
                     <b>
-                      {slots(s.formation)[i]} {i + 1}
+                      {detailInfo[formationSlots(s.formation)[i]].name} {i + 1}
                     </b>
                     <span>{p.name.split(' ')[0]}</span>
                   </button>
@@ -1146,7 +1152,7 @@ export default function Game() {
         <DialogContent className="game-dialog help-dialog">
           <DialogTitle>監督の手引き</DialogTitle>
           <DialogDescription>
-            18人の部員を育て、世代をつなぐ高校サッカー部シミュレーション。
+            最大30人の部員を育て、世代をつなぐ高校サッカー部シミュレーション。
           </DialogDescription>
           <div className="help-copy">
             <h3>練習と育成</h3>
@@ -1155,7 +1161,7 @@ export default function Game() {
             </p>
             <h3>編成と試合</h3>
             <p>
-              選手を押して先発の起用先を選びます。GK・DF・MF・FWの適性を合わせましょう。試合は15分ごとに進行。ポゼッションはカウンターに、カウンターはハイプレスに、ハイプレスはポゼッションに有利です。選手の能力や疲労、運も結果に影響します。
+              選手を押して先発の起用先を選びます。起用先は「左サイドバック」「ボランチ」のような詳細ポジションで決まり、近いポジションなら影響は小さく、GK・DF・MF・FWの系統をまたぐと総合力が大きく下がります。試合は15分ごとに進行。ポゼッションはカウンターに、カウンターはハイプレスに、ハイプレスはポゼッションに有利です。選手の能力や疲労、運も結果に影響します。
             </p>
             <p>
               攻撃重視は得点と失点が増え、守備重視は両方が減ります。交代はベンチの選手を選んで3人まで。大会の同点はPK戦です。試合後は元の先発編成に戻ります。

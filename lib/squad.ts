@@ -1,4 +1,4 @@
-import type { State, Player, Position, Stat, Training } from './game.ts';
+import type { State, Player, Position, Stat, Training, Formation } from './game.ts';
 import { clamp } from './game.ts';
 
 // ---------------------------------------------------------------------------
@@ -39,6 +39,30 @@ const detailByBase: Record<Position, DetailPos[]> = {
   MF: ['DM', 'CM', 'CM', 'AM'],
   FW: ['CF', 'LWG', 'RWG'],
 };
+
+// ---------------------------------------------------------------------------
+// フォーメーションの詳細ポジションスロット
+// ---------------------------------------------------------------------------
+// 各フォーメーションの11枠が要求する詳細ポジション。並び順は GK → DF → MF → FW で、
+// basePos() に通したときに旧来の slots()（GK/DF/MF/FWの粗い並び）と完全に一致する。
+export const FORMATION_SLOTS: Record<Formation, DetailPos[]> = {
+  '4-3-3': ['GK', 'LSB', 'CB', 'CB', 'RSB', 'DM', 'CM', 'AM', 'LWG', 'CF', 'RWG'],
+  '4-4-2': ['GK', 'LSB', 'CB', 'CB', 'RSB', 'DM', 'CM', 'CM', 'AM', 'CF', 'CF'],
+  '3-4-3': ['GK', 'LSB', 'CB', 'RSB', 'DM', 'CM', 'CM', 'AM', 'LWG', 'CF', 'RWG'],
+};
+export function formationSlots(f: Formation): DetailPos[] {
+  return FORMATION_SLOTS[f];
+}
+// 適性ペナルティの段階: 完全一致=1.0、同じ basePos 内=0.92、
+// GK とフィールドプレイヤーの相互起用=0.48、それ以外の basePos またぎ=0.8。
+export function positionFitMult(playerDetail: DetailPos, slot: DetailPos): number {
+  if (playerDetail === slot) return 1;
+  const pb = basePos(playerDetail),
+    sb = basePos(slot);
+  if (pb === sb) return 0.92;
+  if (pb === 'GK' || sb === 'GK') return 0.48;
+  return 0.8;
+}
 
 // ---------------------------------------------------------------------------
 // 追加能力（突破・持久・パワー）

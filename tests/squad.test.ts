@@ -18,6 +18,9 @@ import {
   grantMatchAchievements,
   skillMatchFactors,
   trainSquadSkills,
+  formationSlots,
+  positionFitMult,
+  type DetailPos,
 } from '../lib/squad.ts';
 
 function step(s: State, t: Training = 'balance') {
@@ -213,9 +216,39 @@ void test('match achievements (hat-trick) can grant a skill through grantMatchAc
   assert.ok(granted > 0, 'hat-trick achievements should grant a skill in at least some of the trials');
 });
 
+void test('each formation exposes 11 DetailPos slots whose basePos matches the legacy 4/4/2-style Position layout', () => {
+  for (const f of ['4-3-3', '4-4-2', '3-4-3'] as const) {
+    const ds = formationSlots(f);
+    assert.equal(ds.length, 11);
+    assert.ok(ds.every((d) => (DETAIL_POS as readonly string[]).includes(d)));
+    assert.equal(ds.filter((d) => basePos(d) === 'GK').length, 1);
+    assert.equal(ds.filter((d) => basePos(d) === 'DF').length, +f[0]);
+    assert.equal(ds.filter((d) => basePos(d) === 'MF').length, +f[2]);
+    assert.equal(ds.filter((d) => basePos(d) === 'FW').length, +f[4]);
+  }
+});
+
+void test('positionFitMult is staged: exact match beats a same-basePos mismatch, which beats crossing basePos, and GK crossovers are penalized most', () => {
+  const cases: [DetailPos, DetailPos][] = [
+    ['CB', 'LSB'],
+    ['CM', 'DM'],
+    ['LWG', 'RWG'],
+  ];
+  for (const [a, b] of cases) {
+    assert.equal(positionFitMult(a, a), 1);
+    const sameBase = positionFitMult(a, b);
+    assert.ok(sameBase < 1 && sameBase >= 0.9, `${a}->${b} should be a mild penalty, got ${sameBase}`);
+    const crossBase = positionFitMult('CB', 'CM');
+    assert.ok(crossBase < sameBase, 'crossing basePos should be penalized more than staying within it');
+    const gkCross = positionFitMult('GK', 'CB');
+    assert.ok(gkCross < crossBase, 'GK<->outfield should be the heaviest penalty');
+  }
+});
+
 void test('10 seasons of play keep squad data valid, capped at 99, and A team never exceeds 20', () => {
   let s = newGame('通し高校', 303);
   let actions = 0;
+  let sawGrowth = false;
   while (s.season <= 10) {
     const f = s.players.reduce((a, p) => a + p.fatigue, 0) / s.players.length;
     s = step(s, f > 35 ? 'rest' : s.week % 3 === 0 ? 'possession' : 'attack');
@@ -225,9 +258,14 @@ void test('10 seasons of play keep squad data valid, capped at 99, and A team ne
       assert.ok(ps.dribble <= 99 && ps.stamina <= 99 && ps.power <= 99);
       assert.ok(ps.skills.length <= 5 && ps.negatives.length <= 2);
     }
+    assert.equal(Object.keys(s.v3.squad.players).length, s.players.length);
+    if (s.players.length > 18) sawGrowth = true;
     const aCount = Object.values(s.v3.squad.players).filter((p) => p.team === 'A').length;
+    const bCount = Object.values(s.v3.squad.players).filter((p) => p.team === 'B').length;
     assert.ok(aCount <= 20);
+    assert.equal(aCount + bCount, s.players.length);
     actions++;
     assert.ok(actions < 600);
   }
+  assert.ok(sawGrowth, 'roster should grow past the initial 18 at some point over 10 seasons');
 });

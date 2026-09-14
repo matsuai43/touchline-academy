@@ -84,3 +84,9 @@ lib/game.tsへの変更はMatch.snapshot?（試合開始時の能力複製、表
 W2の校名プールにあった実在著名校を想起させる語（翠嵐・旭丘）を統括側で翠明・曙丘へ差し替え。
 残: W2の本体配線（手順はlib/competition.ts末尾コメント、7ステップ）、W6横画面・PWA。
 
+2026-09-14 v3 W2配線完了: V3State.competitionを登録、Fixture.kindを9種へ追加拡張、リーグ戦をPK戦対象から除外、
+calendar()+対戦相手生成をcompetitionFixture()へ置換、試合終了処理をresolveCompetitionMatch()へ置換、
+「大会・日程」タブにCompetitionPanel（48地区の選択UI）を組み込み。npm test 75件・ブラウザ10件・型チェック緑、lint 29件据え置き。
+旧kindのセーブがwc_qualifier等へ決定的に移行することをテストで確認。統括側で未使用になったcalendar()（42行）を削除し、
+バージョン表記をv3.0 / package.json 3.0.0へ更新。残: W6横画面・PWAのみ。未pushで本番はまだv2。
+

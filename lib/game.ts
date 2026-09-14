@@ -30,6 +30,13 @@ import {
   type DetailPos,
 } from './squad.ts';
 import { handleLife, maybeTriggerLifeEvent, type LifeAction } from './school-life.ts';
+import {
+  handleCompetition,
+  competitionFixture,
+  resolveCompetitionMatch,
+  readCompetition,
+  type CompetitionAction,
+} from './competition.ts';
 export type Position = 'GK' | 'DF' | 'MF' | 'FW';
 export type Stat = 'shoot' | 'pass' | 'defend' | 'speed' | 'mental' | 'keep';
 export type Training =
@@ -57,7 +64,16 @@ export type Player = {
 };
 export type Fixture = {
   label: string;
-  kind: 'friendly' | 'summer' | 'qualifier' | 'national';
+  kind:
+    | 'friendly'
+    | 'summer'
+    | 'qualifier'
+    | 'national'
+    | 'league'
+    | 'ih_qualifier'
+    | 'ih_national'
+    | 'wc_qualifier'
+    | 'wc_national';
   round: number;
   strength: number;
   opponent: string;
@@ -245,18 +261,6 @@ const given = [
   '伊織',
   '海',
 ];
-const rivals = [
-  '白嶺工科',
-  '星ヶ丘学園',
-  '海凪学院',
-  '翠峰学園',
-  '燈野総合',
-  '暁星工業',
-  '青葉野学院',
-  '望洋学園',
-  '月ヶ瀬学院',
-  '東雲学舎',
-];
 export const clamp = (n: number, min = 0, max = 100) =>
   Math.min(max, Math.max(min, n));
 // 部員数の上限・下限。11人（先発フル）を割らず、30人（サッカーの部としての現実的な上限）を超えない。
@@ -420,47 +424,6 @@ export function newGame(
 export function dateLabel(s: State) {
   return `${((Math.floor(s.week / 4) + 3) % 12) + 1}月 第${(s.week % 4) + 1}週`;
 }
-export function calendar(
-  week: number,
-  s: State,
-): { kind: Fixture['kind']; round: number; label: string } | null {
-  if (week >= 11 && week <= 13 && s.summerAlive)
-    return {
-      kind: 'summer',
-      round: week - 11,
-      label: [
-        '夏季招待大会・1回戦',
-        '夏季招待大会・準決勝',
-        '夏季招待大会・決勝',
-      ][week - 11],
-    };
-  if (week >= 27 && week <= 30 && s.alive)
-    return {
-      kind: 'qualifier',
-      round: week - 27,
-      label: [
-        '県大会・1回戦',
-        '県大会・準々決勝',
-        '県大会・準決勝',
-        '県大会・決勝',
-      ][week - 27],
-    };
-  if (week >= 36 && week <= 40 && s.qualified && s.alive)
-    return {
-      kind: 'national',
-      round: week - 36,
-      label: [
-        '全国大会・1回戦',
-        '全国大会・2回戦',
-        '全国大会・準々決勝',
-        '全国大会・準決勝',
-        '全国大会・決勝',
-      ][week - 36],
-    };
-  if ([3, 7, 19, 23, 34, 43].includes(week))
-    return { kind: 'friendly', round: 0, label: '練習試合' };
-  return null;
-}
 // 新入生の人数。学校評判と施設で 6〜12人の目安に決まり、部員が上限30人を超えないよう
 // クランプする（下限も ROSTER_MIN を割らないように補う）。
 function intakeSize(s: State, remaining: number): number {
@@ -523,6 +486,7 @@ export type Action =
   | DevelopmentAction
   | SquadAction
   | LifeAction
+  | CompetitionAction
   | { type: 'train'; training: Training }
   | { type: 'event'; choice: 'team' | 'individual' }
   | { type: 'formation'; formation: Formation }
@@ -541,6 +505,7 @@ export function act(old: State, a: Action): State {
   if (handleDevelopment(s, a as DevelopmentAction)) return s;
   if (handleSquad(s, a as SquadAction)) return s;
   if (handleLife(s, a)) return s;
+  if (handleCompetition(s, a)) return s;
   if (a.type === 'train') {
     if (s.pending || s.match || s.event || s.v3.life.current)
       throw Error('試合または部内イベントを先に終えてください。');
@@ -581,24 +546,9 @@ export function act(old: State, a: Action): State {
       s,
       `${dateLabel(s)}：${t.name}。${a.training === 'rest' ? '選手の疲労が回復しました。' : `チーム全体で能力が計${Math.round(growth)}成長。`}`,
     );
-    const f = calendar(s.week, s);
+    const f = competitionFixture(s, s.week);
     if (f) {
-      s.pending = {
-        ...f,
-        strength: Math.round(
-          (f.kind === 'national'
-            ? 65
-            : f.kind === 'qualifier'
-              ? 47
-              : f.kind === 'summer'
-                ? 45
-                : strength(s) - 4) +
-            f.round * 4 +
-            rand(s) * 8,
-        ),
-        opponent: pick(s, rivals),
-        style: pick(s, ['possession', 'counter', 'press'] as Tactic[]),
-      };
+      s.pending = f;
     } else {
       finishWeek(s);
       if (s.week > 0 && s.week % 7 === 0)
@@ -890,7 +840,7 @@ function simulateSegment(s: State) {
   if (m.minute >= 90) {
     m.done = true;
     m.won = m.home > m.away;
-    if (m.home === m.away && m.fixture.kind !== 'friendly') {
+    if (m.home === m.away && !['friendly', 'league'].includes(m.fixture.kind)) {
       m.won =
         rand(s) <
         clamp(
@@ -923,38 +873,15 @@ function simulateSegment(s: State) {
       s.morale = clamp(s.morale + 7);
       s.funds += m.fixture.kind === 'friendly' ? 5 : 12;
     } else s.morale = clamp(s.morale - 4);
-    if (m.fixture.kind === 'summer') {
-      if (!m.won) s.summerAlive = false;
-      else if (m.fixture.round === 2) {
-        s.funds += 25;
-        s.reputation = clamp(s.reputation + 5);
-        log(s, '夏季招待大会を制覇！部費が25増えました。');
-      }
-    }
-    if (m.fixture.kind === 'qualifier') {
-      if (!m.won) {
-        s.alive = false;
-        s.best = m.fixture.label + '敗退';
-      } else if (m.fixture.round === 3) {
-        s.qualified = true;
-        s.best = '全国大会出場';
-        s.funds += 35;
-        log(s, '県大会優勝！冬の全国大会への切符を獲得しました。');
-      }
-    }
-    if (m.fixture.kind === 'national') {
-      if (!m.won) {
-        s.alive = false;
-        s.best = m.fixture.label + '敗退';
-      } else {
-        s.best = m.fixture.round === 4 ? '全国優勝' : m.fixture.label + '突破';
-        if (m.fixture.round === 4) {
-          s.records.trophies++;
-          s.reputation = clamp(s.reputation + 12);
-          s.funds += 75;
-          log(s, '全国の頂点へ！この世代の挑戦が、学校の歴史になりました。');
-        }
-      }
+    resolveCompetitionMatch(s, m);
+    if (
+      m.fixture.kind === 'ih_qualifier' ||
+      m.fixture.kind === 'ih_national' ||
+      m.fixture.kind === 'wc_qualifier' ||
+      m.fixture.kind === 'wc_national'
+    ) {
+      const comp = readCompetition(s);
+      s.best = m.fixture.kind.startsWith('ih') ? comp.ih.best : comp.wc.best;
     }
     log(
       s,
@@ -1047,7 +974,17 @@ export function validateSave(x: unknown): State {
       throw Error('年度記録が不正です。');
   const fixture = (f: Fixture) =>
     f &&
-    ['friendly', 'summer', 'qualifier', 'national'].includes(f.kind) &&
+    [
+      'friendly',
+      'summer',
+      'qualifier',
+      'national',
+      'league',
+      'ih_qualifier',
+      'ih_national',
+      'wc_qualifier',
+      'wc_national',
+    ].includes(f.kind) &&
     num(f.round, 0, 4) &&
     num(f.strength, 1, 200) &&
     typeof f.label === 'string' &&

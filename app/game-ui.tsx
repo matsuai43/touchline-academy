@@ -12,6 +12,8 @@ import { LifeEventPanel } from './life-ui';
 import { AudioSettingsPanel } from './audio-ui';
 import { playScene, playSfx, primeAudio } from '@/lib/audio';
 import { MatchView, Metric, Meter, Choices, Pitch } from './match-ui';
+import { CompetitionPanel } from './competition-ui';
+import { readCompetition, competitionFixture } from '@/lib/competition';
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -58,7 +60,6 @@ import {
   strength,
   roster,
   dateLabel,
-  calendar,
   training,
   tactics,
   stats,
@@ -286,17 +287,36 @@ export default function Game() {
   const focus = s.players.find((p) => p.id === s.focus),
     player = s.players.find((p) => p.id === selected),
     fatigue = s.players.reduce((a, p) => a + p.fatigue, 0) / s.players.length;
+  // W2配線: 予定表・シーズン状況はすべて lib/competition.ts の大会データ（s.v3.competition）から
+  // 導出する。旧 s.qualified/s.alive/s.summerAlive は試合結果の反映先ではなくなったため、表示にも使わない。
+  const comp = readCompetition(s);
   const nextFixture = Array.from({ length: 48 - s.week }, (_, i) => ({
     week: s.week + i,
-    f: calendar(s.week + i, s),
+    f: competitionFixture(s, s.week + i),
   })).find((x) => x.f);
+  // 「大会・日程」タブの年間カレンダーは、実際の敗退状況にかかわらず1年分の予定を一覧できるよう、
+  // インターハイ・選手権を「勝ち上がった場合」の想定（alive/qualified=true）でプレビューする。
+  const seasonPreviewState: State = {
+    ...s,
+    v3: {
+      ...s.v3,
+      competition: {
+        ...comp,
+        ih: { ...comp.ih, alive: true, qualified: true },
+        wc: { ...comp.wc, alive: true, qualified: true },
+      },
+    },
+  };
+  const cupsAlive = comp.ih.alive || comp.wc.alive;
+  const cupsQualified =
+    (comp.ih.qualified && comp.ih.alive) || (comp.wc.qualified && comp.wc.alive);
   const coachTip = s.pending
     ? '試合の前に編成を確認。疲労の少ない選手を起用しましょう。'
     : fatigue > 55
       ? '疲労がたまっています。休養を入れて、けがと能力低下を防ぎましょう。'
       : s.week < 7
         ? 'まずは総合練習で基礎づくり。4週目に最初の練習試合です。'
-        : !s.alive
+        : !cupsAlive
           ? '今季の大会は終了。下級生の重点育成で来季につなげましょう。'
           : '相手の戦術を読み、育成と休養を組み合わせて大会に備えましょう。';
   return (
@@ -398,9 +418,9 @@ export default function Game() {
                     <div className="hero-content">
                       <span className="pill">
                         <span className="dot" />{' '}
-                        {s.qualified
+                        {cupsQualified
                           ? '全国への挑戦'
-                          : s.alive
+                          : cupsAlive
                             ? '全国を目指す、新しい一週間'
                             : '次の世代へ、つなぐ時間'}
                       </span>
@@ -696,6 +716,12 @@ export default function Game() {
                   </div>
                   <Trophy size={52} />
                 </div>
+                <CompetitionPanel
+                  state={s}
+                  onChoosePrefecture={(districtId) =>
+                    run({ type: 'compPrefecture', districtId })
+                  }
+                />
                 <div className="calendar-grid">
                   {Array.from({ length: 12 }, (_, month) => (
                     <section
@@ -711,12 +737,7 @@ export default function Game() {
                       </h3>
                       {Array.from({ length: 4 }, (_, w) => {
                         const week = month * 4 + w,
-                          f = calendar(week, {
-                            ...s,
-                            alive: true,
-                            summerAlive: true,
-                            qualified: true,
-                          });
+                          f = competitionFixture(seasonPreviewState, week);
                         return (
                           <div
                             key={w}
@@ -737,7 +758,9 @@ export default function Game() {
                   ))}
                 </div>
                 <p className="muted instruction">
-                  大会は勝ち抜き方式。県大会を優勝すると全国大会へ進みます。敗退後も育成は続き、4月には新しい世代で再挑戦できます。日程はゲーム用に簡略化した独自大会です。
+                  U18リーグは通年のホーム&アウェー総当たり。インターハイ・選手権は勝ち抜き方式で、
+                  県予選を優勝すると全国大会へ進みます。敗退後も育成もリーグ戦も続き、4月には新しい世代で再挑戦できます。
+                  日程はゲーム用に簡略化した独自大会です。
                 </p>
               </TabsContent>
               <TabsContent value="history">
@@ -810,7 +833,7 @@ export default function Game() {
       </Tabs>
       <footer>
         <span>
-          TOUCHLINE ACADEMY <small>v2.0</small>
+          TOUCHLINE ACADEMY <small>v3.0</small>
         </span>
         <button onClick={() => setHelp(true)}>遊び方・クレジット</button>
         <span>無料 / 登録不要 / この端末に保存</span>

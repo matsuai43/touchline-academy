@@ -276,7 +276,10 @@ void test('決定性：同じシード・同じ操作列なら同じイベント
     let s = newGame('決定性検証高校', seed);
     hydrateLife(s);
     const picks: { eventId: string; playerId: number }[] = [];
-    for (let i = 0; i < 30 && s.season === 1; i++) {
+    // W2配線後は大会日程（U18リーグ・インターハイ・選手権）が空き週の大半を占めるため、
+    // 「試合の無い週」の絶対数が減っている。30週（1季）だけでは特定シードで
+    // 一度もイベントが発生しないことがあるため、複数季ぶん回して機会を確保する。
+    for (let i = 0; i < 200; i++) {
       hydrateLife(s);
       const cur = getCurrentLifeEvent(s);
       if (cur) handleLife(s, { type: 'life', choiceId: cur.event.choices[0].id });

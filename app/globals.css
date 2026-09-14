@@ -3281,3 +3281,246 @@ footer button {
     min-height: 34px;
   }
 }
+
+/* -------------------------------------------------------------------------
+ * W4: 交代パネル（SubstitutionDialog）と試合後サマリ（MatchSummary）
+ * ここから下は app/match-ui.tsx が使う。既存セレクタは変更していない（末尾に追記のみ）。
+ * ---------------------------------------------------------------------- */
+.subs-counter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 14px;
+}
+.subs-counter {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  background: #1c2b23;
+  border: 1px solid #3a5744;
+  color: #c9e3a4;
+}
+.bench-head .subs-counter {
+  margin-left: auto;
+}
+.sub-open-btn {
+  width: 100%;
+  min-height: 44px;
+  margin: 4px 0 14px;
+}
+.sub-dialog {
+  max-width: 760px !important;
+}
+.sub-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 12px;
+}
+.sub-column h3 {
+  font-size: 13px;
+  color: #b5c3c9;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.sub-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.sub-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: #182229;
+  text-align: left;
+  position: relative;
+}
+.sub-pick:hover:not(:disabled) {
+  border-color: #4a625a;
+}
+.sub-pick.selected {
+  border-color: var(--primary);
+  background: #1e2b1a;
+  box-shadow: 0 0 0 1px var(--primary) inset;
+}
+.sub-pick-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.sub-pick-name {
+  font-size: 13px;
+  color: #e1e9e9;
+}
+.sub-pick-meta {
+  font-size: 11px;
+  color: #98a9ae;
+}
+.sub-recommend {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #452a24;
+  color: #f2a49a;
+  border: 1px solid #7a4a42;
+  white-space: nowrap;
+}
+.sub-hint {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.sub-confirm {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 8px;
+  background: #16211c;
+  border: 1px solid #33493c;
+}
+.sub-confirm p {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+.sub-confirm-actions {
+  display: flex;
+  gap: 10px;
+}
+.sub-confirm-actions > button {
+  flex: 1;
+  min-height: 44px;
+}
+@media (max-width: 640px) {
+  .sub-columns {
+    grid-template-columns: 1fr;
+  }
+  .sub-list {
+    max-height: 220px;
+  }
+}
+
+.match-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.summary-head h2 {
+  font-size: 22px;
+  margin: 4px 0 2px;
+}
+.motm-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid #4a5f36;
+  background: linear-gradient(135deg, #202c17, #16211c);
+  padding: 16px;
+}
+.motm-card:hover {
+  border-color: var(--primary);
+}
+.motm-card > .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--primary);
+}
+.motm-body {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+}
+.motm-body b {
+  font-size: 17px;
+}
+.motm-body p {
+  margin: 4px 0 0;
+  color: #c3d0d5;
+  font-size: 13px;
+}
+.summary-timeline,
+.summary-growth {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.summary-timeline h3,
+.summary-growth h3 {
+  font-size: 14px;
+  margin: 0 0 10px;
+}
+.summary-timeline p {
+  font-size: 13px;
+  color: #c3d0d5;
+  margin: 0 0 6px;
+}
+.growth-row {
+  padding: 10px 0;
+  border-bottom: 1px solid #22302f;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.growth-row:last-child {
+  border-bottom: none;
+}
+.growth-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.growth-chip {
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #1a2529;
+  color: #d5dee1;
+}
+.growth-chip.up {
+  border-color: #3a5744;
+  background: #1a2b1f;
+  color: #b6e39a;
+}
+.growth-chip.down {
+  border-color: #6b3a3a;
+  background: #2b1a1a;
+  color: #f0a99e;
+}
+.growth-chip.skill-new {
+  border-color: #6a5a2a;
+  background: #2b2515;
+  color: #eccf7d;
+}
+.growth-chip.skill-new.negative {
+  border-color: #6b3a3a;
+  background: #2b1a1a;
+  color: #f0a99e;
+}
+.summary-close {
+  width: 100%;
+  min-height: 48px;
+}
+@media (max-width: 480px) {
+  .motm-body {
+    align-items: flex-start;
+  }
+  .sub-dialog {
+    padding: 16px !important;
+  }
+}

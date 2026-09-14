@@ -4,16 +4,14 @@ import {
   IdentityDetails,
   DevelopmentView,
   ManagerNote,
-  MatchCommands,
-  VoicePanel,
 } from './development-ui';
-import MatchCinema from './match-cinema';
 import { personalities } from '@/lib/development';
 import { formationSlots, detailInfo } from '@/lib/squad';
 import { SquadPanel, SquadProfile, SquadTeamToggle } from './squad-ui';
 import { LifeEventPanel } from './life-ui';
 import { AudioSettingsPanel } from './audio-ui';
 import { playScene, playSfx, primeAudio } from '@/lib/audio';
+import { MatchView, Metric, Meter, Choices, Pitch } from './match-ui';
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -52,7 +50,6 @@ import {
   AlertDialogAction,
 } from '@/components/ui/alert-dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Progress } from '@/components/ui/progress';
 import {
   act,
   newGame,
@@ -60,7 +57,6 @@ import {
   overall,
   strength,
   roster,
-  slots,
   dateLabel,
   calendar,
   training,
@@ -68,9 +64,7 @@ import {
   stats,
   type State,
   type Action,
-  type Player,
   type Training,
-  type Tactic,
   type Formation,
   type Stat,
 } from '@/lib/game';
@@ -91,145 +85,6 @@ const trainingIcons = {
   physical: Zap,
   rest: HeartPulse,
 };
-function Metric({
-  label,
-  value,
-  suffix,
-}: {
-  label: string;
-  value: number | string;
-  suffix?: string;
-}) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>
-        {value}
-        <small>{suffix}</small>
-      </strong>
-    </div>
-  );
-}
-function Meter({
-  label,
-  value,
-  warn = false,
-}: {
-  label: string;
-  value: number;
-  warn?: boolean;
-}) {
-  return (
-    <div className={`meter ${warn ? 'warning' : ''}`}>
-      <div>
-        <span>{label}</span>
-        <b>{Math.round(value)}</b>
-      </div>
-      <Progress aria-label={label} value={value} />
-    </div>
-  );
-}
-function Choices({
-  value,
-  onChange,
-  items,
-  label,
-  disabled = false,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  items: { value: string; label: string }[];
-  label: string;
-  disabled?: boolean;
-}) {
-  return (
-    <RadioGroup
-      className="choices"
-      value={value}
-      onValueChange={(v) => onChange(String(v))}
-      aria-label={label}
-      disabled={disabled}
-    >
-      {items.map((i) => (
-        <label key={i.value} className={value === i.value ? 'selected' : ''}>
-          <RadioGroupItem value={i.value} />
-          <span>{i.label}</span>
-        </label>
-      ))}
-    </RadioGroup>
-  );
-}
-
-function Pitch({
-  s,
-  onPick,
-  live = false,
-}: {
-  s: State;
-  onPick?: (p: Player) => void;
-  live?: boolean;
-}) {
-  const detailSlots = formationSlots(s.formation);
-  const positions = slots(s.formation);
-  const team = roster(s);
-  return (
-    <div
-      className={`pitch ${live ? 'live' : ''}`}
-      aria-label={live ? '試合の戦術図' : 'スターティングイレブンの配置'}
-    >
-      <svg
-        className="pitch-lines"
-        viewBox="0 0 440 390"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      >
-        <path d="M22 18H418V372H22ZM22 195H418M130 18V80H310V18M172 18V43H268V18M130 372V310H310V372M172 372V347H268V372" />
-        <ellipse cx="220" cy="195" rx="45" ry="40" />
-        <circle cx="220" cy="195" r="2" />
-      </svg>
-      {team.map((p, i) => {
-        const pos = positions[i],
-          members = positions.filter((x) => x === pos).length,
-          order = positions.slice(0, i).filter((x) => x === pos).length,
-          x = ((order + 1) / (members + 1)) * 100,
-          y = pos === 'GK' ? 86 : pos === 'DF' ? 65 : pos === 'MF' ? 42 : 19;
-        const slotDetail = detailSlots[i],
-          slotName = detailInfo[slotDetail].name;
-        return (
-          <button
-            className={`pitch-player ${p.pos !== pos ? 'mismatch' : ''} ${p.injury ? 'injured' : ''}`}
-            key={p.id}
-            style={{ left: `${x}%`, top: `${y}%` }}
-            onClick={() => onPick?.(p)}
-            title={`起用先：${slotName}（${slotDetail}）`}
-            aria-label={`${p.name} ${slotName} 総合${overall(p)} 疲労${Math.round(p.fatigue)}`}
-          >
-            <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
-            <span className="number">{i + 1}</span>
-            <span className="pitch-name">{p.name.split(' ')[0]}</span>
-            <span className="energy">
-              <i style={{ width: `${100 - p.fatigue}%` }} />
-            </span>
-          </button>
-        );
-      })}
-      {live && (
-        <span
-          className="match-ball"
-          key={s.match?.minute}
-          style={{
-            left: `${28 + (s.seed % 45)}%`,
-            top: `${27 + (s.seed % 41)}%`,
-          }}
-          aria-hidden="true"
-        >
-          ●
-        </span>
-      )}
-    </div>
-  );
-}
-
 export default function Game() {
   const [s, setS] = useState<State | null>(null),
     [tab, setTab] = useState('club'),
@@ -1245,224 +1100,5 @@ export default function Game() {
         </DialogContent>
       </Dialog>
     </div>
-  );
-}
-
-function MatchView({
-  s,
-  run,
-  onPlayer,
-}: {
-  s: State;
-  run: (a: Action) => State | null;
-  onPlayer: (p: Player) => void;
-}) {
-  const m = s.match!;
-  return (
-    <section className="match-view">
-      <div className="scoreboard">
-        <div className="match-caption">
-          <span className="pill">
-            {m.done
-              ? 'FULL TIME'
-              : m.minute === 45
-                ? 'HALF TIME'
-                : 'MATCH LIVE'}
-          </span>
-          <span>{m.fixture.label}</span>
-        </div>
-        <div className="score-row">
-          <div>
-            <span className="club-emblem">
-              <Flag size={30} />
-            </span>
-            <h2>{s.school}</h2>
-            <small>HOME</small>
-          </div>
-          <div className="score">
-            <strong>
-              {m.home}
-              <span>:</span>
-              {m.away}
-            </strong>
-            <b>
-              {m.done
-                ? m.won
-                  ? 'WIN'
-                  : m.home === m.away && !m.penalties
-                    ? 'DRAW'
-                    : 'LOSE'
-                : `${m.minute}′`}
-            </b>
-            {m.penalties && <small>PK {m.penalties}</small>}
-          </div>
-          <div>
-            <span className="club-emblem away">
-              <Shield size={30} />
-            </span>
-            <h2>{m.fixture.opponent}</h2>
-            <small>{tactics[m.fixture.style].name}</small>
-          </div>
-        </div>
-        <div className="match-stats">
-          <span>
-            シュート{' '}
-            <b>
-              {m.shots[0]} — {m.shots[1]}
-            </b>
-          </span>
-          <span>
-            得点期待値{' '}
-            <b>
-              {m.xg[0].toFixed(1)} — {m.xg[1].toFixed(1)}
-            </b>
-          </span>
-          <span>
-            ボール保持{' '}
-            <b>
-              {m.possession}% — {100 - m.possession}%
-            </b>
-          </span>
-        </div>
-      </div>
-      <div className="match-actionbar">
-        <nav aria-label="試合中の移動">
-          <a href="#match-movie">映像</a>
-          <a href="#match-voice">声かけ</a>
-          <a href="#match-tactics">戦術</a>
-          <a href="#match-bench">交代</a>
-        </nav>{' '}
-        <button
-          className="primary match-advance"
-          onClick={() => {
-            playSfx('click');
-            const next = run({ type: m.done ? 'finish' : 'segment' });
-            if (next)
-              requestAnimationFrame(() =>
-                document
-                  .getElementById(m.done ? 'main' : 'match-movie')
-                  ?.scrollIntoView({ block: 'start' }),
-              );
-          }}
-        >
-          {m.done
-            ? '結果を確定して部に戻る'
-            : m.minute === 45
-              ? '後半の15分を進める'
-              : '次の15分を進める'}{' '}
-          <ArrowRight size={19} />
-        </button>
-      </div>
-      <MatchCinema key={m.minute} s={s} />
-      <VoicePanel s={s} run={run} />
-      <div className="match-grid">
-        <section className="panel">
-          <div className="section-head">
-            <h2>タッチラインからの指示</h2>
-            <span className="formation-label">{s.formation}</span>
-          </div>
-          <Pitch s={s} live onPick={onPlayer} />
-          <div className="live-log" aria-live="polite">
-            {m.logs.slice(0, 5).map((l, i) => (
-              <p
-                className={l.includes('GOAL') ? 'goal-log' : ''}
-                key={`${m.minute}-${i}`}
-              >
-                {l}
-              </p>
-            ))}
-          </div>
-        </section>
-        <section className="panel command-panel" id="match-tactics">
-          <span className="eyebrow">MANAGER&apos;S DECISION</span>
-          <h2>
-            {m.done
-              ? '試合終了'
-              : m.minute === 45
-                ? '後半のプランを。'
-                : '次の15分を、どう戦う？'}
-          </h2>
-          <p className="muted">
-            相手：{tactics[m.fixture.style].name} / 総合力 {m.fixture.strength}
-          </p>
-          <RadioGroup
-            className="tactic-grid"
-            aria-label="試合の戦術"
-            value={m.tactic}
-            onValueChange={(v) => run({ type: 'tactic', tactic: v as Tactic })}
-            disabled={m.done}
-          >
-            {(Object.keys(tactics) as Tactic[]).map((key) => (
-              <label
-                key={key}
-                className={`tactic-card ${m.tactic === key ? 'selected' : ''}`}
-              >
-                <RadioGroupItem value={key} />
-                <div>
-                  <b>{tactics[key].name}</b>
-                  <small>{tactics[key].desc}</small>
-                </div>
-              </label>
-            ))}
-          </RadioGroup>
-          <h3>攻守の意識</h3>
-          <Choices
-            label="攻守の意識"
-            value={m.mentality}
-            disabled={m.done}
-            onChange={(v) =>
-              run({
-                type: 'mentality',
-                mentality: v as 'safe' | 'normal' | 'attack',
-              })
-            }
-            items={[
-              { value: 'safe', label: '守備重視' },
-              { value: 'normal', label: '標準' },
-              { value: 'attack', label: '攻撃重視' },
-            ]}
-          />
-          <MatchCommands s={s} run={run} />
-          <div className="bench-head" id="match-bench">
-            <h3>ベンチ</h3>
-            <span>交代 {m.subs} / 3</span>
-          </div>
-          <div className="bench">
-            {s.players
-              .filter((p) => !s.lineup.includes(p.id))
-              .map((p) => (
-                <button
-                  key={p.id}
-                  disabled={
-                    m.done || m.used.includes(p.id) || m.subs >= 3 || !!p.injury
-                  }
-                  onClick={() => onPlayer(p)}
-                >
-                  <Portrait
-                    index={p.identity.portrait}
-                    name={p.name}
-                    size="tiny"
-                  />
-                  <span className={`position pos-${p.pos}`}>{p.pos}</span>
-                  <b>{p.name}</b>
-                  <small>
-                    {m.used.includes(p.id)
-                      ? '交代済'
-                      : p.injury
-                        ? '調整中'
-                        : `疲労 ${Math.round(p.fatigue)}`}
-                  </small>
-                </button>
-              ))}
-          </div>
-
-          <small className="muted">
-            {m.done
-              ? '結果は保存済み。戻ると日程が次の週へ進みます。'
-              : '采配は次の15分に反映。途中でも自動保存されます。'}
-          </small>
-        </section>
-      </div>
-    </section>
   );
 }

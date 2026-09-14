@@ -63,6 +63,20 @@ export type Fixture = {
   opponent: string;
   style: Tactic;
 };
+// 試合後サマリの成長差分（W4）が使う「試合開始時点の能力スナップショット」。
+// 旧セーブ（このフィールドが導入される前に開始した試合）には存在しないため必ず省略可能とし、
+// UI側は `m.snapshot ?? []` で安全に空として扱う。ここに書くのはキックオフ時点の複製のみで、
+// 試合シミュレーションの挙動には一切影響しない（表示専用データ）。
+export type MatchSnapshotEntry = {
+  id: number;
+  stats: Record<Stat, number>;
+  extra: { dribble: number; stamina: number; power: number } | null;
+  trust: number;
+  skills: string[];
+  negatives: string[];
+  goals: number;
+  appearances: number;
+};
 export type Match = {
   details: MatchDetails;
   fixture: Fixture;
@@ -82,6 +96,7 @@ export type Match = {
   penalties: string | null;
   possession: number;
   lastSide: number;
+  snapshot?: MatchSnapshotEntry[];
 };
 export type State = {
   development: Development;
@@ -654,6 +669,19 @@ export function act(old: State, a: Action): State {
       penalties: null,
       possession: 50,
       lastSide: 0,
+      snapshot: s.players.map((p) => {
+        const ps = s.v3.squad.players[p.id];
+        return {
+          id: p.id,
+          stats: { ...p.stats },
+          extra: ps ? { dribble: ps.dribble, stamina: ps.stamina, power: ps.power } : null,
+          trust: p.identity.trust,
+          skills: ps ? [...ps.skills] : [],
+          negatives: ps ? [...ps.negatives] : [],
+          goals: p.goals,
+          appearances: p.appearances,
+        };
+      }),
     };
     return s;
   }
@@ -1062,6 +1090,40 @@ export function validateSave(x: unknown): State {
       (m.penalties !== null && typeof m.penalties !== 'string')
     )
       throw Error('試合データが不正です。');
+    // snapshot は試合後サマリの成長差分表示にのみ使う表示専用データで、これが導入される前に
+    // 開始した試合のセーブには存在しない。存在しない場合は許容し、UI側で空として扱う。
+    if (s.match.snapshot !== undefined) {
+      const validExtra = (e: unknown) =>
+        e === null ||
+        (!!e &&
+          typeof e === 'object' &&
+          (['dribble', 'stamina', 'power'] as const).every((k) =>
+            num((e as Record<string, unknown>)[k], 0, 100),
+          ));
+      if (
+        !Array.isArray(s.match.snapshot) ||
+        s.match.snapshot.length > ROSTER_MAX ||
+        !s.match.snapshot.every(
+          (e) =>
+            e &&
+            Number.isInteger(e.id) &&
+            ids.includes(e.id) &&
+            e.stats &&
+            Object.keys(stats).every((k) => num(e.stats[k as Stat], 0, 100)) &&
+            validExtra(e.extra) &&
+            num(e.trust, 0, 100) &&
+            Array.isArray(e.skills) &&
+            e.skills.length <= 10 &&
+            e.skills.every((id) => typeof id === 'string' && id.length <= 40) &&
+            Array.isArray(e.negatives) &&
+            e.negatives.length <= 10 &&
+            e.negatives.every((id) => typeof id === 'string' && id.length <= 40) &&
+            num(e.goals, 0, 1000000) &&
+            num(e.appearances, 0, 1000000),
+        )
+      )
+        throw Error('試合開始時スナップショットが不正です。');
+    }
   }
   const hydrated = hydrateDevelopment(structuredClone(s));
   hydrateV3(hydrated);

@@ -37,6 +37,11 @@
   --accent: #293b31;
   --border: #2b393f;
   color-scheme: dark;
+  /* W6: セーフエリア（ノッチ・ホームインジケータ）。非対応環境・非standalone表示では0。 */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
 }
 * {
   box-sizing: border-box;
@@ -119,6 +124,7 @@ small {
   align-items: center;
   justify-content: space-between;
   padding: 0 48px;
+  padding-top: var(--safe-t);
   border-bottom: 1px solid var(--border);
   background: #10191d;
 }
@@ -234,6 +240,10 @@ small {
 }
 .main-content {
   padding: 32px 48px 48px;
+  /* W6: タブ切り替えのスライド遷移（translateX）がマウント直後の1フレームだけ
+     ページ全体を横にはみ出させないための保険。内部の表は table-container 側の
+     overflow-x: auto で個別にスクロールするので、ここを hidden にしても影響しない。 */
+  overflow-x: hidden;
 }
 .page-heading {
   display: flex;
@@ -1031,6 +1041,7 @@ h1 > span {
 }
 footer {
   padding: 24px 48px;
+  padding-bottom: calc(24px + var(--safe-b));
   border-top: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
@@ -1049,7 +1060,7 @@ footer button {
 }
 .toast {
   position: fixed;
-  bottom: 26px;
+  bottom: calc(26px + var(--safe-b));
   left: 50%;
   transform: translateX(-50%);
   max-width: calc(100vw - 32px);
@@ -1066,7 +1077,7 @@ footer button {
 .game-dialog {
   max-width: 560px !important;
   padding: 30px !important;
-  max-height: 90vh;
+  max-height: 90dvh;
   overflow-y: auto;
   border: 1px solid #42545b;
   background: #17252b;
@@ -1174,7 +1185,7 @@ footer button {
   text-decoration: underline;
 }
 .loading {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1397,6 +1408,19 @@ footer button {
 }
 .main-content [data-slot='tabs-content'] {
   font-size: 16px;
+  transition:
+    opacity 0.2s ease,
+    transform 0.24s cubic-bezier(0.22, 0.88, 0.4, 1);
+}
+/* W6: タブ切り替えのスライド遷移。base-ui のマウント直後フレームで data-starting-style が
+   立つので、その1フレームだけオフセットさせて transition で解消する（キーフレーム不要）。 */
+.main-content [data-slot='tabs-content'][data-starting-style] {
+  opacity: 0;
+  transform: translateX(18px);
+}
+.main-content
+  [data-slot='tabs-content'][data-activation-direction='left'][data-starting-style] {
+  transform: translateX(-18px);
 }
 .game-dialog [data-slot='dialog-close'] svg {
   width: 18px;
@@ -1961,7 +1985,7 @@ footer button {
   .toast {
     font-size: 12px;
     padding: 12px 16px;
-    bottom: 16px;
+    bottom: calc(16px + var(--safe-b));
   }
   .page-heading > .date {
     padding-left: 10px;
@@ -2975,7 +2999,7 @@ footer button {
     font-size: 14px;
   }
   .toast {
-    bottom: 78px;
+    bottom: calc(78px + var(--safe-b));
     font-size: 13px;
     max-width: calc(100vw - 32px);
     max-height: 120px;
@@ -3537,4 +3561,132 @@ footer button {
   opacity: 0.7;
   word-break: break-word;
 }
+
+/* =====================================================================
+   W6 — 横画面・アプリ的UI（スマホ横持ち）
+   スマホを横に持ったときだけ、左に固定ナビ（縦積みの main-nav）・右にスクロールする
+   本文の2カラムへ切り替える。縦持ち・タブレット・デスクトップの見た目とレイアウトは
+   一切変更しない（幅ではなく orientation + 低い max-height でスマホ横持ちだけに絞る）。
+   仕様: DESIGN_V3.md 「W6 — 横画面・アプリ的UI」。
+   ===================================================================== */
+@media (orientation: landscape) and (max-height: 560px) {
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+  }
+  .app-shell {
+    max-width: none;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .topbar {
+    flex: none;
+    height: auto;
+    min-height: 46px;
+    padding: calc(6px + var(--safe-t)) calc(14px + var(--safe-r)) 6px
+      calc(14px + var(--safe-l));
+  }
+  .topbar .wordmark {
+    font-size: 15px;
+  }
+  .topbar .wordmark > span {
+    display: none;
+  }
+  .brand-icon {
+    width: 28px;
+    height: 30px;
+    border-radius: 4px 4px 11px 4px;
+  }
+  .top-right {
+    gap: 8px;
+  }
+  .save-status {
+    display: none;
+  }
+  .icon-button {
+    width: 29px;
+    height: 29px;
+  }
+  /* Tabs のルート（.game-tabs）を「左ナビ・右コンテンツ」の行レイアウトに反転する。
+     data-horizontal:flex-col ユーティリティ（Tailwind 由来、初期値は縦積み）に勝つため !important。 */
+  .game-tabs {
+    flex: 1 1 auto;
+    flex-direction: row !important;
+    align-items: stretch;
+    min-height: 0;
+  }
+  .nav-wrap {
+    flex: none;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: stretch;
+    width: 74px;
+    padding: 8px 0 calc(8px + var(--safe-b)) var(--safe-l);
+    border-bottom: none;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+  }
+  .main-nav {
+    flex-direction: column !important;
+    height: auto !important;
+    width: 100%;
+    gap: 3px !important;
+  }
+  .main-nav [data-slot='tabs-trigger'] {
+    flex-direction: column;
+    width: 100%;
+    height: auto;
+    padding: 8px 2px !important;
+    font-size: 9px;
+    line-height: 1.25;
+    gap: 4px;
+    white-space: normal !important;
+    text-align: center;
+    border-left: 2px solid transparent;
+  }
+  .main-nav [data-slot='tabs-trigger'] svg {
+    width: 16px;
+    height: 16px;
+  }
+  .main-nav [data-slot='tabs-trigger'][data-active] {
+    border-bottom: none;
+    border-left: 2px solid var(--primary);
+    background: rgba(198, 241, 106, 0.1) !important;
+  }
+  .season-chip {
+    display: none;
+  }
+  /* 本文だけを独立スクロール領域にする。ヘッダーとナビは画面に固定されたまま、
+     縦に長いスカウト・試合・選手一覧はこの枠内でだけスクロールする。 */
+  .main-content {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    /* scroll-behavior: smooth はあえて付けない。タブ切り替え時のスクロール位置復元
+       （game-ui.tsx）を毎回アニメーションさせず即座に反映させるため。 */
+    padding: 12px calc(14px + var(--safe-r)) calc(14px + var(--safe-b)) 14px;
+  }
+  .page-heading {
+    margin-bottom: 14px;
+  }
+  /* 法的表記のみのフッターは高さが確保できないので省略する。同内容は
+     ヘッダーの「遊び方」アイコンから常時アクセスできる。 */
+  footer {
+    display: none;
+  }
+  .toast {
+    bottom: calc(12px + var(--safe-b));
+  }
+  .game-dialog {
+    max-height: calc(100dvh - 24px);
+  }
+}
+
 

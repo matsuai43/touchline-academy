@@ -101,6 +101,8 @@ export default function Game() {
     [pendingImport, setPendingImport] = useState<State | null>(null);
   const stateRef = useRef<State | null>(null),
     fileRef = useRef<HTMLInputElement>(null),
+    mainRef = useRef<HTMLElement | null>(null),
+    scrollMemory = useRef<Record<string, number>>({}),
     actionRef = useRef<(a: Action) => State>(() => {
       throw Error('準備中です');
     });
@@ -179,6 +181,16 @@ export default function Game() {
     const id = setTimeout(() => setNotice(''), 6500);
     return () => clearTimeout(id);
   }, [notice]);
+  useEffect(() => {
+    // W6: 横画面ではタブ本文だけが独立スクロールする（main-content が overflow: auto に
+    // なる）。タブを離れる前のスクロール位置を憶えておき、戻ってきたら復元する。
+    // main-content が通常のページスクロールのまま（縦持ち・デスクトップ）の場合は
+    // scrollTop は常に0なので、この処理は何もしない（無害）。
+    const el = mainRef.current;
+    // instant 指定: main-content には scroll-behavior: smooth を付けていないため通常は
+    // 不要だが、ブラウザ既定や将来の変更に関わらず復元だけは必ず即時にする。
+    el?.scrollTo({ top: scrollMemory.current[tab] || 0, behavior: 'instant' });
+  }, [tab]);
   useEffect(() => {
     const context = (
       document as Document & {
@@ -374,7 +386,14 @@ export default function Game() {
             SEASON {String(s.season).padStart(2, '0')}
           </span>
         </div>
-        <main id="main" className="main-content">
+        <main
+          id="main"
+          className="main-content"
+          ref={mainRef}
+          onScroll={(e) => {
+            scrollMemory.current[tab] = e.currentTarget.scrollTop;
+          }}
+        >
           <div className="page-heading">
             <div>
               <span className="eyebrow">HIGH SCHOOL FOOTBALL CLUB</span>

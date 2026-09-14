@@ -1,0 +1,30 @@
+{
+  "name": "TOUCHLINE ACADEMY | 高校サッカー部育成ゲーム",
+  "short_name": "TOUCHLINE",
+  "description": "練習、育成、編成と試合の采配。世代をつなぎ全国の頂点を目指す、オリジナル高校サッカー部育成ゲーム。無料・登録不要。",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "browser"],
+  "orientation": "any",
+  "background_color": "#0c1316",
+  "theme_color": "#0c1316",
+  "lang": "ja",
+  "dir": "ltr",
+  "categories": ["sports", "games", "simulation"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

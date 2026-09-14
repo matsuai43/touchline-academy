@@ -3524,3 +3524,17 @@ footer button {
     padding: 16px !important;
   }
 }
+
+/* v3 W4: 試合後サマリ 共通の微増をまとめた行 */
+.growth-row-group {
+  flex-wrap: wrap;
+}
+.growth-group-names {
+  flex-basis: 100%;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.7;
+  word-break: break-word;
+}
+

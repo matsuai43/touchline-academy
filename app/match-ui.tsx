@@ -412,6 +412,31 @@ function computeGrowth(s: State): GrowthRow[] {
   }
   return rows;
 }
+type GrowthRowLike = ReturnType<typeof computeGrowth>[number];
+function isNotableGrowth(row: GrowthRowLike): boolean {
+  return (
+    row.newSkills.length > 0 ||
+    row.newNegatives.length > 0 ||
+    row.extraDiffs.length > 0 ||
+    Math.abs(row.trustDiff) >= 1 ||
+    row.statDiffs.length >= 2 ||
+    row.statDiffs.some((d) => Math.abs(d.diff) >= 1)
+  );
+}
+function growthSignature(row: GrowthRowLike): string {
+  return row.statDiffs.map((d) => `${d.label}${fmtDiff(d.diff)}`).join(' / ');
+}
+function groupMinorGrowth(rows: GrowthRowLike[]) {
+  const map = new Map<string, { names: string[]; chips: GrowthRowLike['statDiffs'] }>();
+  for (const row of rows) {
+    if (isNotableGrowth(row)) continue;
+    const sig = growthSignature(row);
+    const hit = map.get(sig);
+    if (hit) hit.names.push(row.name);
+    else map.set(sig, { names: [row.name], chips: row.statDiffs });
+  }
+  return [...map.values()];
+}
 function fmtDiff(n: number): string {
   const r = Math.round(n * 10) / 10;
   return `${r > 0 ? '+' : ''}${r}`;
@@ -466,6 +491,8 @@ function MatchSummary({
   const m = s.match!;
   const motm = computeMotm(s);
   const growth = computeGrowth(s);
+  const notableGrowth = growth.filter(isNotableGrowth);
+  const minorGrowth = groupMinorGrowth(growth);
   const timeline = buildTimeline(s);
   const resultLabel = m.won
     ? '勝利'
@@ -513,7 +540,7 @@ function MatchSummary({
       <div className="summary-growth">
         <h3>選手の成長</h3>
         {growth.length ? (
-          growth.map((row) => (
+          notableGrowth.map((row) => (
             <div key={row.id} className="growth-row">
               <b>{row.name}</b>
               <span className="growth-chips">
@@ -554,6 +581,25 @@ function MatchSummary({
             </div>
           ))
         ) : (
+          <></>
+        )}
+        {minorGrowth.map((g) => (
+          <div key={g.names.join(',')} className="growth-row growth-row-group">
+            <b>出場した{g.names.length}人</b>
+            <span className="growth-chips">
+              {g.chips.map((d) => (
+                <span
+                  key={d.label}
+                  className={`growth-chip ${d.diff > 0 ? 'up' : 'down'}`}
+                >
+                  {d.label} {fmtDiff(d.diff)}
+                </span>
+              ))}
+            </span>
+            <small className="muted growth-group-names">{g.names.join('・')}</small>
+          </div>
+        ))}
+        {!growth.length && (
           <p className="muted">
             {m.snapshot
               ? 'この試合で大きく変化した選手はいませんでした。'

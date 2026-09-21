@@ -713,7 +713,7 @@ export function MatchView({
       </div>
       {m.done ? (
         <>
-          <MatchCinema key={m.minute} s={s} />
+          <MatchCinema key={`cinema-${m.minute}`} s={s} />
           <MatchSummary s={s} run={run} onPlayer={onPlayer} />
         </>
       ) : (
@@ -740,7 +740,7 @@ export function MatchView({
               <ArrowRight size={19} />
             </button>
           </div>
-          <MatchCinema key={m.minute} s={s} />
+          <MatchCinema key={`cinema-${m.minute}`} s={s} />
           <VoicePanel s={s} run={run} />
           <div className="match-grid">
             <section className="panel">
@@ -848,7 +848,7 @@ export function MatchView({
             </section>
           </div>
           <SubstitutionDialog
-            key={subToken}
+            key={`sub-${subToken}`}
             s={s}
             run={run}
             open={subOpen}

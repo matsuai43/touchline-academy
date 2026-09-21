@@ -119,6 +119,30 @@ test('post-match summary: shows MOTM, timeline, stat comparison and per-player g
   expect(errors).toEqual([]);
 });
 
+test('match cinema: only one .cinema section renders after advancing the match', async ({
+  page,
+}) => {
+  // 回帰テスト: MatchCinema の key（m.minute）と SubstitutionDialog の key（subToken）が
+  // どちらも 0 始まりで、同じ Fragment の兄弟同士として衝突していたため、React の
+  // reconciliation が古い MatchCinema の DOM を取り除けずに残していた
+  // （.cinema が2つ表示される不具合）。名前空間付きのキーで衝突を無くし、
+  // 15分を2回進めても .cinema が常にちょうど1つであることを確認する。
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await withSave(page, startedMatch('試合図重複検証高校', 2024));
+  await page.goto('/');
+  await expect(page.locator('.cinema')).toHaveCount(1);
+
+  const advance = page.getByRole('button', { name: /次の15分を進める|後半の15分を進める/ });
+  await advance.click();
+  await expect(page.locator('.cinema')).toHaveCount(1);
+  await expect(page.locator('.cinema .fm-empty')).toHaveCount(0);
+
+  await advance.click();
+  await expect(page.locator('.cinema')).toHaveCount(1);
+  expect(errors).toEqual([]);
+});
+
 test('mobile 390px: substitution dialog and match summary fit the viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await withSave(page, startedMatch('モバイル交代検証高校', 555));

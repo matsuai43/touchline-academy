@@ -7,4 +7,6 @@ TOUCHLINE ACADEMY / クレジット
 無料・広告なし・アカウント不要。保存はこの端末のブラウザ内のみ。
 
 v2.0 (2026-09-13): 18 player portraits and 4 manager portraits generated with built-in image_gen. No reference photographs or third-party game assets used.
-2D match highlights: original Canvas animation driven by the game's actual goal/save events. No licensed video footage or audio.
+v3.0: match highlights are an original top-down SVG diagram of moving dots, driven by the game's actual goal/save events. Weekly events are original SVG scene illustrations combined with the portraits above. Background music and sound effects are synthesized in the browser with the Web Audio API; no audio files are included. No licensed video footage, photographs or audio.
+画面デザインはデジタル庁デザインシステム（DADS）の考え方を参考に独自に作成したもので、デジタル庁が作成・提供したものではなく、デジタル庁とは関係ありません。
+UI icons: Lucide (ISC License).

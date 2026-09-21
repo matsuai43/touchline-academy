@@ -14,6 +14,8 @@ import { playScene, playSfx, primeAudio } from '@/lib/audio';
 import { MatchView, Metric, Meter, Choices, Pitch } from './match-ui';
 import { CompetitionPanel } from './competition-ui';
 import { readCompetition, competitionFixture } from '@/lib/competition';
+import { EventStills, type EventStillsChoice, type EventStillsResult } from './event-scenes';
+import { getEventScenePanels } from '@/lib/event-scenes';
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -71,6 +73,17 @@ import {
 } from '@/lib/game';
 
 const SAVE_KEY = 'touchline-academy-v1';
+// D1: ライト/ダークテーマの明示指定を保存するキー。app/layout.tsx のちらつき防止スクリプトと
+// 同じキー・同じ値（'light' | 'dark'）を使う。未保存（＝'system'）は端末設定に追従する。
+const THEME_KEY = 'touchline-academy-theme';
+type ThemePref = 'system' | 'light' | 'dark';
+function readStoredTheme(): ThemePref {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    if (v === 'light' || v === 'dark') return v;
+  } catch {}
+  return 'system';
+}
 const menu = [
   ['club', 'クラブハウス', Flag],
   ['team', '選手・編成', Users],
@@ -98,7 +111,35 @@ export default function Game() {
     [welcome, setWelcome] = useState(false),
     [school, setSchool] = useState('風見ヶ丘高校'),
     [reset, setReset] = useState(false),
-    [pendingImport, setPendingImport] = useState<State | null>(null);
+    [pendingImport, setPendingImport] = useState<State | null>(null),
+    // 初期値は遅延初期化で読む（マウント後のeffectでsetStateすると二度描画になるため）。
+    // layout.tsx のちらつき防止スクリプトがハイドレーション前に <html data-theme> を
+    // 付け終えているので、ここでの読み込みは状態表示（設定ダイアログのラジオ）を
+    // 実際の保存値に合わせるためだけに使う。
+    [theme, setTheme] = useState<ThemePref>(() =>
+      typeof window === 'undefined' ? 'system' : readStoredTheme(),
+    );
+  useEffect(() => {
+    try {
+      if (theme === 'system') localStorage.removeItem(THEME_KEY);
+      else localStorage.setItem(THEME_KEY, theme);
+    } catch {}
+    const root = document.documentElement;
+    if (theme === 'system') {
+      // globals.css 自前のトークンは data-theme 無し＋@media(prefers-color-scheme)で
+      // 自動追従するが、shadcn/ui 側の Tailwind `dark:` バリアントは .dark クラスを
+      // 見ている（@custom-variant dark (&:is(.dark *))）ため、端末設定に合わせて
+      // ここでも .dark を付け外しし、端末設定が変わった場合もライブで追従させる。
+      root.removeAttribute('data-theme');
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      const apply = () => root.classList.toggle('dark', mq.matches);
+      apply();
+      mq.addEventListener('change', apply);
+      return () => mq.removeEventListener('change', apply);
+    }
+    root.setAttribute('data-theme', theme);
+    root.classList.toggle('dark', theme === 'dark');
+  }, [theme]);
   const stateRef = useRef<State | null>(null),
     fileRef = useRef<HTMLInputElement>(null),
     mainRef = useRef<HTMLElement | null>(null),
@@ -499,34 +540,109 @@ export default function Game() {
                     </div>
                   </section>
                 </div>
-                {s.event && (
-                  <section className="event-panel">
-                    <div>
-                      <span className="eyebrow">CLUB EVENT</span>
-                      <h2>{s.event}</h2>
-                      <p>今週は、どんな時間を大切にしますか？</p>
-                    </div>
-                    <button
-                      className="secondary"
-                      onClick={() => {
-                        playSfx('click');
-                        run({ type: 'event', choice: 'team' });
-                      }}
-                    >
-                      全員で話し合う <small>連携＋7 / 士気＋8</small>
-                    </button>
-                    <button
-                      className="secondary"
-                      onClick={() => {
-                        playSfx('click');
-                        run({ type: 'event', choice: 'individual' });
-                      }}
-                    >
-                      個別に指導する{' '}
-                      <small>{focus?.name || '部員1人'}の全能力＋2</small>
-                    </button>
-                  </section>
-                )}
+                {s.event &&
+                  (() => {
+                    // W9/D1: クラブイベントは、週の学校生活イベント（LifeEventPanel）と同じ
+                    // EventStills（情景→場面→結果の紙芝居）で表示する。選手個人のイベントでは
+                    // ないため、代表として重点育成の選手（未指定なら部員1人目）の顔を使う。
+                    const scenePanels = getEventScenePanels(s.event);
+                    const repPlayer = focus ?? s.players[0] ?? null;
+                    if (!scenePanels || !repPlayer) {
+                      // 対応表に無い／部員が0人などの異常系のみの保険（通常到達しない）。
+                      return (
+                        <section className="event-panel">
+                          <div>
+                            <span className="eyebrow">CLUB EVENT</span>
+                            <h2>{s.event}</h2>
+                            <p>今週は、どんな時間を大切にしますか？</p>
+                          </div>
+                          <button
+                            className="secondary"
+                            onClick={() => {
+                              playSfx('click');
+                              run({ type: 'event', choice: 'team' });
+                            }}
+                          >
+                            全員で話し合う <small>連携＋7 / 士気＋8</small>
+                          </button>
+                          <button
+                            className="secondary"
+                            onClick={() => {
+                              playSfx('click');
+                              run({ type: 'event', choice: 'individual' });
+                            }}
+                          >
+                            個別に指導する{' '}
+                            <small>{focus?.name || '部員1人'}の全能力＋2</small>
+                          </button>
+                        </section>
+                      );
+                    }
+                    const momentByEvent: Record<string, string> = {
+                      部員たちの自主練習:
+                        '居残って自主練習をする部員たちを前に、どう声をかけますか？',
+                      主将からの提案: '改まった様子の主将に、どう向き合いますか？',
+                      雨の日のミーティング:
+                        '雨で練習ができない今日、部室でどう過ごしますか？',
+                    };
+                    const choices: EventStillsChoice[] = [
+                      {
+                        id: 'team',
+                        label: '全員で話し合う',
+                        hints: [
+                          { label: '連携+7', positive: true },
+                          { label: '士気+8', positive: true },
+                        ],
+                      },
+                      {
+                        id: 'individual',
+                        label: '個別に指導する',
+                        hints: [{ label: `${repPlayer.name}の全能力+2`, positive: true }],
+                      },
+                    ];
+                    const resolveResult = (choiceId: string): EventStillsResult =>
+                      choiceId === 'team'
+                        ? {
+                            text: '部員全員でじっくり話し合い、チームの結びつきが強まった。',
+                            effects: [
+                              { label: '連携+7', positive: true },
+                              { label: '士気+8', positive: true },
+                            ],
+                          }
+                        : {
+                            text: `${repPlayer.name}と1対1で向き合い、丁寧に指導した。`,
+                            effects: [
+                              { label: `${repPlayer.name}の全能力+2`, positive: true },
+                            ],
+                          };
+                    return (
+                      <section className="event-panel-stills" aria-label="クラブイベント">
+                        <EventStills
+                          key={`${s.event}-${s.week}-${s.season}`}
+                          scenePanels={scenePanels}
+                          playerName={repPlayer.name}
+                          portraitIndex={repPlayer.identity.portrait}
+                          kicker={
+                            <>
+                              <Flag size={14} /> CLUB EVENT
+                            </>
+                          }
+                          heading={s.event}
+                          metaLine="今週は、どんな時間を大切にしますか？"
+                          momentNarration={
+                            momentByEvent[s.event] ??
+                            `${s.event}。どちらの方針で臨みますか？`
+                          }
+                          choices={choices}
+                          resolveResult={resolveResult}
+                          onCommit={(choiceId) => {
+                            playSfx('click');
+                            run({ type: 'event', choice: choiceId as 'team' | 'individual' });
+                          }}
+                        />
+                      </section>
+                    );
+                  })()}
                 <LifeEventPanel
                   state={s}
                   onChoose={(choiceId) => {
@@ -1048,6 +1164,17 @@ export default function Game() {
           <p className="muted">
             ブラウザのデータ削除やプライベートモード終了でセーブが消えることがあります。定期的な書き出しをおすすめします。
           </p>
+          <h3>テーマ</h3>
+          <Choices
+            label="テーマ"
+            value={theme}
+            onChange={(v) => setTheme(v as ThemePref)}
+            items={[
+              { value: 'system', label: '端末に合わせる' },
+              { value: 'light', label: 'ライト' },
+              { value: 'dark', label: 'ダーク' },
+            ]}
+          />
           <h3>サウンド</h3>
           <AudioSettingsPanel />
         </DialogContent>

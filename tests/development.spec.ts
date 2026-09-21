@@ -65,7 +65,9 @@ test('v2 match: command, contextual coaching, real highlight canvas and replay d
   await expect(page.getByRole('button', { name: '挑戦をほめる' })).toHaveCount(
     0,
   );
-  await expect(page.locator('.cinema canvas')).toBeVisible();
+  // W8: 試合ハイライトは Canvas の映像風ハイライトから、真上視点で点が動く
+  // Football Manager 風の SVG 戦術図に置き換わった（app/match-cinema.tsx）。
+  await expect(page.locator('.cinema svg.fm-pitch')).toBeVisible();
   const before = await page.locator('.score>strong').innerText();
   await page.getByRole('button', { name: 'リプレイ', exact: true }).click();
   await page

@@ -241,7 +241,18 @@ function SubstitutionDialog({
   const capReached = m.subs >= 3;
   const outPlayer = outgoing != null ? s.players.find((p) => p.id === outgoing) : null;
   const inPlayer = incoming != null ? s.players.find((p) => p.id === incoming) : null;
+  // SubstitutionDialog は match-ui.tsx 側で m.done の間はそもそも描画されない
+  // （試合終了後は MatchSummary に差し替わる）ため、m.done は防御的にだけ残す。
   const canConfirm = !m.done && !capReached && outgoing != null && incoming != null;
+  // 確定できない理由。DADSの「押すと理由を直下の補足文で示す」に沿って、
+  // 確定ボタンの近くに常時表示する（トーストを待たず先に伝える）。
+  const blockReason = capReached
+    ? '交代枠（3人）を使い切りました。'
+    : outgoing == null
+      ? '下げる選手も選んでください。'
+      : incoming == null
+        ? '入れる選手も選んでください。'
+        : null;
   const confirm = () => {
     if (!canConfirm || outgoing == null || incoming == null) return;
     const idx = s.lineup.indexOf(outgoing);
@@ -274,7 +285,7 @@ function SubstitutionDialog({
                     key={p.id}
                     type="button"
                     className={`sub-pick ${outgoing === p.id ? 'selected' : ''}`}
-                    disabled={m.done || capReached}
+                    aria-disabled={capReached}
                     aria-pressed={outgoing === p.id}
                     onClick={() => {
                       setOutgoing(p.id);
@@ -301,14 +312,14 @@ function SubstitutionDialog({
               {s.players
                 .filter((p) => !s.lineup.includes(p.id))
                 .map((p) => {
-                  const disabled =
-                    m.done || m.used.includes(p.id) || capReached || !!p.injury || outgoing == null;
+                  const locked =
+                    m.used.includes(p.id) || capReached || !!p.injury || outgoing == null;
                   return (
                     <button
                       key={p.id}
                       type="button"
                       className={`sub-pick ${incoming === p.id ? 'selected' : ''}`}
-                      disabled={disabled}
+                      aria-disabled={locked}
                       aria-pressed={incoming === p.id}
                       onClick={() => setIncoming(p.id)}
                     >
@@ -355,12 +366,16 @@ function SubstitutionDialog({
               <button
                 type="button"
                 className="primary"
-                disabled={!canConfirm}
+                aria-disabled={!canConfirm}
                 onClick={confirm}
               >
                 この交代を確定
               </button>
             </div>
+            {blockReason && (
+              // role="status" 相当を意味的なタグで表す（lintのprefer-tag-over-role対応）。
+              <output className="muted sub-hint">{blockReason}</output>
+            )}
           </div>
         )}
       </DialogContent>
@@ -766,12 +781,14 @@ export function MatchView({
               <p className="muted">
                 相手：{tactics[m.fixture.style].name} / 総合力 {m.fixture.strength}
               </p>
+              {/* この一帯は m.done の間は描画されず（上の分岐でMatchSummaryに
+                  置き換わる）disabled={m.done} は常にfalseの死んだ条件だったため、
+                  DADSの方針どおりそもそも付けない。 */}
               <RadioGroup
                 className="tactic-grid"
                 aria-label="試合の戦術"
                 value={m.tactic}
                 onValueChange={(v) => run({ type: 'tactic', tactic: v as Tactic })}
-                disabled={m.done}
               >
                 {(Object.keys(tactics) as Tactic[]).map((key) => (
                   <label
@@ -790,7 +807,6 @@ export function MatchView({
               <Choices
                 label="攻守の意識"
                 value={m.mentality}
-                disabled={m.done}
                 onChange={(v) =>
                   run({
                     type: 'mentality',
@@ -808,10 +824,15 @@ export function MatchView({
                 <h3>交代</h3>
                 <span className="subs-counter">交代 {m.subs} / 3</span>
               </div>
+              {/* 交代する選手を選ぶ、は「次の15分を進める」と同じ画面に同時に出る
+                  ため、DADSの「塗り(Primary)は1画面1つ」に合わせて枠線(Secondary)に
+                  格下げした。交代枠3人使用後もダイアログ自体は開け、枠を使い切った
+                  旨の案内とcapReachedによる見た目のトーン落としで示す（disabled は
+                  使わない）。 */}
               <button
                 type="button"
-                className="primary sub-open-btn"
-                disabled={m.done || m.subs >= 3}
+                className="secondary sub-open-btn"
+                aria-disabled={m.subs >= 3}
                 onClick={() => openSub({})}
               >
                 <ArrowRightLeft size={17} /> 交代する選手を選ぶ
@@ -822,7 +843,8 @@ export function MatchView({
                   .map((p) => (
                     <button
                       key={p.id}
-                      disabled={m.done || m.used.includes(p.id) || m.subs >= 3 || !!p.injury}
+                      type="button"
+                      aria-disabled={m.used.includes(p.id) || m.subs >= 3 || !!p.injury}
                       onClick={() => openSub({ incoming: p.id })}
                     >
                       <Portrait

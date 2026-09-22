@@ -95,18 +95,18 @@ function AudioRow({
           min={0}
           max={100}
           step={5}
-          disabled={!on}
           onValueChange={(v) => onVolume((Array.isArray(v) ? v[0] : v) / 100)}
-          aria-label={`${label}の音量`}
+          aria-label={`${label}の音量。オフの間も設定でき、オンにすると反映されます`}
         />
         <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
           {pct(volume)}%
         </span>
-        {onPreview && (
+        {/* オフの間は試聴しても無音（lib/audio.ts が早期returnする）で押す意味がないため、
+            DADSの「その状況で押す意味がない場合は要素ごと出さない」に沿って非表示にする。 */}
+        {onPreview && on && (
           <button
             type="button"
-            className="shrink-0 rounded-md border border-border/60 px-2 py-1 text-xs text-muted-foreground hover:bg-muted/40 disabled:opacity-40 disabled:pointer-events-none"
-            disabled={!on}
+            className="shrink-0 rounded-md border border-border/60 px-2 py-1 text-xs text-muted-foreground hover:bg-muted/40 min-h-11"
             onClick={() => {
               primeAudio();
               onPreview();

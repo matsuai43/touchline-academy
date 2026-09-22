@@ -25,7 +25,22 @@ test('v2 future: policy locks, manager motivates, scouting is limited, mobile ca
   const card = page.locator('.scout-card').first();
   await card.getByRole('button', { name: '視察 / 3' }).click();
   await expect(page.getByText('今週の活動は完了')).toBeVisible();
-  await expect(card.getByRole('button', { name: '面談 / 5' })).toBeDisabled();
+  // D2a: 週1回制限のスカウト活動は disabled にせず、押せる状態のまま
+  // aria-disabled="true" で見た目だけ落ち着かせる。押すと lib 側の検証が働き、
+  // 理由がトーストに出て状態は変わらない（連打で追加の活動はできない）。
+  const visitBtn = card.getByRole('button', { name: '面談 / 5' });
+  await expect(visitBtn).toHaveAttribute('aria-disabled', 'true');
+  // 実DOMのdisabledプロパティはfalseのまま（disabled属性を使っていない証拠）。
+  // Playwrightの toBeEnabled()/.click() は aria-disabled="true" も disabled 扱いして
+  // 素通りしてくれない（アクショナビリティ判定に含まれるため）ので、実際のクリック
+  // イベントで検証する（force はPlaywright側の待機を止めるだけで、実ブラウザの
+  // クリックそのものは常に通る＝実ユーザーの操作を再現する）。
+  expect(await visitBtn.evaluate((el) => (el as HTMLButtonElement).disabled)).toBe(false);
+  await visitBtn.click({ force: true });
+  await expect(
+    page.getByText('スカウト活動は週に1回', { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByText('今週の活動は完了')).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),

@@ -36,12 +36,15 @@ test('player dialog and substitution dialog always release the page; substitutio
   await expect(overlay).toHaveCount(1);
   const columns=page.locator('.sub-column');
   await columns.nth(0).locator('.sub-pick').first().click();
-  await columns.nth(1).locator('.sub-pick:not([disabled])').first().click();
+  await columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first().click();
   await page.getByRole('button',{name:'この交代を確定'}).click();
   await expect(overlay).toHaveCount(0);
   await expect(page.getByText(`交代 ${n+1} / 3`).first()).toBeVisible();
  }
- await expect(page.getByRole('button',{name:'交代する選手を選ぶ'})).toBeDisabled();
+ // D2a: disabledではなくaria-disabledで見た目だけ落ち着かせる（実DOMのdisabledは使わない）。
+ const openBtn = page.getByRole('button',{name:'交代する選手を選ぶ'});
+ await expect(openBtn).toHaveAttribute('aria-disabled','true');
+ expect(await openBtn.evaluate((el)=>(el as HTMLButtonElement).disabled)).toBe(false);
  for(let i=0;i<3;i++)await page.getByRole('button',{name:'次の15分を進める'}).click();
  await expect(page.getByText('HALF TIME',{exact:true})).toBeVisible();expect(errors).toEqual([]);
 });

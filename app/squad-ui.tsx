@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { Progress } from '@/components/ui/progress';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   Table,
   TableHeader,
@@ -220,22 +221,37 @@ export function SquadPanel({
             </button>
           ))}
         </div>
-        <label className="squad-sort">
-          並び替え
-          <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
-            <option value="overall">総合力</option>
-            <option value="name">名前</option>
-            <option value="fatigue">疲労</option>
-            <option value="skills">特殊能力数</option>
-          </select>
-        </label>
+        <div className="squad-sort">
+          <span>並び替え</span>
+          {/* DADS: 選択肢が5つ以下のセレクトはラジオボタンにする。 */}
+          <RadioGroup
+            className="sort-options"
+            aria-label="並び替え"
+            value={sort}
+            onValueChange={(v) => setSort(v as typeof sort)}
+          >
+            {(
+              [
+                ['overall', '総合力'],
+                ['name', '名前'],
+                ['fatigue', '疲労'],
+                ['skills', '特殊能力数'],
+              ] as const
+            ).map(([v, label]) => (
+              <label key={v} className={sort === v ? 'active' : ''}>
+                <RadioGroupItem value={v} />
+                {label}
+              </label>
+            ))}
+          </RadioGroup>
+        </div>
       </div>
       {groups.map(({ g, list }) => (
         <div className="squad-group" key={g}>
           <h3 className="squad-group-title">
             {groupLabel[g]} <span className="muted">{list.length}名</span>
           </h3>
-          <Table>
+          <Table aria-label={`${groupLabel[g]}の一覧表（横にスクロールできます）`}>
             <TableHeader>
               <TableRow>
                 <TableHead>選手 / 学年</TableHead>

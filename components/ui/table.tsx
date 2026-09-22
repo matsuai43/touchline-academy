@@ -4,11 +4,22 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 
-function Table({ className, ...props }: React.ComponentProps<'table'>) {
+function Table({
+  className,
+  'aria-label': ariaLabel,
+  ...props
+}: React.ComponentProps<'table'> & { 'aria-label'?: string }) {
   return (
+    // DADS 12「表」: モバイルは表の中だけで横スクロールさせ、スクロールできることを
+    // 影で示す。スクロール領域はキーボードで操作できるよう tabIndex + aria-label を持つ
+    // （WAI-ARIAのスクロール可能領域パターンに沿った意図的な指定。lintのnon-interactive
+    // 判定は誤検出のため無効化する）。
     <div
       data-slot="table-container"
-      className="relative w-full overflow-x-auto"
+      className="relative w-full overflow-x-auto table-scroll-shadow"
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+      tabIndex={0}
+      aria-label={ariaLabel ?? '表（横にスクロールできます）'}
     >
       <table
         data-slot="table"

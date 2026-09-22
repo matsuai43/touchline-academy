@@ -689,12 +689,14 @@ export default function Game() {
                       </div>
                       <span className="muted">1回で1週間進行</span>
                     </div>
+                    {/* 練習メニューを選ぶだけでは何も進行しない（ローカルなプレビュー
+                        状態）ため、試合・イベント待ちの間も選ばせて構わない。実際に
+                        週を進める操作は下のボタン側でガードする。 */}
                     <RadioGroup
                       className="training-grid"
                       value={plan}
                       onValueChange={(v) => setPlan(v as Training)}
                       aria-label="練習メニュー"
-                      disabled={!!s.pending || !!s.event || !!s.v3.life.current}
                     >
                       {(Object.keys(training) as Training[]).map((key) => {
                         const t = training[key],
@@ -731,7 +733,7 @@ export default function Game() {
                       </div>
                       <button
                         className="primary"
-                        disabled={!!s.pending || !!s.event || !!s.v3.life.current}
+                        aria-disabled={!!s.pending || !!s.event || !!s.v3.life.current}
                         onClick={() => {
                           playSfx('click');
                           run({ type: 'train', training: plan });
@@ -826,7 +828,7 @@ export default function Game() {
                       </div>
                       <button
                         className="secondary"
-                        disabled={
+                        aria-disabled={
                           s.funds < s.facilities * 40 || s.facilities >= 5
                         }
                         onClick={() => run({ type: 'upgrade' })}
@@ -1094,9 +1096,10 @@ export default function Game() {
               <div className="assignment-grid">
                 {roster(s).map((p, i) => (
                   <button
+                    type="button"
                     className="assignment"
                     key={i}
-                    disabled={
+                    aria-disabled={
                       s.match
                         ? !!s.match.done ||
                           s.match.used.includes(player.id) ||

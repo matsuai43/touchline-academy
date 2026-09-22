@@ -40,7 +40,7 @@ test('substitution dialog: pick outgoing then incoming, cancel resets, confirm a
 
   const columns = page.locator('.sub-column');
   const pitchPick = columns.nth(0).locator('.sub-pick').first();
-  const benchPick = columns.nth(1).locator('.sub-pick:not([disabled])').first();
+  const benchPick = columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first();
 
   // 確定ボタンは、下げる選手・入れる選手の両方を選ぶまでは表示/有効化されない。
   await expect(page.getByRole('button', { name: 'この交代を確定' })).toHaveCount(0);
@@ -69,7 +69,7 @@ test('substitution dialog: pick outgoing then incoming, cancel resets, confirm a
   expect(errors).toEqual([]);
 });
 
-test('substitution cap: bench entries disable once used, and the trigger disables at 3 subs', async ({
+test('substitution cap: bench entries mark aria-disabled once used, and the trigger marks aria-disabled at 3 subs (but stays pressable and explains why)', async ({
   page,
 }) => {
   await withSave(page, startedMatch('交代上限検証高校', 777));
@@ -79,12 +79,37 @@ test('substitution cap: bench entries disable once used, and the trigger disable
     await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
     const columns = page.locator('.sub-column');
     await columns.nth(0).locator('.sub-pick').first().click();
-    await columns.nth(1).locator('.sub-pick:not([disabled])').first().click();
+    await columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first().click();
     await page.getByRole('button', { name: 'この交代を確定' }).click();
     await expect(overlay).toHaveCount(0);
     await expect(page.getByText(`交代 ${n + 1} / 3`)).toBeVisible();
   }
-  await expect(page.getByRole('button', { name: '交代する選手を選ぶ' })).toBeDisabled();
+  // D2a: DADSはdisabledを避ける方針のため、交代枠を使い切った後も
+  // 「交代する選手を選ぶ」ボタンは押せる状態のまま（aria-disabled="true"で見た目だけ
+  // 落ち着かせる）。押すとダイアログが開き、枠を使い切った旨の案内が出る。
+  const openBtn = page.getByRole('button', { name: '交代する選手を選ぶ' });
+  await expect(openBtn).toHaveAttribute('aria-disabled', 'true');
+  // 実DOMのdisabledプロパティはfalseのまま（disabled属性を使っていない証拠）。
+  // Playwrightの.click()はaria-disabled="true"もアクショナビリティ判定で弾くため、
+  // 実ユーザーのクリックを再現するforce:trueで押す。
+  expect(await openBtn.evaluate((el) => (el as HTMLButtonElement).disabled)).toBe(false);
+  await openBtn.click({ force: true });
+  await expect(overlay).toHaveCount(1);
+  await expect(page.getByText('交代枠を使い切りました。')).toBeVisible();
+  // ピッチ上の選手・ベンチの選手を選んでも、確定ボタンは押せる状態のまま
+  // aria-disabled="true" になり、直下に理由が表示される。枠を使い切った後は
+  // ピッチ側の選択ボタンも aria-disabled="true" になるが、これも押せる。
+  const columns = page.locator('.sub-column');
+  await columns.nth(0).locator('.sub-pick').first().click({ force: true });
+  const confirmBtn = page.getByRole('button', { name: 'この交代を確定' });
+  await expect(confirmBtn).toHaveAttribute('aria-disabled', 'true');
+  // 交代枠を使い切っている間は、入れる選手を選んでいなくても理由は
+  // 「枠を使い切った」が優先して出る（blockReasonの判定順）。
+  await expect(page.getByText('交代枠（3人）を使い切りました。')).toBeVisible();
+  await confirmBtn.click({ force: true });
+  // 押しても交代は成立しない（枠は3のまま、ダイアログも開いたまま）。
+  await expect(overlay).toHaveCount(1);
+  await expect(page.getByText('交代 3 / 3').first()).toBeVisible();
 });
 
 test('post-match summary: shows MOTM, timeline, stat comparison and per-player growth, then returns to the clubhouse', async ({

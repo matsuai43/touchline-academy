@@ -88,11 +88,11 @@ export function PrefectureSelectPanel({
             key={d.id}
             type="button"
             onClick={() => onChoosePrefecture(d.id)}
-            disabled={d.id === current}
+            aria-pressed={d.id === current}
             className={
               'flex min-h-11 flex-col items-start gap-1 rounded-lg border px-3 py-2 text-left transition-colors ' +
               (d.id === current
-                ? 'border-primary/60 bg-primary/10 cursor-default'
+                ? 'border-primary/60 bg-primary/10'
                 : 'border-border/60 bg-muted/20 hover:bg-muted/50 hover:border-border')
             }
           >
@@ -189,7 +189,7 @@ export function CompetitionPanel({
         </div>
 
         <div className="overflow-x-auto">
-          <Table>
+          <Table aria-label="リーグ成績表（横にスクロールできます）">
             <TableHeader>
               <TableRow>
                 <TableHead>チーム</TableHead>

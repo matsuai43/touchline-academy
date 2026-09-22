@@ -157,27 +157,37 @@ export function DevelopmentView({
               <p className="muted">
                 残り{left}週。確定後は次の半年まで変更できません。
               </p>
-              <RadioGroup
-                className="plan-cards"
-                value={d.plan || draft}
-                aria-label="半年の育成方針"
-                onValueChange={(v) => setDraft(v as PlanKey)}
-                disabled={!!d.plan}
-              >
-                {(Object.keys(plans) as PlanKey[]).map((k) => (
-                  <label
-                    className={(d.plan || draft) === k ? 'selected' : ''}
-                    key={k}
-                  >
-                    <RadioGroupItem value={k} />
-                    <div>
-                      <h3>{plans[k].name}</h3>
-                      <p>{plans[k].desc}</p>
-                      <small>目標：対応する専門練習を8週実施</small>
-                    </div>
-                  </label>
-                ))}
-              </RadioGroup>
+              {d.plan ? (
+                // 確定済みの半年方針は選び直せない（lib/development.ts が確定済みなら
+                // throwする）。DADSは無効化(disabled)より「その状況で押す意味がない
+                // 選択肢は出さない」を推奨するため、ラジオではなく決定済みの1枚だけを
+                // 読み取り専用で表示する。
+                <div className="plan-cards" aria-label="確定した半年の育成方針">
+                  <div className="selected plan-card-locked">
+                    <h3>{plans[d.plan].name}</h3>
+                    <p>{plans[d.plan].desc}</p>
+                    <small>目標：対応する専門練習を8週実施</small>
+                  </div>
+                </div>
+              ) : (
+                <RadioGroup
+                  className="plan-cards"
+                  value={draft}
+                  aria-label="半年の育成方針"
+                  onValueChange={(v) => setDraft(v as PlanKey)}
+                >
+                  {(Object.keys(plans) as PlanKey[]).map((k) => (
+                    <label className={draft === k ? 'selected' : ''} key={k}>
+                      <RadioGroupItem value={k} />
+                      <div>
+                        <h3>{plans[k].name}</h3>
+                        <p>{plans[k].desc}</p>
+                        <small>目標：対応する専門練習を8週実施</small>
+                      </div>
+                    </label>
+                  ))}
+                </RadioGroup>
+              )}
               {!d.plan ? (
                 <button
                   className="primary"
@@ -320,9 +330,12 @@ export function DevelopmentView({
                       <p>接触条件：学校の評判 {c.required}</p>
                     ) : (
                       <div className="scout-actions">
+                        {/* disabled は使わず aria-disabled で見た目だけ落ち着かせる。
+                            押した場合は lib/development.ts 側の検証がそのまま働き、
+                            理由（週1回制限・部費不足など）が既存のトーストに出る。 */}
                         <button
                           className="secondary"
-                          disabled={used || c.scouted || s.funds < 3}
+                          aria-disabled={used || c.scouted || s.funds < 3}
                           onClick={() =>
                             run({ type: 'scout', id: c.id, mode: 'observe' })
                           }
@@ -331,7 +344,7 @@ export function DevelopmentView({
                         </button>
                         <button
                           className="secondary"
-                          disabled={used || !c.scouted || s.funds < 5}
+                          aria-disabled={used || !c.scouted || s.funds < 5}
                           onClick={() =>
                             run({ type: 'scout', id: c.id, mode: 'visit' })
                           }
@@ -340,7 +353,7 @@ export function DevelopmentView({
                         </button>
                         <button
                           className="primary"
-                          disabled={
+                          aria-disabled={
                             used ||
                             !c.scouted ||
                             c.interest < 70 ||
@@ -452,11 +465,14 @@ export function MatchCommands({
   return (
     <details className="detailed-commands" open>
       <summary>細かなチーム指示・個人の役割</summary>
+      {/* MatchCommands は match-ui.tsx から試合中（!m.done）にしか呼ばれないため、
+          m.done を理由にした無効化は常にfalseの死んだ分岐だった。DADSはdisabledを
+          非推奨とするので、そもそも付けない（押しても常に有効。lib/development.ts
+          側のtype:'command'ガードは試合終了後の防御として引き続き効く）。 */}
       <h3>攻撃の経路</h3>
       <Options
         label="攻撃の経路"
         value={c.lane}
-        disabled={m.done}
         onChange={(v) => send('lane', v)}
         items={[
           { id: 'mixed', name: '自由に' },
@@ -468,7 +484,6 @@ export function MatchCommands({
       <Options
         label="テンポ"
         value={c.tempo}
-        disabled={m.done}
         onChange={(v) => send('tempo', v)}
         items={[
           { id: 'patient', name: 'じっくり' },
@@ -480,7 +495,6 @@ export function MatchCommands({
       <Options
         label="守備ライン"
         value={c.line}
-        disabled={m.done}
         onChange={(v) => send('line', v)}
         items={[
           { id: 'deep', name: '低く' },
@@ -492,7 +506,6 @@ export function MatchCommands({
         個別に役割を伝える選手
         <select
           value={c.player ?? ''}
-          disabled={m.done}
           onChange={(e) =>
             send('player', e.target.value ? +e.target.value : null)
           }
@@ -508,17 +521,20 @@ export function MatchCommands({
           })}
         </select>
       </label>
-      <Options
-        label="個人の役割"
-        value={c.role}
-        disabled={m.done || c.player === null}
-        onChange={(v) => send('role', v)}
-        items={[
-          { id: 'free', name: '自由に判断' },
-          { id: 'attack', name: '積極的に仕掛ける' },
-          { id: 'cover', name: '守備を優先' },
-        ]}
-      />
+      {/* 個人の役割は対象選手を指定して初めて意味を持つため、未指定の間は
+          選択肢ごと出さない（DADS: 押す意味がない場合は要素を出さない）。 */}
+      {c.player !== null && (
+        <Options
+          label="個人の役割"
+          value={c.role}
+          onChange={(v) => send('role', v)}
+          items={[
+            { id: 'free', name: '自由に判断' },
+            { id: 'attack', name: '積極的に仕掛ける' },
+            { id: 'cover', name: '守備を優先' },
+          ]}
+        />
+      )}
       <p className="muted">
         サイドは走力、中央はパスを活用。速いテンポは好機と疲労が増加。高いラインは相手のカウンターに注意。守備優先は攻撃の機会も減ります。
       </p>

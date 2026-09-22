@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { Star } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
@@ -272,7 +273,12 @@ export function SquadPanel({
                       <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
                       <span className="roster-name">
                         {p.name}
-                        {s.focus === p.id && <span className="focus-dot">★</span>}
+                        {s.focus === p.id && (
+                          <span className="focus-dot">
+                            <Star size={12} aria-hidden="true" fill="currentColor" />
+                            <span className="sr-only">重点育成中</span>
+                          </span>
+                        )}
                         <small>
                           {p.year}年 /{' '}
                           {p.injury

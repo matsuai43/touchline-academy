@@ -352,7 +352,7 @@ export function DevelopmentView({
                           面談 / 5
                         </button>
                         <button
-                          className="primary"
+                          className="secondary"
                           aria-disabled={
                             used ||
                             !c.scouted ||

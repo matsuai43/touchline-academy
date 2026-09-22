@@ -19,6 +19,7 @@
 // 白地に濃色文字の固定色（吹き出し内で4.5:1以上）。
 
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { ChevronLeft } from 'lucide-react';
 import { Portrait } from './development-ui';
 import type { SceneId, SceneTime, EventScenePanel } from '@/lib/event-scenes';
 import { SCENE_LABELS } from '@/lib/event-scenes';
@@ -506,7 +507,8 @@ export function EventStills({
           aria-disabled={pageIndex === 0}
           onClick={goPrev}
         >
-          ← 前へ
+          <ChevronLeft size={16} aria-hidden="true" />
+          前へ
         </button>
         <span className="es-dots" aria-hidden="true">
           {scenePanels.map((_, i) => (

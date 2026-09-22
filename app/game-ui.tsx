@@ -32,6 +32,7 @@ import {
   Save,
   Settings2,
   Shield,
+  Star,
   Target,
   Trophy,
   Upload,
@@ -430,6 +431,7 @@ export default function Game() {
         <main
           id="main"
           className="main-content"
+          tabIndex={-1}
           ref={mainRef}
           onScroll={(e) => {
             scrollMemory.current[tab] = e.currentTarget.scrollTop;
@@ -1077,9 +1079,14 @@ export default function Game() {
                       })
                     }
                   >
-                    {s.focus === player.id
-                      ? '★ 重点育成を解除'
-                      : '重点育成に指定する / 成長1.5倍'}
+                    {s.focus === player.id ? (
+                      <>
+                        <Star size={14} aria-hidden="true" fill="currentColor" />
+                        重点育成を解除
+                      </>
+                    ) : (
+                      '重点育成に指定する / 成長1.5倍'
+                    )}
                   </button>
                   {s.v3.squad.players[player.id] && (
                     <SquadTeamToggle

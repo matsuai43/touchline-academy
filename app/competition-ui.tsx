@@ -15,7 +15,7 @@
 // <style> タグ（クラス名は lt- 接頭辞）で完結させている。globals.css は一切変更しない。
 
 import { useState } from 'react';
-import { MapPin, Star, Trophy, Users2, ShieldHalf, ArrowUpCircle, ArrowDownCircle, X } from 'lucide-react';
+import { MapPin, Star, Trophy, ShieldHalf, ArrowUpCircle, ArrowDownCircle, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
@@ -39,7 +39,6 @@ import {
   relegationZoneActive,
   type District,
   type LeagueTier,
-  type TeamLeagueState,
   type CupState,
 } from '@/lib/competition';
 
@@ -117,59 +116,62 @@ function tierBadge(tier: LeagueTier) {
   return <Badge variant={variant}>{tierInfo[tier].name}</Badge>;
 }
 
-function TeamStandingRow({ label, team }: { label: string; team: TeamLeagueState }) {
-  return (
-    <TableRow>
-      <TableCell className="font-medium">{label}</TableCell>
-      <TableCell>{tierBadge(team.tier)}</TableCell>
-      <TableCell className="text-right">{team.played}</TableCell>
-      <TableCell className="text-right">{team.win}</TableCell>
-      <TableCell className="text-right">{team.draw}</TableCell>
-      <TableCell className="text-right">{team.lose}</TableCell>
-      <TableCell className="text-right">
-        {team.gf}-{team.ga}
-      </TableCell>
-      <TableCell className="text-right font-semibold">{team.points}</TableCell>
-      <TableCell className="text-right text-muted-foreground">
-        {team.lastRank ? `${team.lastRank}位` : '—'}
-      </TableCell>
-    </TableRow>
-  );
-}
-
 function outcomeLabel(outcome: 'win' | 'draw' | 'lose'): string {
   return outcome === 'win' ? '勝' : outcome === 'draw' ? '分' : '負';
 }
 
 /**
- * T4.1: Aチームの順位表（自校＋7クラブ、他校同士の試合も実際に消化した結果から算出）。
- * 残り試合数・次節の相手・首位との勝ち点差を表示し、昇格圏・降格圏は色＋アイコン＋
+ * T4.1/T4.3: 指定チーム（A/B）の順位表（自校＋7クラブ、他校同士の試合も実際に消化した結果から
+ * 算出）。残り試合数・次節の相手・首位との勝ち点差を表示し、昇格圏・降格圏は色＋アイコン＋
  * 凡例テキストで示す（色だけに頼らない）。自校の行は強調表示。ライバル校の行をクリックすると
- * そのクラブの今季の戦績一覧（節・相手・スコア・勝敗）を下に展開する。
+ * そのクラブの今季の戦績一覧（節・相手・スコア・勝敗）を下に展開する。Bチームが今季参戦して
+ * いない（comp.teamB が null）場合は、参加条件を示すメッセージだけを表示する。
  */
-function LeagueStandingsSection({ state }: { state: State }) {
-  const comp = readCompetition(state);
-  const { rows, resultsByTeam } = computeLeagueTable(state, comp);
+function LeagueStandingsSection({ state, which }: { state: State; which: 'A' | 'B' }) {
+  // フック呼び出しは常に同じ順序で実行する必要があるため、「Bが今季不在」の早期returnより前に
+  // useState を呼んでおく（未参加時は selectedId は単に使われない）。
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const remaining = leagueRemaining(comp);
-  const next = leagueNextFixture(comp);
+  const comp = readCompetition(state);
+  const team = which === 'B' ? comp.teamB : comp.teamA;
+  const teamLabel = which === 'B' ? 'Bチーム' : 'Aチーム';
+  if (!team) {
+    return (
+      <section
+        className="flex flex-col gap-2 rounded-xl border border-border/60 bg-card p-4 shadow-sm"
+        aria-label={`${teamLabel}のU18リーグ順位表`}
+      >
+        <div className="flex items-center gap-2">
+          <Trophy size={14} className="text-muted-foreground" />
+          <h3 className="text-sm font-semibold">{teamLabel}・順位表</h3>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Bチームは今季リーグに参加していません（参加条件: 評判55以上・B所属11人以上）
+        </p>
+      </section>
+    );
+  }
+  const { rows, resultsByTeam } = computeLeagueTable(state, comp, state.season, which);
+  const remaining = leagueRemaining(comp, which);
+  const next = leagueNextFixture(comp, which);
   const leader = rows[0];
   const self = rows.find((r) => r.isSelf);
   const behind = leader && self ? Math.max(0, leader.points - self.points) : 0;
   const isLeading = !!leader && !!self && leader.teamId === self.teamId;
-  const promoActive = promotionZoneActive(comp.teamA.tier);
-  const relActive = relegationZoneActive(comp.teamA.tier);
+  const promoActive = promotionZoneActive(team.tier);
+  const relActive = relegationZoneActive(team.tier);
   const selectedRow = selectedId ? rows.find((r) => r.teamId === selectedId) : null;
   const selectedResults = selectedId ? (resultsByTeam[selectedId] ?? []) : [];
 
   return (
     <section
       className="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-4 shadow-sm"
-      aria-label="U18リーグ順位表"
+      aria-label={`${teamLabel}のU18リーグ順位表`}
     >
       <div className="flex items-center gap-2">
         <Trophy size={14} className="text-muted-foreground" />
-        <h3 className="text-sm font-semibold">{tierInfo[comp.teamA.tier].name}・順位表</h3>
+        <h3 className="text-sm font-semibold">
+          {teamLabel}・{tierInfo[team.tier].name}・順位表
+        </h3>
       </div>
 
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -487,6 +489,75 @@ function LeagueStandingsSection({ state }: { state: State }) {
   );
 }
 
+/**
+ * T4.3: A/Bチームの順位表を切り替えて表示するトグル（2択の状態切り替え。既存の赴任先選択
+ * ボタンと同じ流儀で aria-pressed を使う。role="radio" はセマンティックHTML優先の方針
+ * （lint: jsx-a11y/prefer-tag-over-role）に反するため使わない）。Bチーム側は
+ * LeagueStandingsSection 自身が「今季参加していません」のメッセージを出す。
+ */
+function LeagueSection({ state }: { state: State }) {
+  const [which, setWhich] = useState<'A' | 'B'>('A');
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="lt-team-toggle" aria-label="表示するチームの切り替え">
+        <button
+          type="button"
+          aria-pressed={which === 'A'}
+          className={`lt-team-toggle-btn${which === 'A' ? ' lt-team-toggle-active' : ''}`}
+          onClick={() => setWhich('A')}
+        >
+          Aチーム
+        </button>
+        <button
+          type="button"
+          aria-pressed={which === 'B'}
+          className={`lt-team-toggle-btn${which === 'B' ? ' lt-team-toggle-active' : ''}`}
+          onClick={() => setWhich('B')}
+        >
+          Bチーム
+        </button>
+      </div>
+      <LeagueStandingsSection state={state} which={which} />
+      <style>{`
+        .lt-team-toggle {
+          display: inline-flex;
+          gap: 4px;
+          padding: 3px;
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          background: var(--muted);
+          width: fit-content;
+        }
+        .lt-team-toggle-btn {
+          min-height: 44px;
+          min-width: 44px;
+          padding: 6px 14px;
+          border: none;
+          border-radius: 7px;
+          background: transparent;
+          font-size: 13px;
+          font-weight: 400;
+          color: var(--muted-foreground);
+          cursor: pointer;
+        }
+        .lt-team-toggle-btn:hover {
+          color: var(--foreground);
+        }
+        .lt-team-toggle-btn:focus-visible {
+          outline: 3px solid var(--primary);
+          outline-offset: 2px;
+        }
+        .lt-team-toggle-active {
+          background: var(--card);
+          color: var(--foreground);
+          font-weight: 700;
+          box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
+        }
+      `}</style>
+    </div>
+  );
+}
+
 function CupStatus({ name, cup }: { name: string; cup: CupState }) {
   return (
     <div className="flex flex-col gap-1 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
@@ -550,43 +621,7 @@ export function CompetitionPanel({
         </div>
       </section>
 
-      <LeagueStandingsSection state={state} />
-
-      {/* T4.1: Bチームは他校同士の試合を実消化する順位表の対象外（時間の都合でAチームのみ）。
-          Bチームの成績はこれまでどおり即時シミュレーション結果の要約表示にとどめる。 */}
-      <section className="flex flex-col gap-2 rounded-xl border border-border/60 bg-card p-4 shadow-sm" aria-label="Bチームの成績">
-        <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-          <Users2 size={14} />
-          Bチーム
-        </div>
-        {comp.teamB ? (
-          <div className="overflow-x-auto">
-            <Table aria-label="Bチーム成績表（横にスクロールできます）">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>チーム</TableHead>
-                  <TableHead>階層</TableHead>
-                  <TableHead className="text-right">試</TableHead>
-                  <TableHead className="text-right">勝</TableHead>
-                  <TableHead className="text-right">分</TableHead>
-                  <TableHead className="text-right">負</TableHead>
-                  <TableHead className="text-right">得失</TableHead>
-                  <TableHead className="text-right">点</TableHead>
-                  <TableHead className="text-right">前季</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TeamStandingRow label="Bチーム" team={comp.teamB} />
-              </TableBody>
-            </Table>
-          </div>
-        ) : (
-          <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            <Users2 size={14} />
-            Bチームはまだリーグに参戦していません（学校評判と部員数が育つと自動参戦します）
-          </span>
-        )}
-      </section>
+      <LeagueSection state={state} />
 
       {comp.history.length > 0 && (
         <section className="flex flex-col gap-2 rounded-xl border border-border/60 bg-card p-4 shadow-sm" aria-label="大会の歴史">

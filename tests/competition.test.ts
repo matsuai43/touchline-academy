@@ -519,3 +519,184 @@ void test('legacy saves without a results log fall back to zero self-history but
   const anyClub = rows.find((r) => !r.isSelf)!;
   assert.ok(anyClub.played > 0, '他校同士の試合はログが無くても再現されるはず');
 });
+
+// ---------------------------------------------------------------------------
+// T4.3: Bチームも同じ総当たりの実順位表にそろえる
+// ---------------------------------------------------------------------------
+/** Bチームが参戦できるだけの部員数（B所属11人以上）に育て、評判もしきい値以上にし、
+ *  Aチームを最下層以外にセットしたうえで即座に今季のクラブ・日程（Bを含む）を作り直す。
+ *  自然な入部・卒業サイクルを数シーズン回して部員を増やすのは、既存の
+ *  「team B, when it exists, is always exactly one tier below team A...」テストと同じ流儀。 */
+function growBRoster(name: string, seed: number): State {
+  let s = newGame(name, seed);
+  for (let n = 0; n < 8; n++) for (let i = 0; i < 48; i++) s = step(s);
+  s.reputation = 80;
+  hydrateCompetition(s);
+  const comp = readCompetition(s);
+  comp.teamA.tier = 'regional';
+  comp.seasonGenerated = 0;
+  hydrateCompetition(s);
+  return s;
+}
+
+void test('every league week fields all 8 schools of team B in exactly 4 matches (no byes, no double-booking)', () => {
+  const s = growBRoster('B全校消化検証高校', 61);
+  const comp = readCompetition(s);
+  assert.ok(comp.teamB, '前提: Bチームが参戦しているはず');
+  assert.equal(comp.teamB!.played, LEAGUE_WEEKS.length, 'Bは自動進行で全14節が即座に消化されているはず');
+  const { resultsByTeam } = computeLeagueTable(s, comp, s.season, 'B');
+  const teamIds = ['self', ...comp.teamB!.clubs.map((c) => c.id)];
+  assert.equal(teamIds.length, 8, '自校＋7クラブで8校のはず');
+  for (const week of LEAGUE_WEEKS) {
+    let appearances = 0;
+    for (const id of teamIds) appearances += resultsByTeam[id].filter((r) => r.week === week).length;
+    assert.equal(appearances, 8, `Bの週${week}: 8校それぞれちょうど1試合ずつのはず（実際は${appearances}件）`);
+  }
+  const totalEntries = teamIds.reduce((a, id) => a + resultsByTeam[id].length, 0);
+  assert.equal(totalEntries, 56 * 2, 'Bの延べ試合出場数が8校総当たり56試合の2倍と一致しません');
+});
+
+void test('after team B\'s season, every school (self and all 7 clubs) has played exactly 14 games with consistent points', () => {
+  const s = growBRoster('B14試合検証高校', 62);
+  const comp = readCompetition(s);
+  const { rows } = computeLeagueTable(s, comp, s.season, 'B');
+  assert.equal(rows.length, 8);
+  for (const row of rows) {
+    assert.equal(row.played, 14, `${row.name} のB戦績試合数が14ではありません（${row.played}）`);
+    assert.equal(row.win + row.draw + row.lose, row.played, `${row.name}: B戦績の勝分負の合計が試合数と不一致`);
+    assert.equal(row.win * 3 + row.draw * 1, row.points, `${row.name}: B戦績の勝ち点が3勝1分の計算と不一致`);
+    assert.equal(row.gd, row.gf - row.ga, `${row.name}: B戦績の得失点差の計算が不一致`);
+  }
+});
+
+void test('team B\'s league table is deterministic and independent of team A\'s schedule seed', () => {
+  function run() {
+    const s = growBRoster('B決定性検証高校', 63);
+    const comp = readCompetition(s);
+    return {
+      tableB: JSON.parse(JSON.stringify(computeLeagueTable(s, comp, s.season, 'B'))),
+      scheduleSeedA: comp.teamA.scheduleSeed,
+      scheduleSeedB: comp.teamB!.scheduleSeed,
+    };
+  }
+  const a = run();
+  const b = run();
+  assert.deepEqual(a.tableB, b.tableB, '同じシードでBの順位表が一致しません');
+  assert.notEqual(
+    a.scheduleSeedA,
+    a.scheduleSeedB,
+    'AとBの日程の乱数系列は独立している（scheduleSeedが一致しない）はず',
+  );
+});
+
+void test('team A\'s league table computation never reads team B\'s data (removing team B leaves A\'s table unchanged)', () => {
+  let s = growBRoster('A非依存検証高校', 4400);
+  const comp = readCompetition(s);
+  assert.ok(comp.teamB, '前提: Bチームが存在する状態で比較する');
+  const withB = JSON.parse(JSON.stringify(computeLeagueTable(s, comp, s.season, 'A')));
+  const savedTeamB = comp.teamB;
+  comp.teamB = null; // Aの計算がteamBを参照しているなら、ここで結果が変わってしまうはず
+  const withoutB = JSON.parse(JSON.stringify(computeLeagueTable(s, comp, s.season, 'A')));
+  comp.teamB = savedTeamB;
+  assert.deepEqual(withoutB, withB, 'Aの順位表計算はteamBのデータを一切参照していないはず');
+
+  // 季をまたぐ生成も同様: Bのクラブ生成・自動進行は s.seed を消費しない決定的なハッシュのみ
+  // なので、実際に1シーズンプレイしてもAのscheduleSeed（＝季の切り替え時点のs.seed）は
+  // Bの有無に影響されず、単に季ごとに新しい値へ更新されるだけである。
+  const scheduleSeedABefore = comp.teamA.scheduleSeed;
+  const seedBefore = s.seed;
+  for (let i = 0; i < 48; i++) s = step(s);
+  assert.notEqual(s.seed, seedBefore, '前提: 1シーズンプレイするとs.seedは進んでいるはず');
+  const afterComp = readCompetition(s);
+  assert.notEqual(
+    afterComp.teamA.scheduleSeed,
+    scheduleSeedABefore,
+    '季をまたいでAのscheduleSeedは新しい値に更新されているはず',
+  );
+});
+
+void test('team B never shares or exceeds team A\'s tier, and a guaranteed win is blocked from tying team A while a guaranteed loss always relegates', () => {
+  for (const seed of [71, 802]) {
+    const s = growBRoster('B昇降格検証高校', seed);
+    const comp = readCompetition(s);
+    assert.ok(comp.teamB);
+    assert.equal(comp.teamB!.tier, 'pref1', 'tierBelow(regional) = pref1 から始まるはず');
+
+    // ケース1: Bを圧勝させる（そのシーズンの最高勝ち点=42）。Aは中位相当の成績を明示的に
+    // 与えておく（growBRoster直後は played=0 で全校が0-0-0の見かけ上のタイになり、順位が
+    // teamIdの文字列比較というテストの意図しない要因で決まってしまうため）。
+    comp.teamA.played = 14;
+    comp.teamA.win = 4;
+    comp.teamA.draw = 4;
+    comp.teamA.lose = 6;
+    comp.teamA.points = 16;
+    comp.teamA.gf = 16;
+    comp.teamA.ga = 18;
+    comp.teamB!.played = 14;
+    comp.teamB!.win = 14;
+    comp.teamB!.draw = 0;
+    comp.teamB!.lose = 0;
+    comp.teamB!.points = 42;
+    comp.teamB!.gf = 90;
+    comp.teamB!.ga = 0;
+    const { rows: rowsA } = computeLeagueTable(s, comp, s.season, 'A');
+    const rankA = rowsA.findIndex((r) => r.isSelf) + 1;
+    const tierAIdxBefore = LEAGUE_TIERS.indexOf(comp.teamA.tier);
+
+    s.season += 1;
+    hydrateCompetition(s);
+    const after = readCompetition(s);
+    assert.ok(after.teamB, 'Bは参戦を続けているはず');
+    const tierAIdxAfter = LEAGUE_TIERS.indexOf(after.teamA.tier);
+    const tierBIdxAfter = LEAGUE_TIERS.indexOf(after.teamB!.tier);
+    // 制約: 常にBはAより下（同格・上位は不可）。
+    assert.ok(tierBIdxAfter < tierAIdxAfter, `seed ${seed}: Bチーム(${after.teamB!.tier})がAチーム(${after.teamA.tier})と同格以上です`);
+    if (tierAIdxAfter === tierAIdxBefore) {
+      // Aが動かなかった場合: Bが1位でも、Aと同格になる昇格はブロックされ、1つ下のまま留まるはず。
+      assert.equal(rankA >= 3 && rankA <= 6, true, `テストの前提（Aが中位で現状維持）が崩れています: rankA=${rankA}`);
+      assert.equal(tierBIdxAfter, tierAIdxAfter - 1, 'Aが現状維持ならBはちょうど1つ下に留まるはず');
+    }
+    validateCompetition(s);
+
+    // ケース2: 続けてBを大敗させる（勝ち点0）。降格はAの階層と衝突しない方向なので、
+    // 常に1つ降格するはず。
+    const comp2 = readCompetition(s);
+    if (comp2.teamB) {
+      const tierBIdxBefore2 = LEAGUE_TIERS.indexOf(comp2.teamB.tier);
+      comp2.teamB.played = 14;
+      comp2.teamB.win = 0;
+      comp2.teamB.draw = 0;
+      comp2.teamB.lose = 14;
+      comp2.teamB.points = 0;
+      comp2.teamB.gf = 0;
+      comp2.teamB.ga = 90;
+      s.season += 1;
+      hydrateCompetition(s);
+      const after2 = readCompetition(s);
+      if (after2.teamB && tierBIdxBefore2 > 0) {
+        assert.equal(
+          LEAGUE_TIERS.indexOf(after2.teamB.tier),
+          tierBIdxBefore2 - 1,
+          'Bが最下位なら降格するはず（Aとの衝突が起きない方向なので必ず1つ下がる）',
+        );
+      }
+      validateCompetition(s);
+    }
+  }
+});
+
+void test('legacy team B saves without a results log fall back to zero self-history but still reconstruct rival-vs-rival matches', () => {
+  const s = growBRoster('旧セーブB順位表検証高校', 909);
+  const comp = readCompetition(s);
+  assert.ok(comp.teamB && comp.teamB.results.length > 0, '前提: 通常はBの結果ログが残っているはず');
+  delete (comp.teamB as unknown as { results?: unknown }).results;
+  hydrateCompetition(s);
+  assert.deepEqual(readCompetition(s).teamB!.results, [], '旧セーブは results が空配列に補完されるはず');
+  validateCompetition(s);
+  const { rows } = computeLeagueTable(s, comp, s.season, 'B');
+  const self = rows.find((r) => r.isSelf)!;
+  assert.equal(self.played, comp.teamB!.played);
+  assert.equal(self.points, comp.teamB!.points);
+  const anyClub = rows.find((r) => !r.isSelf)!;
+  assert.ok(anyClub.played > 0, 'Bの他校同士の試合もログが無くても再現されるはず');
+});

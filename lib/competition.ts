@@ -230,16 +230,21 @@ export type TeamLeagueState = {
   tier: LeagueTier;
   /** この季の対戦相手（7クラブ、ホーム&アウェーで計14試合）。 */
   clubs: LeagueClub[];
-  /** Aチームのみ使用。週→対戦相手のマッピング。Bチームは結果のみ自動進行のため空配列。 */
+  /** 週→対戦相手のマッピング。AチームはSTUB — 実際は週ごとに1試合ずつ本物の試合エンジンで消化する。
+   *  Bチームも同じ8校総当たりの日程を使うが、采配なしの自動進行のため季開始時に全14節をまとめて
+   *  即時消化する（週送りの都合で待たせない、という従来の仕様は変えない）。 */
   schedule: LeagueScheduleEntry[];
-  /** Aチームのみ使用。この季の総当たり組み合わせ（8校の並び順・週割り当て）を決定した瞬間の
-   *  s.seed を凍結して保存したもの。s.seed は rand() が呼ばれるたびに進む「今この瞬間の乱数状態」
-   *  なので、季の途中で毎回 s.seed を直接使って他校同士の試合を再現しようとすると、季の開始時点
-   *  から時間が経つほど値がずれて自校の日程（schedule）と食い違ってしまう。そのため、季の開始時に
-   *  一度だけ固定した値をここに保存し、以後の再現計算はすべてこの値を使う。 */
+  /** この季の総当たり組み合わせ（8校の並び順・週割り当て）を決定した瞬間の乱数状態を凍結して
+   *  保存したもの。s.seed は rand() が呼ばれるたびに進む「今この瞬間の乱数状態」なので、季の途中で
+   *  毎回 s.seed を直接使って他校同士の試合を再現しようとすると、季の開始時点から時間が経つほど
+   *  値がずれて自校の日程（schedule）と食い違ってしまう。そのため、季の開始時に一度だけ固定した
+   *  値をここに保存し、以後の再現計算はすべてこの値を使う。AチームはこのフィールドにComp生成時の
+   *  s.seed をそのまま使い、Bチームは（AとBの対戦相手・日程が独立になるよう）別の乱数系列
+   *  （h32(s.seed, B_SCHEDULE_SALT)）を使う。 */
   scheduleSeed: number;
-  /** Aチームのみ使用。自校が実際にプレイした試合の週・相手・スコアのログ（順位表・ライバル
-   *  戦績表示に使う）。Bチームは結果のみ自動進行のため空配列。季をまたぐと空にリセットされる。 */
+  /** 自校が実際にプレイした試合の週・相手・スコアのログ（順位表・ライバル戦績表示に使う）。
+   *  Aチームは週ごとに本物の試合エンジンの結果を随時追記し、Bチームは季開始時に自動進行した
+   *  14試合をまとめて記録する。季をまたぐと空にリセットされる。 */
   results: LeagueMatchLogEntry[];
   played: number;
   win: number;
@@ -469,12 +474,19 @@ export type LeagueTable = {
 function outcomeOf(gf: number, ga: number): 'win' | 'draw' | 'lose' {
   return gf > ga ? 'win' : gf === ga ? 'draw' : 'lose';
 }
-/** Aチームの現時点（team.played 節消化時点）での順位表を決定的に計算する。season は
- *  既定で s.season（進行中シーズンの表示用）。季の切り替え直後（s.season はもう進んでいるが
- *  comp.teamA はまだ前季のデータのまま）に前季の最終順位を出す場合は、呼び出し側が
- *  finalizeTeamA から prevSeason を明示的に渡す。 */
-export function computeLeagueTable(s: State, comp: CompState, season: number = s.season): LeagueTable {
-  const team = comp.teamA;
+/** 指定チーム（既定でAチーム）の現時点（team.played 節消化時点）での順位表を決定的に計算する。
+ *  season は既定で s.season（進行中シーズンの表示用）。季の切り替え直後（s.season はもう進んでいるが
+ *  comp.teamA/teamB はまだ前季のデータのまま）に前季の最終順位を出す場合は、呼び出し側が
+ *  finalizeTeamA/finalizeTeamB から prevSeason を明示的に渡す。Bチームが今季参戦していない
+ *  （comp.teamB が null）場合は空の表を返す（呼び出し側は表示前に comp.teamB の有無を見ること）。 */
+export function computeLeagueTable(
+  s: State,
+  comp: CompState,
+  season: number = s.season,
+  which: 'A' | 'B' = 'A',
+): LeagueTable {
+  const team = which === 'B' ? comp.teamB : comp.teamA;
+  if (!team) return { rows: [], resultsByTeam: {} };
   const clubs = team.clubs;
   type Acc = { played: number; win: number; draw: number; lose: number; gf: number; ga: number; points: number };
   const acc: Record<string, Acc> = {};
@@ -601,31 +613,36 @@ export function promotionZoneActive(tier: LeagueTier): boolean {
 export function relegationZoneActive(tier: LeagueTier): boolean {
   return LEAGUE_TIERS.indexOf(tier) > 0;
 }
-/** 自校の残り試合数（0〜14）。 */
-export function leagueRemaining(comp: CompState): number {
-  return Math.max(0, LEAGUE_WEEKS.length - comp.teamA.played);
+/** 指定チーム（既定でAチーム）の残り試合数（0〜14）。チームが存在しなければ0。 */
+export function leagueRemaining(comp: CompState, which: 'A' | 'B' = 'A'): number {
+  const team = which === 'B' ? comp.teamB : comp.teamA;
+  if (!team) return 0;
+  return Math.max(0, LEAGUE_WEEKS.length - team.played);
 }
-/** 次節の自校の対戦相手（無ければ season 消化済みで null）。 */
-export function leagueNextFixture(comp: CompState): { opponent: string; leg: 0 | 1; week: number } | null {
-  const entry = comp.teamA.schedule[comp.teamA.played];
+/** 次節の対戦相手（無ければ season 消化済み、またはチーム不在で null）。Bチームは季開始時に
+ *  全節を即時消化するため、参戦している季であっても常に null になる（従来どおりの自動進行）。 */
+export function leagueNextFixture(
+  comp: CompState,
+  which: 'A' | 'B' = 'A',
+): { opponent: string; leg: 0 | 1; week: number } | null {
+  const team = which === 'B' ? comp.teamB : comp.teamA;
+  if (!team) return null;
+  const entry = team.schedule[team.played];
   if (!entry) return null;
-  const club = comp.teamA.clubs[entry.clubIndex];
+  const club = team.clubs[entry.clubIndex];
   if (!club) return null;
   return { opponent: club.name, leg: entry.leg, week: entry.week };
 }
 
-/** ピア（対戦相手7クラブ）の年間予想勝点。Bチーム専用（実際の試合を消化しない即時シミュレーション
- *  の基準線）。Aチームは computeLeagueTable() が実際に消化した他校同士の試合から順位を出すため、
- *  もう peerPoints は使わない。 */
-function peerPoints(seedNum: number, season: number, club: LeagueClub): number {
-  const j = hf(seedNum, strHash(club.id), season, 321);
-  return clamp(Math.round((club.strength / 99) * 40 + (j - 0.5) * 14), 0, 42);
-}
-
 // ---------------------------------------------------------------------------
-// Bチーム: 結果のみ自動進行（采配なし）。実際の試合エンジンを使わず、
-// 総合力の差から即座に1季分の結果を決定する。
+// Bチーム: 自校の試合は結果のみ自動進行（采配なし）。実際の試合エンジンは使わず、
+// 総合力の差から決定的に得点を決める。他校同士の試合はAチームと同じ8校総当たり
+// （computeLeagueTable が team.scheduleSeed から毎回再現）に揃え、Bの昇降格もその
+// 順位表で決める。AとBの対戦相手・日程は互いに独立な乱数系列（別のscheduleSeed）
+// を使うので、Bを参戦させてもAの日程・順位表の再現性には一切影響しない。
 // ---------------------------------------------------------------------------
+/** Bチームの日程を組む総当たりの乱数系列をAチームと独立させるための固定ソルト。 */
+const B_SCHEDULE_SALT = 31337;
 function bRosterCount(s: State): number {
   return s.players.filter((p) => s.v3.squad.players[p.id]?.team === 'B').length;
 }
@@ -644,28 +661,31 @@ function quickGoals(u: number, our: number, opp: number): number {
   const lambda = clamp(1.35 + (our - opp) / 20, 0.2, 3.8);
   return Math.max(0, Math.round(lambda + (u - 0.5) * 2.6));
 }
+/** Bチームの季開始時の自動進行。Aと同じ8校総当たりの日程（team.schedule、あらかじめ
+ *  team.scheduleSeed から作られたもの）に沿って自校の14試合を即座に決定的に消化し、
+ *  Aチームの resolveCompetitionMatch と同じ形で team.results に記録する（他校同士の試合は
+ *  保存せず、computeLeagueTable が team.scheduleSeed から毎回再現する）。順位・昇格降格は
+ *  ここでは決めない（季末に finalizeTeamB が computeLeagueTable の結果を見て決める）。 */
 function simulateBTeamSeasonInstant(s: State, team: TeamLeagueState): void {
   const our = bTeamStrength(s);
-  for (const club of team.clubs) {
-    for (let leg = 0; leg < 2; leg++) {
-      const base = [s.seed, strHash(club.id), s.season, leg, 707];
-      const gf = quickGoals(hf(...base, 1), our, club.strength);
-      const ga = quickGoals(hf(...base, 2), club.strength, our);
-      team.played++;
-      team.gf += gf;
-      team.ga += ga;
-      if (gf > ga) {
-        team.win++;
-        team.points += 3;
-      } else if (gf === ga) {
-        team.draw++;
-        team.points += 1;
-      } else team.lose++;
-    }
+  for (const entry of team.schedule) {
+    const club = team.clubs[entry.clubIndex];
+    if (!club) continue;
+    const base = [s.seed, strHash(club.id), s.season, entry.leg, entry.week, 707];
+    const gf = quickGoals(hf(...base, 1), our, club.strength);
+    const ga = quickGoals(hf(...base, 2), club.strength, our);
+    team.played++;
+    team.gf += gf;
+    team.ga += ga;
+    if (gf > ga) {
+      team.win++;
+      team.points += 3;
+    } else if (gf === ga) {
+      team.draw++;
+      team.points += 1;
+    } else team.lose++;
+    team.results = [...team.results, { week: entry.week, opponentId: club.id, opponentName: club.name, gf, ga }];
   }
-  const peers = team.clubs.map((c) => peerPoints(s.seed, s.season, c));
-  const all = [...peers, team.points].sort((a, b) => b - a);
-  team.lastRank = all.indexOf(team.points) + 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -719,9 +739,59 @@ function finalizeTeamA(s: State, comp: CompState, prevSeason: number): void {
   team.lastRank = rank;
 }
 
+/** Bチームの昇格・降格を、Bチーム自身の最終順位表と、Aチームが今季どうなったか（newTierA、
+ *  finalizeTeamA が既に決めた後の新階層）の両方から決める。
+ *
+ *  「Bは常にAより下の階層（同格・上位には並ばない）」という既存の制約は維持しつつ、Bチーム
+ *  自身の順位も反映させたいので、次のように2段階で決める:
+ *    1. Bチーム自身の順位表（computeLeagueTable）から、Aと全く同じ昇降格ルール
+ *       （1〜2位なら1つ昇格、7〜8位なら1つ降格）でBの「自然な」次階層を求める。
+ *    2. その自然な次階層が Aの新階層以上（同格または上回る）になってしまう場合だけ、
+ *       Aのちょうど1つ下の階層まで強制的に落とす。それ以外（Aより下に収まっている限り）は
+ *       Bの順位どおりの結果をそのまま使う。
+ *  そのため「常にAのちょうど1つ下」ではなく「常にAより下（Aの昇格幅が大きければ2階層以上
+ *  離れることもある）」になる。validateCompetition もこの「Aより下」という不等式だけを検査する
+ *  （既存のまま変更していない）。Bが今季存在しなかった場合（新規参戦前など）は比較対象の順位が
+ *  無いため、機械的に tierBelow(newTierA) を返す。 */
+function finalizeTeamB(
+  s: State,
+  comp: CompState,
+  prevSeason: number,
+  newTierA: LeagueTier,
+): LeagueTier | null {
+  const team = comp.teamB;
+  const ceilTier = tierBelow(newTierA);
+  if (!team || !team.clubs.length) return ceilTier;
+  const { rows } = computeLeagueTable(s, comp, prevSeason, 'B');
+  const rank = rows.findIndex((r) => r.isSelf) + 1;
+  const tierIdx = LEAGUE_TIERS.indexOf(team.tier);
+  let naturalTier = team.tier;
+  if (rank <= 2 && tierIdx < LEAGUE_TIERS.length - 1) naturalTier = LEAGUE_TIERS[tierIdx + 1];
+  else if (rank >= 7 && tierIdx > 0) naturalTier = LEAGUE_TIERS[tierIdx - 1];
+  const ceilIdx = ceilTier ? LEAGUE_TIERS.indexOf(ceilTier) : -1;
+  const naturalIdx = LEAGUE_TIERS.indexOf(naturalTier);
+  const finalTier = ceilTier === null ? null : naturalIdx > ceilIdx ? ceilTier : naturalTier;
+  if (finalTier && finalTier !== team.tier) {
+    const promoted = LEAGUE_TIERS.indexOf(finalTier) > tierIdx;
+    s.feed = [
+      promoted
+        ? `Bチーム、U18${tierInfo[team.tier].name}リーグで${rank}位。${tierInfo[finalTier].name}へ昇格しました。`
+        : `Bチーム、U18${tierInfo[team.tier].name}リーグで${rank}位。${tierInfo[finalTier].name}へ降格しました。`,
+      ...s.feed,
+    ].slice(0, 30);
+  }
+  return finalTier;
+}
+
 function advanceCompetitionSeason(s: State, comp: CompState): void {
   const prevSeason = comp.seasonGenerated;
-  if (prevSeason > 0 && comp.teamA.clubs.length) finalizeTeamA(s, comp, prevSeason);
+  let plannedBTier: LeagueTier | null = null;
+  if (prevSeason > 0 && comp.teamA.clubs.length) {
+    finalizeTeamA(s, comp, prevSeason);
+    // Bの昇降格はAの新階層が決まった後で判定する（finalizeTeamA が comp.teamA.tier を
+    // 既に更新済みなので、ここで参照する comp.teamA.tier は新階層）。
+    plannedBTier = finalizeTeamB(s, comp, prevSeason, comp.teamA.tier);
+  }
   comp.ih = freshCup();
   comp.wc = freshCup();
   const district = districtById(comp.districtId);
@@ -735,9 +805,14 @@ function advanceCompetitionSeason(s: State, comp: CompState): void {
   comp.teamA.played = comp.teamA.win = comp.teamA.draw = comp.teamA.lose = 0;
   comp.teamA.gf = comp.teamA.ga = comp.teamA.points = 0;
   if (comp.teamA.tier !== 'pref2' && bTeamEligible(s)) {
-    const bTier = tierBelow(comp.teamA.tier)!;
+    const bTier = plannedBTier ?? tierBelow(comp.teamA.tier)!;
     const teamB = emptyTeamState(bTier);
     teamB.clubs = makeClubs(s.seed, district, bTier, s.season, 'B');
+    // AとBの対戦相手・日程は互いに独立な乱数系列にする（Aの scheduleSeed をそのまま使うと
+    // 同じ並び順・週割り当てが再現されてしまうため、固定ソルトで混ぜて別系列にする。
+    // s.seed 自体は消費しないので、Aチームの再現性には一切影響しない）。
+    teamB.scheduleSeed = h32(s.seed, B_SCHEDULE_SALT);
+    teamB.schedule = makeSchedule(teamB.scheduleSeed, s.season);
     simulateBTeamSeasonInstant(s, teamB);
     comp.teamB = teamB;
   } else {
@@ -843,6 +918,9 @@ export function validateCompetition(s: State): void {
   checkTeam(comp.teamA, 'Aチーム');
   if (comp.teamB) {
     checkTeam(comp.teamB, 'Bチーム');
+    // Bは常にAより下の階層（同格・上位不可）。finalizeTeamB の昇降格ロジックにより通常は
+    // ちょうど1つ下だが、Aの昇格幅が大きい季は2階層以上離れることもあるため、ここでは
+    // 「Aより下」という不等式だけを検査する。
     if (LEAGUE_TIERS.indexOf(comp.teamB.tier) >= LEAGUE_TIERS.indexOf(comp.teamA.tier))
       throw Error('AチームとBチームの階層が不正です。');
   }

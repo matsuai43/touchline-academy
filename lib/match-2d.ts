@@ -98,6 +98,7 @@ function easeOut(t: number) {
 // 並び順は lib/squad.ts の FORMATION_SLOTS（= s.lineup の並び）と完全に一致させる:
 // GK → DF → MF → FW。
 // ---------------------------------------------------------------------------
+// S4: 各フォーメーションの並び順は lib/squad.ts の FORMATION_SLOTS と完全に一致させる。
 const LAYOUT_FRACTIONS: Record<Formation, Vec[]> = {
   '4-3-3': [
     { x: 0.07, y: 0.5 }, // GK
@@ -112,31 +113,47 @@ const LAYOUT_FRACTIONS: Record<Formation, Vec[]> = {
     { x: 0.86, y: 0.5 }, // CF
     { x: 0.78, y: 0.86 }, // RWG
   ],
+  // GK / LSB CB CB RSB / LSH DM CM RSH / SS CF
   '4-4-2': [
     { x: 0.07, y: 0.5 }, // GK
     { x: 0.24, y: 0.16 }, // LSB
     { x: 0.19, y: 0.38 }, // CB
     { x: 0.19, y: 0.62 }, // CB
     { x: 0.24, y: 0.84 }, // RSB
+    { x: 0.55, y: 0.18 }, // LSH
     { x: 0.42, y: 0.5 }, // DM
-    { x: 0.55, y: 0.28 }, // CM
-    { x: 0.55, y: 0.72 }, // CM
-    { x: 0.68, y: 0.5 }, // AM
-    { x: 0.85, y: 0.38 }, // CF
-    { x: 0.85, y: 0.62 }, // CF
+    { x: 0.55, y: 0.5 }, // CM
+    { x: 0.55, y: 0.82 }, // RSH
+    { x: 0.78, y: 0.4 }, // SS
+    { x: 0.88, y: 0.6 }, // CF
   ],
+  // GK / CB CB CB / LWB DM CM RWB / LWG CF RWG
   '3-4-3': [
     { x: 0.07, y: 0.5 }, // GK
-    { x: 0.22, y: 0.2 }, // LSB
-    { x: 0.18, y: 0.5 }, // CB
-    { x: 0.22, y: 0.8 }, // RSB
-    { x: 0.42, y: 0.5 }, // DM
-    { x: 0.55, y: 0.28 }, // CM
-    { x: 0.58, y: 0.72 }, // CM
-    { x: 0.66, y: 0.5 }, // AM
+    { x: 0.18, y: 0.3 }, // CB
+    { x: 0.16, y: 0.5 }, // CB
+    { x: 0.18, y: 0.7 }, // CB
+    { x: 0.4, y: 0.12 }, // LWB
+    { x: 0.42, y: 0.42 }, // DM
+    { x: 0.5, y: 0.58 }, // CM
+    { x: 0.4, y: 0.88 }, // RWB
     { x: 0.8, y: 0.16 }, // LWG
     { x: 0.88, y: 0.5 }, // CF
     { x: 0.8, y: 0.84 }, // RWG
+  ],
+  // GK / LSB CB CB RSB / DM DM / LSH AM RSH / CF
+  '4-2-3-1': [
+    { x: 0.07, y: 0.5 }, // GK
+    { x: 0.24, y: 0.16 }, // LSB
+    { x: 0.19, y: 0.38 }, // CB
+    { x: 0.19, y: 0.62 }, // CB
+    { x: 0.24, y: 0.84 }, // RSB
+    { x: 0.4, y: 0.38 }, // DM
+    { x: 0.4, y: 0.62 }, // DM
+    { x: 0.62, y: 0.16 }, // LSH
+    { x: 0.68, y: 0.5 }, // AM
+    { x: 0.62, y: 0.84 }, // RSH
+    { x: 0.88, y: 0.5 }, // CF
   ],
 };
 

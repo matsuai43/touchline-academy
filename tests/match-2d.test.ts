@@ -188,7 +188,7 @@ void test('commentary and aria label are deterministic pure text', () => {
 // 6) 陣形: 自チームのフォーメーション別に11人分の基準配置が壊れていない。
 // ---------------------------------------------------------------------------
 void test('formation base layout always yields 11 finite, on-pitch self positions per formation', () => {
-  for (const formation of ['4-3-3', '4-4-2', '3-4-3'] as const) {
+  for (const formation of ['4-3-3', '4-4-2', '3-4-3', '4-2-3-1'] as const) {
     let s = newGame('布陣高校', 12);
     s = act(s, { type: 'formation', formation });
     const f = kickoffFrame(s);

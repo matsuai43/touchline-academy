@@ -27,6 +27,9 @@ import {
   positionFitMult,
   basePos,
   isBenchPlayer,
+  gainProficiency,
+  DETAIL_POS,
+  detailInfo,
   type SquadAction,
   type DetailPos,
 } from './squad.ts';
@@ -46,9 +49,13 @@ export type Training =
   | 'possession'
   | 'defense'
   | 'physical'
-  | 'rest';
+  | 'rest'
+  // S4: ポジション練習。s.positionFocus で指定した1人だけが対象ポジションの
+  // 習熟度を伸ばす（チーム全体の能力成長は無い代わりに疲労は他メニュー同様に乗る）。
+  | 'position';
 export type Tactic = 'balanced' | 'possession' | 'counter' | 'press';
-export type Formation = '4-3-3' | '4-4-2' | '3-4-3';
+export type Formation = '4-3-3' | '4-4-2' | '3-4-3' | '4-2-3-1';
+export const FORMATIONS: Formation[] = ['4-3-3', '4-4-2', '3-4-3', '4-2-3-1'];
 export type Player = {
   identity: Identity;
   id: number;
@@ -114,6 +121,10 @@ export type Match = {
   possession: number;
   lastSide: number;
   snapshot?: MatchSnapshotEntry[];
+  // S4: 交代で各スロット(0..10)に入った選手と、その時点の分（m.minute）の記録。
+  // ポジション経験値（フル出場+8・途中出場は出場時間に比例）の算出にのみ使う表示専用に
+  // 近いデータで、これが導入される前に開始した試合のセーブには存在しない。
+  subEntries?: { id: number; index: number; minute: number }[];
 };
 export type State = {
   development: Development;
@@ -133,6 +144,10 @@ export type State = {
   // 時点（土曜実施後、日曜の試合／オフの前）で最多メニューを集計し trainSquadSkills /
   // developmentWeek を週1回呼んだ後、空配列にリセットする。旧セーブは空配列で補う。
   weekTrainings: Training[];
+  // S4: 「ポジション練習」の対象（選手1人＋鍛えるポジション）。重点育成(focus)とは
+  // 独立して持つ（重点育成は成長全般1.5倍、ポジション練習は特定ポジションの習熟度のみ）。
+  // 旧セーブ（このフィールドが導入される前）は validateSave() が null を補う。
+  positionFocus: { id: number; pos: DetailPos } | null;
   players: Player[];
   lineup: number[];
   formation: Formation;
@@ -208,6 +223,14 @@ export const training: Record<
     name: '休養・ケア',
     desc: '疲労を回復。けがの回復も促す',
     fatigue: -33,
+    stats: [],
+  },
+  // S4: 対象の選手1人だけ、指定したポジションの習熟度を伸ばす（+4/日を素質で補正）。
+  // チーム全体の能力成長は無い代わりに、疲労は総合練習と同程度。
+  position: {
+    name: 'ポジション練習',
+    desc: '選手1人を指定ポジションで鍛える（習熟度+4/日、素質で補正）',
+    fatigue: 6,
     stats: [],
   },
 };
@@ -352,7 +375,7 @@ export function strength(s: State) {
 function effective(s: State, p: Player, slot: DetailPos) {
   const ps = s.v3?.squad?.players[p.id];
   const fit = ps
-    ? positionFitMult(ps.detail, slot)
+    ? positionFitMult(ps, slot)
     : p.pos === basePos(slot)
       ? 1
       : p.pos === 'GK' || basePos(slot) === 'GK'
@@ -416,6 +439,7 @@ export function newGame(
     day: 0,
     weeklyMenu: [...DEFAULT_WEEKLY_MENU],
     weekTrainings: [],
+    positionFocus: null,
     players: [],
     lineup: [],
     formation: '4-3-3',
@@ -566,9 +590,25 @@ function advanceTrainingDay(s: State, tr: Training): { injured: boolean } {
   s.morale = clamp(s.morale + (isRest ? 5 : -1) / 6);
   if (s.day === 0) s.funds += 2;
   s.weekTrainings.push(tr);
+  // S4: ポジション練習は s.positionFocus で指定した1人だけ、指定ポジションの
+  // 習熟度を+4/日（素質で補正）伸ばす。チーム全体の能力成長は起きない。
+  let positionNote = '';
+  if (tr === 'position' && s.positionFocus) {
+    const target = s.players.find((pp) => pp.id === s.positionFocus!.id);
+    if (target && !target.injury) {
+      gainProficiency(s, target.id, s.positionFocus.pos, 4 * target.talent);
+      positionNote = `${target.name}が${detailInfo[s.positionFocus.pos].name}を重点的に練習しました。`;
+    }
+  }
   log(
     s,
-    `${dateLabel(s)}：${t.name}。${isRest ? '選手の疲労が回復しました。' : `チーム全体で能力が計${Math.round(growth)}成長。`}`,
+    `${dateLabel(s)}：${t.name}。${
+      isRest
+        ? '選手の疲労が回復しました。'
+        : tr === 'position'
+          ? positionNote || '対象の選手が指定されていません。'
+          : `チーム全体で能力が計${Math.round(growth)}成長。`
+    }`,
   );
   return { injured };
 }
@@ -636,6 +676,7 @@ export type Action =
   | { type: 'swap'; index: number; id: number }
   | { type: 'auto' }
   | { type: 'focus'; id: number | null }
+  | { type: 'positionFocus'; id: number | null; pos: DetailPos | null }
   | { type: 'upgrade' }
   | { type: 'start' }
   | { type: 'tactic'; tactic: Tactic }
@@ -653,6 +694,8 @@ export function act(old: State, a: Action): State {
     if (s.pending || s.match || s.event || s.v3.life.current)
       throw Error('試合または部内イベントを先に終えてください。');
     if (!(a.training in training)) throw Error('練習メニューが不正です。');
+    if (a.training === 'position' && !s.positionFocus)
+      throw Error('ポジション練習は先に対象の選手とポジションを指定してください。');
     advanceTrainingDay(s, a.training);
     maybeTriggerLifeEvent(s);
     finishDay(s);
@@ -667,7 +710,10 @@ export function act(old: State, a: Action): State {
     // ガード上限（十分な週数分）で必ず終了する。
     while (!s.pending && !s.event && !s.v3.life.current && guard < 60) {
       guard++;
-      const t = s.weeklyMenu[s.day] ?? 'balance';
+      const raw = s.weeklyMenu[s.day] ?? 'balance';
+      // S4: 週間メニューに「ポジション練習」が入っていても対象未指定なら、
+      // 自動進行を止めずに総合練習へ振り替える（明示的な1日進めるはtrainで拒否する）。
+      const t = raw === 'position' && !s.positionFocus ? 'balance' : raw;
       const { injured } = advanceTrainingDay(s, t in training ? t : 'balance');
       maybeTriggerLifeEvent(s);
       finishDay(s);
@@ -744,6 +790,7 @@ export function act(old: State, a: Action): State {
       penalties: null,
       possession: 50,
       lastSide: 0,
+      subEntries: [],
       snapshot: s.players.map((p) => {
         const ps = s.v3.squad.players[p.id];
         return {
@@ -783,6 +830,8 @@ export function act(old: State, a: Action): State {
       }
       s.match.subs++;
       s.match.used.push(a.id);
+      if (!s.match.subEntries) s.match.subEntries = [];
+      s.match.subEntries.push({ id: a.id, index: a.index, minute: s.match.minute });
       s.match.logs.unshift(
         `${s.match.minute}′ 交代：${s.players.find((p) => p.id === s.lineup[a.index])?.name} → ${incoming.name}`,
       );
@@ -798,7 +847,7 @@ export function act(old: State, a: Action): State {
   if (s.match) throw Error('試合を終えてから変更してください。');
   if (a.type === 'auto') autoLineup(s);
   if (a.type === 'formation') {
-    if (!['4-3-3', '4-4-2', '3-4-3'].includes(a.formation))
+    if (!FORMATIONS.includes(a.formation))
       throw Error('布陣が不正です。');
     s.formation = a.formation;
     autoLineup(s);
@@ -807,6 +856,16 @@ export function act(old: State, a: Action): State {
     if (a.id !== null && !s.players.some((p) => p.id === a.id))
       throw Error('選手が見つかりません。');
     s.focus = a.id;
+  }
+  if (a.type === 'positionFocus') {
+    if (a.id === null || a.pos === null) {
+      s.positionFocus = null;
+    } else {
+      if (!s.players.some((p) => p.id === a.id)) throw Error('選手が見つかりません。');
+      if (!(DETAIL_POS as readonly string[]).includes(a.pos))
+        throw Error('ポジションが不正です。');
+      s.positionFocus = { id: a.id, pos: a.pos };
+    }
   }
   if (a.type === 'upgrade') {
     const cost = s.facilities * 40;
@@ -817,6 +876,37 @@ export function act(old: State, a: Action): State {
     log(s, `練習設備がLv.${s.facilities}に。練習の成長効率が上がります。`);
   }
   return s;
+}
+// S4: 試合終了時、11枠それぞれで実際に出場した選手にポジション経験値を与える
+// （フル出場+8、途中出場は出場時間(分)に比例）。交代の入退時刻(m.subEntries)から、
+// スロット単位でその区間を担当した選手を決定的に割り出す。旧セーブ（subEntries
+// が無い試合）は「途中交代の記録なし」として、original(先発)がそのまま90分
+// 出場したものとして扱う（実際には交代済みかもしれないが、記録が無い以上の
+// 精度は出せないため安全側に倒す）。
+function grantMatchPositionExperience(s: State): void {
+  const m = s.match;
+  if (!m) return;
+  const dslots = formationSlots(s.formation);
+  const entriesByIndex = new Map<number, { id: number; minute: number }[]>();
+  for (const e of m.subEntries ?? []) {
+    const list = entriesByIndex.get(e.index) ?? [];
+    list.push({ id: e.id, minute: e.minute });
+    entriesByIndex.set(e.index, list);
+  }
+  for (let i = 0; i < 11; i++) {
+    const slot = dslots[i];
+    const entries = (entriesByIndex.get(i) ?? []).slice().sort((a, b) => a.minute - b.minute);
+    let cur = m.original[i];
+    let from = 0;
+    for (const e of entries) {
+      const minutes = e.minute - from;
+      if (minutes > 0) gainProficiency(s, cur, slot, 8 * (minutes / 90));
+      cur = e.id;
+      from = e.minute;
+    }
+    const minutes = 90 - from;
+    if (minutes > 0) gainProficiency(s, cur, slot, 8 * (minutes / 90));
+  }
 }
 function simulateSegment(s: State) {
   const m = s.match!,
@@ -1022,6 +1112,7 @@ function simulateSegment(s: State) {
       `${m.fixture.label}：${s.school} ${m.home} - ${m.away} ${m.fixture.opponent}${m.penalties ? '（PK ' + m.penalties + '）' : ''}`,
     );
     grantMatchAchievements(s);
+    grantMatchPositionExperience(s);
   }
 }
 export function validateSave(x: unknown): State {
@@ -1036,6 +1127,8 @@ export function validateSave(x: unknown): State {
   // 回帰修正: 週内の実施記録が無いセーブ（導入前、または pending 中で既に
   // リセット済み）は空配列で補う。
   if (s.weekTrainings === undefined) s.weekTrainings = [];
+  // S4: ポジション練習の対象（導入前のセーブ）は「指定なし」で補う。
+  if (s.positionFocus === undefined) s.positionFocus = null;
   const num = (v: unknown, min: number, max: number) =>
     typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
   if (
@@ -1058,7 +1151,7 @@ export function validateSave(x: unknown): State {
     !Array.isArray(s.players) ||
     s.players.length < ROSTER_MIN ||
     s.players.length > ROSTER_MAX ||
-    !['4-3-3', '4-4-2', '3-4-3'].includes(s.formation)
+    !FORMATIONS.includes(s.formation)
   )
     throw Error('このセーブは対応していないか、壊れています。');
   for (const p of s.players) {
@@ -1109,7 +1202,11 @@ export function validateSave(x: unknown): State {
       (k) => typeof s[k as keyof State] === 'boolean',
     ) ||
     (s.focus !== null && !ids.includes(s.focus)) ||
-    (s.event !== null && typeof s.event !== 'string')
+    (s.event !== null && typeof s.event !== 'string') ||
+    (s.positionFocus !== null &&
+      (!s.positionFocus ||
+        !ids.includes(s.positionFocus.id) ||
+        !(DETAIL_POS as readonly string[]).includes(s.positionFocus.pos)))
   )
     throw Error('部活動データを読み込めません。');
   for (const h of s.history)
@@ -1215,6 +1312,24 @@ export function validateSave(x: unknown): State {
         )
       )
         throw Error('試合開始時スナップショットが不正です。');
+    }
+    // S4: subEntries はポジション経験値の算出にのみ使う表示専用に近いデータで、
+    // これが導入される前に開始した試合のセーブには存在しない。無ければ許容する。
+    if (s.match.subEntries !== undefined) {
+      if (
+        !Array.isArray(s.match.subEntries) ||
+        s.match.subEntries.length > MATCH_MAX_SUBS ||
+        !s.match.subEntries.every(
+          (e) =>
+            e &&
+            ids.includes(e.id) &&
+            Number.isInteger(e.index) &&
+            e.index >= 0 &&
+            e.index <= 10 &&
+            num(e.minute, 0, 90),
+        )
+      )
+        throw Error('試合の交代記録が不正です。');
     }
   }
   const hydrated = hydrateDevelopment(structuredClone(s));

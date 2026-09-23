@@ -8,13 +8,16 @@ import {
   PopoverTitle,
   PopoverDescription,
 } from '@/components/ui/popover';
-import { stats, type Player, type Stat } from '@/lib/game';
+import { stats, type Player, type Stat, type Position } from '@/lib/game';
 import {
   detailInfo,
   archetypes,
   extraStatNames,
   SKILLS,
   squadOverall,
+  DETAIL_POS,
+  MASTERY_THRESHOLD,
+  PLAY_STYLES,
   type DetailPos,
   type Archetype,
   type ExtraStat,
@@ -52,9 +55,11 @@ export function RankBadge({
 // ---------------------------------------------------------------------------
 export function PositionBadge({ detail }: { detail: DetailPos }) {
   const info = detailInfo[detail];
+  // S4: UIは日本語名を主表示にし、略号は補助として括弧書きで添える。
   return (
-    <span className={`position pos-${info.base} detail-badge`} title={info.name}>
-      {detail}
+    <span className={`position pos-${info.base} detail-badge`} title={`${info.name}（${detail}）`}>
+      {info.name}
+      <span className="detail-badge-abbr">（{detail}）</span>
     </span>
   );
 }
@@ -150,6 +155,67 @@ export function AbilityRow({ label, value }: { label: string; value: number }) {
 }
 
 // ---------------------------------------------------------------------------
+// S4: ポジション適性（15ポジションのランク一覧。系統別の表で、主・サブを区別）
+// ---------------------------------------------------------------------------
+const basePosOrder: Position[] = ['GK', 'DF', 'MF', 'FW'];
+const basePosLabel: Record<Position, string> = {
+  GK: 'GK',
+  DF: 'ディフェンダー',
+  MF: 'ミッドフィルダー',
+  FW: 'フォワード',
+};
+export function PositionAptitudeGrid({ ps }: { ps: PlayerSquad }) {
+  return (
+    <div className="position-aptitude">
+      <h4>ポジション適性</h4>
+      {basePosOrder.map((g) => {
+        const list = DETAIL_POS.filter((d) => detailInfo[d].base === g);
+        if (!list.length) return null;
+        return (
+          <div className="position-aptitude-group" key={g}>
+            <span className="position-aptitude-group-label muted">{basePosLabel[g]}</span>
+            <div className="position-aptitude-row">
+              {list.map((d) => {
+                const isPrimary = d === ps.detail;
+                const unlocked = !isPrimary && ps.prof[d] >= MASTERY_THRESHOLD;
+                const state = isPrimary ? '主ポジション' : unlocked ? 'サブポジション習得済み' : '未習得';
+                return (
+                  <span
+                    key={d}
+                    className={`position-aptitude-cell${isPrimary ? ' primary' : ''}${unlocked ? ' unlocked' : ''}`}
+                    title={`${detailInfo[d].name}（${d}）：習熟度${ps.prof[d]}・${state}`}
+                  >
+                    <RankBadge value={ps.prof[d]} label={detailInfo[d].name} size="sm" />
+                    <span className="position-aptitude-cell-label">
+                      {detailInfo[d].name}
+                      <small>{state}</small>
+                    </span>
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// S4: プレースタイル表示（名前＋効果の説明）。
+// ---------------------------------------------------------------------------
+export function PlayStyleCard({ ps }: { ps: PlayerSquad }) {
+  const st = PLAY_STYLES[ps.style];
+  return (
+    <div className="play-style-card">
+      <span className="play-style-label muted">プレースタイル</span>
+      <strong className="play-style-name">{st.name}</strong>
+      <p className="muted play-style-desc">{st.desc}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 能力シート本体（選手詳細）: 9能力＋特殊能力。GKはGK技術を先頭に。
 // ---------------------------------------------------------------------------
 export function AbilitySheet({ p, ps }: { p: Player; ps: PlayerSquad }) {
@@ -180,6 +246,7 @@ export function AbilitySheet({ p, ps }: { p: Player; ps: PlayerSquad }) {
           <AbilityRow key={k} label={extraStatNames[k]} value={ps[k]} />
         ))}
       </div>
+      <PlayStyleCard ps={ps} />
       <div className="squad-skills">
         <h4>
           特殊能力 <small className="muted">{ps.skills.length} / 5</small>
@@ -189,6 +256,7 @@ export function AbilitySheet({ p, ps }: { p: Player; ps: PlayerSquad }) {
         </h4>
         <SkillChips ps={ps} />
       </div>
+      <PositionAptitudeGrid ps={ps} />
     </div>
   );
 }

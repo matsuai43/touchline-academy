@@ -1,4 +1,5 @@
 import type { State, Player, Position, Stat, Training } from './game.ts';
+import { PLAY_STYLES } from './squad.ts';
 export type Personality = 'enthusiast' | 'sensitive' | 'analyst' | 'competitor';
 export type Origin = 'local' | 'academy' | 'legacy' | 'overseas' | 'exchange';
 export type Identity = {
@@ -300,9 +301,14 @@ export function syncHalf(s: State) {
 }
 export function growthFactor(s: State, p: Player, k: Stat) {
   const d = s.development;
+  // S4: プレースタイルに合う能力は、練習による伸びがわずかに後押しされる
+  // （スタイルの定義に無い能力は倍率1のまま）。
+  const ps = s.v3?.squad?.players[p.id];
+  const styleBonus = (ps && PLAY_STYLES[ps.style]?.growth[k]) || 1;
   return (
     (d.plan && plans[d.plan].stats.includes(k) ? 1.25 : 1) *
-    (1 + (p.identity.trust - 50) / 500)
+    (1 + (p.identity.trust - 50) / 500) *
+    styleBonus
   );
 }
 export function developmentWeek(s: State, t: Training) {

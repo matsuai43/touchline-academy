@@ -1,6 +1,6 @@
 'use client';
-import { Fragment, useState } from 'react';
-import { Star, ChevronDown, ChevronUp } from 'lucide-react';
+import { useState } from 'react';
+import { Star } from 'lucide-react';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   Table,
@@ -16,11 +16,16 @@ import { type State, type Action, type Player, type Position, type Stat } from '
 import {
   squadOverall,
   isBenchPlayer,
+  stylesFor,
+  detailInfo,
+  basePos,
+  DETAIL_POS,
+  MASTERY_THRESHOLD,
   type ExtraStat,
   type PlayerSquad,
+  type DetailPos,
 } from '@/lib/squad';
 import {
-  AbilitySheet,
   PositionBadge,
   ArchetypeBadge,
   RankBadge,
@@ -98,6 +103,85 @@ export function SquadTeamToggle({
   );
 }
 
+// ---------------------------------------------------------------------------
+// S4: プレースタイル変更（主ポジションに合うスタイルへ選手詳細から変更できる）。
+// 選択肢は常に3つ以下（DESIGN_V3_2.md 5.2）なのでラジオボタンで表す（DADS: 5択以下）。
+// ---------------------------------------------------------------------------
+export function PlayStyleSelector({
+  p,
+  ps,
+  run,
+}: {
+  p: Player;
+  ps: PlayerSquad;
+  run: (a: Action) => State | null;
+}) {
+  const options = stylesFor(ps.detail);
+  if (options.length <= 1) return null;
+  return (
+    <div className="play-style-selector">
+      <span className="play-style-selector-label">プレースタイルを変更</span>
+      <RadioGroup
+        className="play-style-options"
+        aria-label={`${p.name}のプレースタイル`}
+        value={ps.style}
+        onValueChange={(v) => run({ type: 'squadStyle', id: p.id, style: v as PlayerSquad['style'] })}
+      >
+        {options.map((st) => (
+          <label key={st.id} className={ps.style === st.id ? 'active' : ''}>
+            <RadioGroupItem value={st.id} />
+            {st.name}
+          </label>
+        ))}
+      </RadioGroup>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// S4: 主ポジション変更。習熟度がMASTERY_THRESHOLD(60)に達したサブポジションのみ
+// 選べる（選択肢が6件を超えうるためセレクトで表す。DADS: 6択以上はセレクト可）。
+// ---------------------------------------------------------------------------
+export function PrimaryPositionSelector({
+  p,
+  ps,
+  run,
+}: {
+  p: Player;
+  ps: PlayerSquad;
+  run: (a: Action) => State | null;
+}) {
+  const eligible = DETAIL_POS.filter(
+    (d) => d !== ps.detail && basePos(d) === p.pos && ps.prof[d] >= MASTERY_THRESHOLD,
+  );
+  if (!eligible.length)
+    return (
+      <p className="muted primary-pos-hint">
+        習熟度が{MASTERY_THRESHOLD}に達したポジションがあると、主ポジションを変更できます。
+      </p>
+    );
+  return (
+    <div className="primary-pos-selector">
+      <label className="field">
+        主ポジションを変更（習熟度{MASTERY_THRESHOLD}以上のサブポジションのみ）
+        <select
+          value=""
+          onChange={(e) => {
+            if (e.target.value) run({ type: 'squadPrimaryPos', id: p.id, detail: e.target.value as DetailPos });
+          }}
+        >
+          <option value="">変更先を選ぶ</option>
+          {eligible.map((d) => (
+            <option key={d} value={d}>
+              {detailInfo[d].name}（{d}）
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
 export function SquadPanel({
   s,
   run,
@@ -112,14 +196,6 @@ export function SquadPanel({
   const [sort, setSort] = useState<'overall' | 'name' | 'fatigue' | 'skills'>(
     'overall',
   );
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const toggleExpanded = (id: number) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
   const sq = s.v3.squad;
   const rows = s.players
     .map((p) => ({ p, ps: sq.players[p.id] }))
@@ -231,109 +307,91 @@ export function SquadPanel({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {list.map(({ p, ps }) => {
-                const isOpen = expanded.has(p.id);
-                return (
-                  <Fragment key={p.id}>
-                    <TableRow>
-                      <TableCell>
-                        <button className="player-link" onClick={() => onSelect(p.id)}>
-                          <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
-                          <span className="roster-name">
-                            {p.name}
-                            {s.focus === p.id && (
-                              <span className="focus-dot">
-                                <Star size={12} aria-hidden="true" fill="currentColor" />
-                                <span className="sr-only">重点育成中</span>
-                              </span>
-                            )}
-                            <small>
-                              {p.year}年 /{' '}
-                              {p.injury
-                                ? `調整 ${p.injury}週`
-                                : personalities[p.identity.personality].name}
-                            </small>
+              {list.map(({ p, ps }) => (
+                <TableRow key={p.id}>
+                  <TableCell>
+                    <button className="player-link" onClick={() => onSelect(p.id)}>
+                      <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
+                      <span className="roster-name">
+                        {p.name}
+                        {s.focus === p.id && (
+                          <span className="focus-dot">
+                            <Star size={12} aria-hidden="true" fill="currentColor" />
+                            <span className="sr-only">重点育成中</span>
                           </span>
-                        </button>
-                      </TableCell>
-                      <TableCell>
-                        <PositionBadge detail={ps.detail} />
-                      </TableCell>
-                      <TableCell>
-                        <ArchetypeBadge archetype={ps.archetype} />
-                      </TableCell>
-                      <TableCell>
-                        <span className="ability-rank-cell">
-                          <RankBadge value={squadOverall(p, ps)} label="総合" size="sm" />
-                          {primaryStats[g].map(({ key, label }) => (
-                            <RankBadge
-                              key={label}
-                              value={statValue(p, ps, key)}
-                              label={label}
-                              size="sm"
-                            />
-                          ))}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <SkillChips ps={ps} empty="なし" />
-                      </TableCell>
-                      <TableCell>
-                        <span className={p.fatigue > 65 ? 'danger-text' : ''}>
-                          {Math.round(p.fatigue)}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <span className={`team-badge team-${ps.team}`}>{ps.team}</span>
-                      </TableCell>
-                      <TableCell>
-                        {/* S3: 試合登録20人＝先発11＋ベンチ9。Aチームは常にちょうど20人
-                            なので、先発以外のAチームの選手は自動的に全員ベンチ入りになる
-                            （手動の入れ替えは先発の起用先を変えることで行う＝既存の
-                            「選手を押して起用先を選ぶ」操作）。Bチームは常に控え。 */}
-                        <span
-                          className={
-                            s.lineup.includes(p.id)
-                              ? 'lime'
-                              : isBenchPlayer(s, p.id)
-                                ? 'squad-role-bench'
-                                : 'muted'
-                          }
-                        >
-                          {s.lineup.includes(p.id)
-                            ? '先発'
-                            : isBenchPlayer(s, p.id)
-                              ? 'ベンチ'
-                              : '控え'}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <button
-                          type="button"
-                          className="secondary small ability-toggle"
-                          aria-expanded={isOpen}
-                          aria-label={`${p.name}の能力シートを${isOpen ? '閉じる' : '見る'}`}
-                          onClick={() => toggleExpanded(p.id)}
-                        >
-                          {isOpen ? (
-                            <ChevronUp size={14} aria-hidden="true" />
-                          ) : (
-                            <ChevronDown size={14} aria-hidden="true" />
-                          )}
-                          {isOpen ? '閉じる' : '見る'}
-                        </button>
-                      </TableCell>
-                    </TableRow>
-                    {isOpen && (
-                      <TableRow className="ability-sheet-row">
-                        <TableCell colSpan={9}>
-                          <AbilitySheet p={p} ps={ps} />
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </Fragment>
-                );
-              })}
+                        )}
+                        <small>
+                          {p.year}年 /{' '}
+                          {p.injury
+                            ? `調整 ${p.injury}週`
+                            : personalities[p.identity.personality].name}
+                        </small>
+                      </span>
+                    </button>
+                  </TableCell>
+                  <TableCell>
+                    <PositionBadge detail={ps.detail} />
+                  </TableCell>
+                  <TableCell>
+                    <ArchetypeBadge archetype={ps.archetype} />
+                  </TableCell>
+                  <TableCell>
+                    <span className="ability-rank-cell">
+                      <RankBadge value={squadOverall(p, ps)} label="総合" size="sm" />
+                      {primaryStats[g].map(({ key, label }) => (
+                        <RankBadge
+                          key={label}
+                          value={statValue(p, ps, key)}
+                          label={label}
+                          size="sm"
+                        />
+                      ))}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <SkillChips ps={ps} empty="なし" />
+                  </TableCell>
+                  <TableCell>
+                    <span className={p.fatigue > 65 ? 'danger-text' : ''}>
+                      {Math.round(p.fatigue)}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <span className={`team-badge team-${ps.team}`}>{ps.team}</span>
+                  </TableCell>
+                  <TableCell>
+                    {/* S3: 試合登録20人＝先発11＋ベンチ9。Aチームは常にちょうど20人
+                        なので、先発以外のAチームの選手は自動的に全員ベンチ入りになる
+                        （手動の入れ替えは先発の起用先を変えることで行う＝既存の
+                        「選手を押して起用先を選ぶ」操作）。Bチームは常に控え。 */}
+                    <span
+                      className={
+                        s.lineup.includes(p.id)
+                          ? 'lime'
+                          : isBenchPlayer(s, p.id)
+                            ? 'squad-role-bench'
+                            : 'muted'
+                      }
+                    >
+                      {s.lineup.includes(p.id)
+                        ? '先発'
+                        : isBenchPlayer(s, p.id)
+                          ? 'ベンチ'
+                          : '控え'}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <button
+                      type="button"
+                      className="secondary small ability-toggle"
+                      aria-label={`${p.name}の能力シートを見る`}
+                      onClick={() => onSelect(p.id)}
+                    >
+                      能力シートを見る
+                    </button>
+                  </TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </div>

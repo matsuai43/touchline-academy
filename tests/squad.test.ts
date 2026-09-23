@@ -152,9 +152,13 @@ void test('skills change skillMatchFactors and produce a real, measurable differ
     while (!s.match!.done) s = act(s, { type: 'segment' });
     return s.match!.home;
   }
+  // S4: 全選手が常にプレースタイルを1つ持つため（スキルと違い「無し」が無い）、
+  // スキル未習得でも試合係数がちょうど1になるとは限らない（11人ぶんの小さな効果が
+  // 複合するため）。検証の意図（スキル無しの基準値が常識的な範囲に収まる）は保ったまま、
+  // スタイル由来の複合ぶんの許容幅を設ける。
   const baseFx = skillMatchFactors(newGame('', 1));
-  assert.equal(baseFx.attack, 1);
-  assert.equal(baseFx.finish, 1);
+  assert.ok(Math.abs(baseFx.attack - 1) < 0.3, `baseline attack factor should stay in a sane range, got ${baseFx.attack}`);
+  assert.ok(Math.abs(baseFx.finish - 1) < 0.3, `baseline finish factor should stay in a sane range, got ${baseFx.finish}`);
   let baselineGoals = 0,
     boostedGoals = 0;
   for (let seed = 1; seed <= 25; seed++) {
@@ -241,33 +245,57 @@ void test('match achievements (hat-trick) can grant a skill through grantMatchAc
   assert.ok(granted > 0, 'hat-trick achievements should grant a skill in at least some of the trials');
 });
 
-void test('each formation exposes 11 DetailPos slots whose basePos matches the legacy 4/4/2-style Position layout', () => {
-  for (const f of ['4-3-3', '4-4-2', '3-4-3'] as const) {
+// S4: 10→15ポジション化に伴い、フォーメーションの「数字」は表記上の呼称であって
+// 実際のbasePos内訳とは一致しない場合がある（例: 3-4-3のウイングバックは
+// basePos上はDF）。検証の意図（11枠・GK1・全て有効なDetailPos・設計書どおりの
+// 内訳）は保ちつつ、内訳はDESIGN_V3_2.md 5.1の明示リストに合わせて固定値で確認する。
+void test('each formation exposes 11 DetailPos slots matching the documented basePos breakdown (DESIGN_V3_2.md 5.1), including the new 4-2-3-1', () => {
+  const expected: Record<string, { GK: number; DF: number; MF: number; FW: number }> = {
+    '4-3-3': { GK: 1, DF: 4, MF: 3, FW: 3 },
+    '4-4-2': { GK: 1, DF: 4, MF: 4, FW: 2 },
+    '3-4-3': { GK: 1, DF: 5, MF: 2, FW: 3 },
+    '4-2-3-1': { GK: 1, DF: 4, MF: 5, FW: 1 },
+  };
+  for (const f of ['4-3-3', '4-4-2', '3-4-3', '4-2-3-1'] as const) {
     const ds = formationSlots(f);
     assert.equal(ds.length, 11);
     assert.ok(ds.every((d) => (DETAIL_POS as readonly string[]).includes(d)));
-    assert.equal(ds.filter((d) => basePos(d) === 'GK').length, 1);
-    assert.equal(ds.filter((d) => basePos(d) === 'DF').length, +f[0]);
-    assert.equal(ds.filter((d) => basePos(d) === 'MF').length, +f[2]);
-    assert.equal(ds.filter((d) => basePos(d) === 'FW').length, +f[4]);
+    const counts = { GK: 0, DF: 0, MF: 0, FW: 0 };
+    for (const d of ds) counts[basePos(d)]++;
+    assert.deepEqual(counts, expected[f], `formation ${f} basePos breakdown mismatch`);
   }
 });
 
-void test('positionFitMult is staged: exact match beats a same-basePos mismatch, which beats crossing basePos, and GK crossovers are penalized most', () => {
+// S4: positionFitMult は段階式(1.0/0.92/0.8/0.48)から、習熟度(0〜100)に基づく
+// 連続的な倍率に置き換わった（目安: 100→1.00, 70→0.95, 50→0.90, 0→0.75）。
+// 検証の意図（完全一致が最も高く、系統をまたぐほど不利、GKとの相互起用が最も
+// 重いペナルティ）は保ったまま、新しい連続曲線で確認する。
+void test('positionFitMult is continuous by proficiency: higher mastery always fits better, and GK<->outfield is capped at 0.5 regardless of mastery', () => {
   const cases: [DetailPos, DetailPos][] = [
     ['CB', 'LSB'],
     ['CM', 'DM'],
     ['LWG', 'RWG'],
   ];
   for (const [a, b] of cases) {
-    assert.equal(positionFitMult(a, a), 1);
-    const sameBase = positionFitMult(a, b);
-    assert.ok(sameBase < 1 && sameBase >= 0.9, `${a}->${b} should be a mild penalty, got ${sameBase}`);
-    const crossBase = positionFitMult('CB', 'CM');
-    assert.ok(crossBase < sameBase, 'crossing basePos should be penalized more than staying within it');
-    const gkCross = positionFitMult('GK', 'CB');
-    assert.ok(gkCross < crossBase, 'GK<->outfield should be the heaviest penalty');
+    assert.equal(positionFitMult({ detail: a, prof: { [a]: 100 } as Record<DetailPos, number> }, a), 1);
+    // 習熟度が上がるほど、フィットは単調に上がる。
+    const low = positionFitMult({ detail: a, prof: { [b]: 0 } as Record<DetailPos, number> }, b);
+    const mid = positionFitMult({ detail: a, prof: { [b]: 50 } as Record<DetailPos, number> }, b);
+    const high = positionFitMult({ detail: a, prof: { [b]: 100 } as Record<DetailPos, number> }, b);
+    assert.ok(low < mid && mid < high && high === 1, `${a}->${b} fit should increase monotonically with mastery, got ${low},${mid},${high}`);
   }
+  // GK⇔フィールドは習熟度が100でも×0.5に頭打ちする。
+  const gkAtOutfield = positionFitMult({ detail: 'GK', prof: { CB: 100 } as Record<DetailPos, number> }, 'CB');
+  assert.equal(gkAtOutfield, 0.5);
+  const outfieldAtGK = positionFitMult({ detail: 'CB', prof: { GK: 100 } as Record<DetailPos, number> }, 'GK');
+  assert.equal(outfieldAtGK, 0.5);
+  // フォールバック（習熟度データが無い場合）でも、完全一致 > 同系統 > 系統またぎ > GK絡み、の順は保たれる。
+  assert.equal(positionFitMult('CB', 'CB'), 1);
+  const sameBase = positionFitMult('CB', 'LSB');
+  const crossBase = positionFitMult('CB', 'CM');
+  const gkCross = positionFitMult('GK', 'CB');
+  assert.ok(sameBase < 1 && sameBase > crossBase, 'same-basePos fallback should beat cross-basePos fallback');
+  assert.ok(gkCross < crossBase, 'GK<->outfield fallback should be the heaviest penalty');
 });
 
 void test('10 seasons of play keep squad data valid, capped at 99, and A team never exceeds 20', () => {

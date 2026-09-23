@@ -4027,12 +4027,14 @@ footer button::after,
   background: var(--rank-eta-bg);
 }
 
-/* 部員一覧: 主要能力のランク文字をコンパクトに並べる列 */
+/* 部員一覧: 主要能力のランク文字を横一列に並べる列（折り返し不可。
+   折り返しを許すと auto レイアウトの表が列幅を最小まで潰し、逆に
+   縦積みになって行が高くなるため、1行に固定して表側の横スクロールに
+   委ねる） */
 .ability-rank-cell {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 4px;
-  max-width: 175px;
 }
 
 /* 能力シート本体（選手詳細・一覧の行展開の両方で使う） */
@@ -4210,4 +4212,117 @@ footer button::after,
 .squad-role-bench {
   color: var(--primary);
   font-weight: 700;
+}
+
+/* S4: ポジション表示（日本語名＋略号）・ポジション適性・プレースタイル。 */
+.detail-badge-abbr {
+  opacity: 0.75;
+  margin-left: 2px;
+}
+.position-aptitude {
+  margin-top: 14px;
+}
+.position-aptitude h4 {
+  font-size: 13px;
+  color: var(--muted-foreground);
+  margin-bottom: 8px;
+}
+.position-aptitude-group {
+  margin-bottom: 10px;
+}
+.position-aptitude-group-label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.position-aptitude-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.position-aptitude-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 4px 10px 4px 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+.position-aptitude-cell.primary {
+  border-color: var(--primary);
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.position-aptitude-cell.unlocked {
+  border-color: var(--success);
+}
+.position-aptitude-cell-label {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  line-height: 1.3;
+}
+.position-aptitude-cell-label small {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.play-style-card {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+.play-style-label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+.play-style-name {
+  font-size: 15px;
+}
+.play-style-desc {
+  font-size: 12px;
+  margin-top: 4px;
+}
+.play-style-selector {
+  margin-top: 10px;
+}
+.play-style-selector-label {
+  display: block;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  margin-bottom: 6px;
+}
+.play-style-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.play-style-options > label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  cursor: pointer;
+}
+.play-style-options > label.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--accent);
+}
+.primary-pos-selector,
+.primary-pos-hint {
+  margin-top: 10px;
+}
+.position-focus-picker {
+  margin-top: 10px;
 }

@@ -2,18 +2,23 @@ import type { State, Player, Position, Stat, Training, Formation } from './game.
 import { clamp } from './game.ts';
 
 // ---------------------------------------------------------------------------
-// 詳細ポジション
+// S4: 詳細ポジション（10 → 15）
 // ---------------------------------------------------------------------------
 export const DETAIL_POS = [
   'GK',
   'CB',
   'LSB',
   'RSB',
+  'LWB',
+  'RWB',
   'DM',
   'CM',
+  'LSH',
+  'RSH',
   'AM',
   'LWG',
   'RWG',
+  'SS',
   'CF',
 ] as const;
 export type DetailPos = (typeof DETAIL_POS)[number];
@@ -23,21 +28,28 @@ export const detailInfo: Record<DetailPos, { name: string; base: Position }> = {
   CB: { name: 'センターバック', base: 'DF' },
   LSB: { name: '左サイドバック', base: 'DF' },
   RSB: { name: '右サイドバック', base: 'DF' },
+  LWB: { name: '左ウイングバック', base: 'DF' },
+  RWB: { name: '右ウイングバック', base: 'DF' },
   DM: { name: 'ボランチ', base: 'MF' },
-  CM: { name: 'セントラルMF', base: 'MF' },
-  AM: { name: '攻撃的MF', base: 'MF' },
+  CM: { name: 'センターハーフ', base: 'MF' },
+  LSH: { name: '左サイドハーフ', base: 'MF' },
+  RSH: { name: '右サイドハーフ', base: 'MF' },
+  AM: { name: 'トップ下', base: 'MF' },
   LWG: { name: '左ウイング', base: 'FW' },
   RWG: { name: '右ウイング', base: 'FW' },
+  SS: { name: 'セカンドトップ', base: 'FW' },
   CF: { name: 'センターフォワード', base: 'FW' },
 };
 export function basePos(d: DetailPos): Position {
   return detailInfo[d].base;
 }
+// 新規部員（旧セーブから引き継がれた選手は元の詳細ポジションを維持する）へ最初の
+// 詳細ポジションをランダムに割り当てるときの重み付きプール。
 const detailByBase: Record<Position, DetailPos[]> = {
   GK: ['GK'],
-  DF: ['CB', 'CB', 'LSB', 'RSB'],
-  MF: ['DM', 'CM', 'CM', 'AM'],
-  FW: ['CF', 'LWG', 'RWG'],
+  DF: ['CB', 'CB', 'LSB', 'RSB', 'LWB', 'RWB'],
+  MF: ['DM', 'CM', 'CM', 'AM', 'LSH', 'RSH'],
+  FW: ['CF', 'CF', 'LWG', 'RWG', 'SS'],
 };
 
 // ---------------------------------------------------------------------------
@@ -47,21 +59,45 @@ const detailByBase: Record<Position, DetailPos[]> = {
 // basePos() に通したときに旧来の slots()（GK/DF/MF/FWの粗い並び）と完全に一致する。
 export const FORMATION_SLOTS: Record<Formation, DetailPos[]> = {
   '4-3-3': ['GK', 'LSB', 'CB', 'CB', 'RSB', 'DM', 'CM', 'AM', 'LWG', 'CF', 'RWG'],
-  '4-4-2': ['GK', 'LSB', 'CB', 'CB', 'RSB', 'DM', 'CM', 'CM', 'AM', 'CF', 'CF'],
-  '3-4-3': ['GK', 'LSB', 'CB', 'RSB', 'DM', 'CM', 'CM', 'AM', 'LWG', 'CF', 'RWG'],
+  '4-4-2': ['GK', 'LSB', 'CB', 'CB', 'RSB', 'LSH', 'DM', 'CM', 'RSH', 'SS', 'CF'],
+  '3-4-3': ['GK', 'CB', 'CB', 'CB', 'LWB', 'DM', 'CM', 'RWB', 'LWG', 'CF', 'RWG'],
+  '4-2-3-1': ['GK', 'LSB', 'CB', 'CB', 'RSB', 'DM', 'DM', 'LSH', 'AM', 'RSH', 'CF'],
 };
 export function formationSlots(f: Formation): DetailPos[] {
   return FORMATION_SLOTS[f];
 }
-// 適性ペナルティの段階: 完全一致=1.0、同じ basePos 内=0.92、
-// GK とフィールドプレイヤーの相互起用=0.48、それ以外の basePos またぎ=0.8。
-export function positionFitMult(playerDetail: DetailPos, slot: DetailPos): number {
-  if (playerDetail === slot) return 1;
-  const pb = basePos(playerDetail),
-    sb = basePos(slot);
-  if (pb === sb) return 0.92;
-  if (pb === 'GK' || sb === 'GK') return 0.48;
-  return 0.8;
+// S4: 起用時の能力倍率は習熟度(0〜100)から連続的に決める（目安: 100→1.00,
+// 70→0.95, 50→0.90, 0→0.75）。GKとフィールドプレイヤーの相互起用は習熟度に
+// 関わらず最大×0.5に頭打ちする。ps が無い（フォールバック）場合は、旧来の
+// 「完全一致=100 / 同じ系統=40 / それ以外=10」相当の習熟度とみなして同じ曲線を適用する。
+const PROF_CURVE: readonly [number, number][] = [
+  [0, 0.75],
+  [50, 0.9],
+  [70, 0.95],
+  [100, 1],
+];
+function profCurve(v: number): number {
+  const val = clamp(v, 0, 100);
+  for (let i = 0; i < PROF_CURVE.length - 1; i++) {
+    const [x0, y0] = PROF_CURVE[i];
+    const [x1, y1] = PROF_CURVE[i + 1];
+    if (val <= x1) return y0 + (y1 - y0) * ((val - x0) / (x1 - x0));
+  }
+  return PROF_CURVE[PROF_CURVE.length - 1][1];
+}
+export function positionFitMult(
+  ps: { detail: DetailPos; prof?: Partial<Record<DetailPos, number>> } | DetailPos,
+  slot: DetailPos,
+): number {
+  // 後方互換: 純粋関数レベルのテスト・簡易呼び出しのために、第1引数に
+  // DetailPos（プレイヤーオブジェクトの代わり）を直接渡すことも許す。
+  const detail: DetailPos = typeof ps === 'string' ? ps : ps.detail;
+  const profMap = typeof ps === 'string' ? undefined : ps.prof;
+  const fallback = detail === slot ? 100 : basePos(detail) === basePos(slot) ? 40 : 10;
+  const prof = profMap?.[slot] ?? fallback;
+  const mult = profCurve(prof);
+  const crossGK = (basePos(slot) === 'GK') !== (basePos(detail) === 'GK');
+  return crossGK ? Math.min(mult, 0.5) : mult;
 }
 
 // ---------------------------------------------------------------------------
@@ -380,11 +416,295 @@ function catalogByCategory(cat: SkillCategory): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// S4: プレースタイル（主ポジションに応じた役割。アーキタイプ=能力の偏りとは別軸）
+// ---------------------------------------------------------------------------
+export type PlayStyleId =
+  | 'gk_shot_stopper'
+  | 'gk_sweeper'
+  | 'cb_stopper'
+  | 'cb_cover'
+  | 'cb_buildup'
+  | 'sb_defensive'
+  | 'sb_attacking'
+  | 'wb_shuttle'
+  | 'dm_anchor'
+  | 'dm_box2box'
+  | 'dm_regista'
+  | 'sh_playmaker'
+  | 'sh_defensive'
+  | 'am_conductor'
+  | 'am_shadow'
+  | 'wg_dribbler'
+  | 'wg_cutin'
+  | 'ss_shadow'
+  | 'ss_creator'
+  | 'cf_post'
+  | 'cf_poacher'
+  | 'cf_runner';
+export type PlayStyle = {
+  id: PlayStyleId;
+  name: string;
+  desc: string;
+  /** このスタイルを選べる詳細ポジション。 */
+  positions: DetailPos[];
+  /** 試合計算への小さな実数効果（SkillEffectと同じ形を再利用）。 */
+  effect: SkillEffect;
+  /** 成長時、対応する能力の伸びをわずかに後押しする倍率。 */
+  growth: Partial<Record<Stat, number>>;
+};
+const styleList: PlayStyle[] = [
+  {
+    id: 'gk_shot_stopper',
+    name: 'ショットストッパー型',
+    desc: '反応でシュートを止める、瞬発力重視のGK。',
+    positions: ['GK'],
+    effect: { oppFinishMult: 0.985 },
+    growth: { keep: 1.12, speed: 1.08 },
+  },
+  {
+    id: 'gk_sweeper',
+    name: 'スイーパー型',
+    desc: '背後のスペースを管理し、足元でビルドアップに関わる。',
+    positions: ['GK'],
+    effect: { defenseMult: 0.99, attackMult: 1.01 },
+    growth: { defend: 1.1, pass: 1.1 },
+  },
+  {
+    id: 'cb_stopper',
+    name: 'ストッパー型',
+    desc: '1対1で潰し切る、対人の強さが武器。',
+    positions: ['CB'],
+    effect: { defenseMult: 0.985 },
+    growth: { defend: 1.12, speed: 1.06 },
+  },
+  {
+    id: 'cb_cover',
+    name: 'カバーリング型',
+    desc: '広い視野で味方の穴を埋め、決定機の芽を摘む。',
+    positions: ['CB'],
+    effect: { oppFinishMult: 0.99 },
+    growth: { defend: 1.08, mental: 1.1 },
+  },
+  {
+    id: 'cb_buildup',
+    name: 'ビルドアップ型',
+    desc: '後方から正確なパスで攻撃を組み立てる。',
+    positions: ['CB'],
+    effect: { attackMult: 1.012 },
+    growth: { pass: 1.14, mental: 1.06 },
+  },
+  {
+    id: 'sb_defensive',
+    name: '守備的サイドバック',
+    desc: 'まず自陣を固める、堅実な守備者。',
+    positions: ['LSB', 'RSB', 'LWB', 'RWB'],
+    effect: { defenseMult: 0.99 },
+    growth: { defend: 1.12, mental: 1.05 },
+  },
+  {
+    id: 'sb_attacking',
+    name: '攻撃的サイドバック',
+    desc: '積極的にオーバーラップし、攻撃に厚みを加える。',
+    positions: ['LSB', 'RSB', 'LWB', 'RWB'],
+    effect: { attackMult: 1.012 },
+    growth: { speed: 1.1, pass: 1.08 },
+  },
+  {
+    id: 'wb_shuttle',
+    name: '上下動型ウイングバック',
+    desc: 'サイドを往復し続け、攻守両面を走力で支える。',
+    positions: ['LWB', 'RWB'],
+    effect: { attackMult: 1.008, defenseMult: 0.995, fatigueMult: 1.08 },
+    growth: { speed: 1.12, mental: 1.06 },
+  },
+  {
+    id: 'dm_anchor',
+    name: 'アンカー',
+    desc: '最後尾で構え、攻撃の芽を摘み続ける。',
+    positions: ['DM', 'CM'],
+    effect: { defenseMult: 0.985 },
+    growth: { defend: 1.12, mental: 1.08 },
+  },
+  {
+    id: 'dm_box2box',
+    name: 'ボックス・トゥ・ボックス',
+    desc: '両ゴール前を走力で往復し、攻守に顔を出す。',
+    positions: ['DM', 'CM'],
+    effect: { attackMult: 1.008, defenseMult: 0.995, fatigueMult: 1.08 },
+    growth: { speed: 1.1, defend: 1.06 },
+  },
+  {
+    id: 'dm_regista',
+    name: '配球型（レジスタ）',
+    desc: '低い位置から正確な展開で攻撃を組み立てる司令塔。',
+    positions: ['DM', 'CM'],
+    effect: { attackMult: 1.015, ratioBonus: 0.006 },
+    growth: { pass: 1.14, mental: 1.08 },
+  },
+  {
+    id: 'sh_playmaker',
+    name: 'チャンスメーカー',
+    desc: 'サイドから質の高いクロス・パスで好機を演出する。',
+    positions: ['LSH', 'RSH'],
+    effect: { attackMult: 1.015 },
+    growth: { pass: 1.12, speed: 1.06 },
+  },
+  {
+    id: 'sh_defensive',
+    name: '守備的サイドハーフ',
+    desc: 'サイドの守備を最優先し、無理なく帰陣する。',
+    positions: ['LSH', 'RSH'],
+    effect: { defenseMult: 0.99 },
+    growth: { defend: 1.12, speed: 1.06 },
+  },
+  {
+    id: 'am_conductor',
+    name: '司令塔',
+    desc: '試合のテンポを操り、チーム全体を統率する。',
+    positions: ['AM'],
+    effect: { ratioBonus: 0.01, attackMult: 1.01 },
+    growth: { pass: 1.14, mental: 1.1 },
+  },
+  {
+    id: 'am_shadow',
+    name: 'シャドーストライカー',
+    desc: '前線の裏に潜り、得点に直結する仕事をこなす。',
+    positions: ['AM'],
+    effect: { finishMult: 1.03 },
+    growth: { shoot: 1.14, mental: 1.06 },
+  },
+  {
+    id: 'wg_dribbler',
+    name: '突破型ウイング',
+    desc: 'スピードとドリブルで局面を切り裂く。',
+    positions: ['LWG', 'RWG'],
+    effect: { attackMult: 1.02 },
+    growth: { speed: 1.16, mental: 1.06 },
+  },
+  {
+    id: 'wg_cutin',
+    name: 'カットイン型',
+    desc: '中央に切れ込み、逆足でゴールを狙う。',
+    positions: ['LWG', 'RWG'],
+    effect: { finishMult: 1.025 },
+    growth: { shoot: 1.14, speed: 1.06 },
+  },
+  {
+    id: 'ss_shadow',
+    name: 'シャドーストライカー',
+    desc: 'CFの近くで裏へ抜け出し、得点機に絡む。',
+    positions: ['SS'],
+    effect: { finishMult: 1.03 },
+    growth: { shoot: 1.12, speed: 1.08 },
+  },
+  {
+    id: 'ss_creator',
+    name: 'チャンスメーカー',
+    desc: '前線から降りて受け、決定機を演出する。',
+    positions: ['SS'],
+    effect: { attackMult: 1.018 },
+    growth: { pass: 1.12, mental: 1.08 },
+  },
+  {
+    id: 'cf_post',
+    name: 'ポストプレイヤー',
+    desc: '体を張ってボールを収め、攻撃の起点になる。',
+    positions: ['CF'],
+    effect: { finishMult: 1.015, attackMult: 1.008 },
+    growth: { defend: 1.1, pass: 1.1 },
+  },
+  {
+    id: 'cf_poacher',
+    name: 'ポーチャー（点取り屋）',
+    desc: 'ゴール前の一瞬の隙を逃さない、決定力の塊。',
+    positions: ['CF'],
+    effect: { finishMult: 1.045 },
+    growth: { shoot: 1.16, mental: 1.06 },
+  },
+  {
+    id: 'cf_runner',
+    name: '裏抜け型',
+    desc: '走力でラインの裏を狙い、スペースを突く。',
+    positions: ['CF'],
+    effect: { finishMult: 1.02, attackMult: 1.01 },
+    growth: { speed: 1.14, shoot: 1.06 },
+  },
+];
+export const PLAY_STYLES: Record<PlayStyleId, PlayStyle> = Object.fromEntries(
+  styleList.map((st) => [st.id, st]),
+) as Record<PlayStyleId, PlayStyle>;
+export const PLAY_STYLE_LIST = styleList;
+export function stylesFor(detail: DetailPos): PlayStyle[] {
+  return styleList.filter((st) => st.positions.includes(detail));
+}
+
+// ---------------------------------------------------------------------------
+// S4: ポジション習熟度（0〜100、15ポジション分）
+// ---------------------------------------------------------------------------
+export type Proficiency = Record<DetailPos, number>;
+// 系統が近いポジション（試合出場時、主に起用されたスロットからわずかに波及する）。
+const NEARBY_POS: Partial<Record<DetailPos, DetailPos[]>> = {
+  CB: ['LSB', 'RSB'],
+  LSB: ['CB', 'LWB'],
+  RSB: ['CB', 'RWB'],
+  LWB: ['LSB', 'LSH'],
+  RWB: ['RSB', 'RSH'],
+  DM: ['CM'],
+  CM: ['DM', 'AM'],
+  LSH: ['LWB', 'LWG', 'AM'],
+  RSH: ['RWB', 'RWG', 'AM'],
+  AM: ['CM', 'SS'],
+  LWG: ['LSH', 'SS'],
+  RWG: ['RSH', 'SS'],
+  SS: ['AM', 'CF'],
+  CF: ['SS'],
+};
+// 習熟度60到達で「サブポジション習得」とみなす。
+export const MASTERY_THRESHOLD = 60;
+export function initialProficiency(detail: DetailPos): Proficiency {
+  const base = basePos(detail);
+  const rec = {} as Proficiency;
+  for (const d of DETAIL_POS) rec[d] = d === detail ? 100 : basePos(d) === base ? 40 : 10;
+  return rec;
+}
+/** 習熟度を加算し、60到達で習得メッセージをフィードへ出す。系統が近いポジションにも少し波及する。 */
+export function gainProficiency(
+  s: State,
+  playerId: number,
+  pos: DetailPos,
+  amount: number,
+  spillover = true,
+): void {
+  const sq = s.v3?.squad;
+  if (!sq || amount <= 0) return;
+  const ps = sq.players[playerId];
+  const p = s.players.find((x) => x.id === playerId);
+  if (!ps || !p) return;
+  if (!ps.prof) ps.prof = initialProficiency(ps.detail);
+  const before = ps.prof[pos] ?? 0;
+  const after = clamp(before + amount, 0, 100);
+  ps.prof[pos] = after;
+  if (before < MASTERY_THRESHOLD && after >= MASTERY_THRESHOLD) {
+    s.feed = [
+      `${p.name}が${detailInfo[pos].name}（${pos}）のサブポジションを習得しました！`,
+      ...s.feed,
+    ].slice(0, 30);
+  }
+  if (spillover) {
+    const near = NEARBY_POS[pos] ?? [];
+    const spilloverAmt = clamp(amount * 0.25, 0, 1);
+    for (const n of near) gainProficiency(s, playerId, n, spilloverAmt, false);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // A/Bチーム・選手ごとの編成データ
 // ---------------------------------------------------------------------------
 export type PlayerSquad = {
   detail: DetailPos;
   archetype: Archetype;
+  style: PlayStyleId;
+  prof: Proficiency;
   dribble: number;
   stamina: number;
   power: number;
@@ -422,6 +742,13 @@ export function assignArchetype(s: State, p: Player): Archetype {
   const idx = Math.floor(hf(s.seed, p.id, 555) * options.length);
   return options[Math.min(idx, options.length - 1)];
 }
+// S4: プレースタイルは選手の id のみを種に決定的に割り当てる（s.seed を混ぜない）。
+// 旧セーブ移行でも同じ関数で決定的に補える。
+export function assignStyle(p: Player, detail: DetailPos): PlayStyleId {
+  const options = stylesFor(detail).map((st) => st.id);
+  const idx = Math.floor(hf(p.id, 8080) * options.length);
+  return options[Math.min(idx, options.length - 1)];
+}
 function deriveExtra(
   s: State,
   p: Player,
@@ -454,11 +781,16 @@ const detailWeights: Record<DetailPos, Partial<Record<WeightKey, number>>> = {
   CB: { defend: 2, power: 2, mental: 1 },
   LSB: { defend: 2, speed: 1, stamina: 1, dribble: 1 },
   RSB: { defend: 2, speed: 1, stamina: 1, dribble: 1 },
+  LWB: { defend: 1, speed: 2, stamina: 2, dribble: 1 },
+  RWB: { defend: 1, speed: 2, stamina: 2, dribble: 1 },
   DM: { defend: 2, pass: 1, mental: 1, stamina: 1 },
   CM: { pass: 2, mental: 1, stamina: 1, dribble: 1 },
+  LSH: { pass: 1, dribble: 2, speed: 1, mental: 1 },
+  RSH: { pass: 1, dribble: 2, speed: 1, mental: 1 },
   AM: { pass: 1, dribble: 2, shoot: 1, mental: 1 },
   LWG: { dribble: 2, speed: 2, shoot: 1 },
   RWG: { dribble: 2, speed: 2, shoot: 1 },
+  SS: { shoot: 2, dribble: 1, mental: 1, pass: 1 },
   CF: { shoot: 2, power: 1, dribble: 1, mental: 1 },
 };
 export function squadOverall(p: Player, ps: PlayerSquad): number {
@@ -519,9 +851,12 @@ export function hydrateSquad(s: State): void {
   for (const p of s.players) {
     if (!sq.players[p.id]) {
       const extra = deriveExtra(s, p);
+      const detail = assignDetailPos(s, p);
       sq.players[p.id] = {
-        detail: assignDetailPos(s, p),
+        detail,
         archetype: assignArchetype(s, p),
+        style: assignStyle(p, detail),
+        prof: initialProficiency(detail),
         dribble: extra.dribble,
         stamina: extra.stamina,
         power: extra.power,
@@ -532,6 +867,19 @@ export function hydrateSquad(s: State): void {
         streakMenu: null,
         streakCount: 0,
       };
+    } else {
+      // S4: 旧セーブ（15ポジション・習熟度・プレースタイル導入前）を決定的に補う。
+      // ps.detail は旧10ポジションのいずれかで、そのまま新15ポジションの部分集合として
+      // 有効な値なので detail 自体は移行不要。習熟度は「現ポジション100・同系統40・
+      // 他10」で、プレースタイルは id を種に決定的に初期化する。
+      const ps = sq.players[p.id];
+      if (!ps.prof) ps.prof = initialProficiency(ps.detail);
+      if (
+        !ps.style ||
+        !Object.hasOwn(PLAY_STYLES, ps.style) ||
+        !PLAY_STYLES[ps.style].positions.includes(ps.detail)
+      )
+        ps.style = assignStyle(p, ps.detail);
     }
   }
   for (const key of Object.keys(sq.players)) {
@@ -556,6 +904,13 @@ export function validateSquad(s: State): void {
     if (!(DETAIL_POS as readonly string[]).includes(ps.detail) || basePos(ps.detail) !== p.pos)
       throw Error('詳細ポジションが不正です。');
     if (!Object.hasOwn(archetypes, ps.archetype)) throw Error('アーキタイプが不正です。');
+    if (!Object.hasOwn(PLAY_STYLES, ps.style) || !PLAY_STYLES[ps.style].positions.includes(ps.detail))
+      throw Error('プレースタイルが不正です。');
+    if (
+      !ps.prof ||
+      !DETAIL_POS.every((d) => num(ps.prof[d], 0, 100))
+    )
+      throw Error('ポジション習熟度データが不正です。');
     if (![ps.dribble, ps.stamina, ps.power].every((n) => num(n, 20, 99)))
       throw Error('拡張能力値が不正です。');
     if (
@@ -740,6 +1095,18 @@ export function skillMatchFactors(s: State): SkillMatchFactors {
       if (e.pkStopMult && isGK) fx.pkStopMult *= e.pkStopMult;
       if (e.oppFinishMult && isGK) fx.oppFinish *= e.oppFinishMult;
     }
+    // S4: プレースタイルも特殊能力と同じ SkillEffect 形状で、小さな実数効果を試合計算に持つ。
+    const se = PLAY_STYLES[ps.style]?.effect;
+    if (se) {
+      if (se.attackMult) fx.attack *= se.attackMult;
+      if (se.defenseMult) fx.defense *= se.defenseMult;
+      if (se.finishMult) fx.finish *= se.finishMult;
+      if (se.ratioBonus) fx.ratioBonus += se.ratioBonus;
+      if (se.comebackBonus) fx.comebackBonus += se.comebackBonus;
+      if (se.pkMult && !isGK) fx.pkMult *= se.pkMult;
+      if (se.pkStopMult && isGK) fx.pkStopMult *= se.pkStopMult;
+      if (se.oppFinishMult && isGK) fx.oppFinish *= se.oppFinishMult;
+    }
   }
   return fx;
 }
@@ -751,6 +1118,8 @@ export function playerFatigueMult(s: State, playerId: number): number {
     const e = SKILLS[sid]?.effect;
     if (e?.fatigueMult) m *= e.fatigueMult;
   }
+  const se = PLAY_STYLES[ps.style]?.effect;
+  if (se?.fatigueMult) m *= se.fatigueMult;
   return m;
 }
 
@@ -759,13 +1128,44 @@ export function playerFatigueMult(s: State, playerId: number): number {
 // ---------------------------------------------------------------------------
 export type SquadAction =
   | { type: 'squadTeam'; id: number; team: 'A' | 'B' }
-  | { type: 'squadAuto' };
+  | { type: 'squadAuto' }
+  | { type: 'squadStyle'; id: number; style: PlayStyleId }
+  | { type: 'squadPrimaryPos'; id: number; detail: DetailPos };
 export function handleSquad(s: State, a: SquadAction): boolean {
-  if (a.type !== 'squadTeam' && a.type !== 'squadAuto') return false;
+  if (
+    a.type !== 'squadTeam' &&
+    a.type !== 'squadAuto' &&
+    a.type !== 'squadStyle' &&
+    a.type !== 'squadPrimaryPos'
+  )
+    return false;
   const sq = s.v3.squad;
   if (a.type === 'squadAuto') {
     for (const key of Object.keys(sq.players)) sq.players[+key].teamManual = false;
     assignTeams(s);
+    return true;
+  }
+  if (a.type === 'squadStyle') {
+    const ps = sq.players[a.id];
+    if (!ps) throw Error('選手が見つかりません。');
+    const st = PLAY_STYLES[a.style];
+    if (!st || !st.positions.includes(ps.detail))
+      throw Error('現在のポジションでは選べないプレースタイルです。');
+    ps.style = a.style;
+    return true;
+  }
+  if (a.type === 'squadPrimaryPos') {
+    const ps = sq.players[a.id];
+    const p = s.players.find((x) => x.id === a.id);
+    if (!ps || !p) throw Error('選手が見つかりません。');
+    if (!(DETAIL_POS as readonly string[]).includes(a.detail))
+      throw Error('ポジションが不正です。');
+    if (a.detail === ps.detail) return true;
+    if (basePos(a.detail) !== p.pos) throw Error('系統(GK/DF/MF/FW)が異なるポジションには変更できません。');
+    if ((ps.prof[a.detail] ?? 0) < MASTERY_THRESHOLD)
+      throw Error(`習熟度が${MASTERY_THRESHOLD}に達したポジションのみ、主ポジションに変更できます。`);
+    ps.detail = a.detail;
+    if (!stylesFor(a.detail).some((st) => st.id === ps.style)) ps.style = assignStyle(p, a.detail);
     return true;
   }
   const ps = sq.players[a.id];

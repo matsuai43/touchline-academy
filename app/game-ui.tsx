@@ -7,8 +7,14 @@ import {
   PotentialBadge,
 } from './development-ui';
 import { personalities } from '@/lib/development';
-import { formationSlots, detailInfo, isBenchPlayer } from '@/lib/squad';
-import { SquadPanel, SquadProfile, SquadTeamToggle } from './squad-ui';
+import { formationSlots, detailInfo, isBenchPlayer, DETAIL_POS, basePos, type DetailPos } from '@/lib/squad';
+import {
+  SquadPanel,
+  SquadProfile,
+  SquadTeamToggle,
+  PlayStyleSelector,
+  PrimaryPositionSelector,
+} from './squad-ui';
 import { AbilitySheet } from './ability-sheet';
 import { LifeEventPanel } from './life-ui';
 import { AudioSettingsPanel } from './audio-ui';
@@ -31,6 +37,7 @@ import {
   Flag,
   HeartPulse,
   HelpCircle,
+  MapPin,
   Save,
   Settings2,
   Shield,
@@ -93,13 +100,14 @@ const menu = [
   ['future', '育成・スカウト', Target],
   ['history', '部の記録', ClipboardList],
 ] as const;
-const trainingIcons = {
+const trainingIcons: Record<Training, typeof Dumbbell> = {
   balance: Dumbbell,
   attack: Target,
   possession: Users,
   defense: Shield,
   physical: Zap,
   rest: HeartPulse,
+  position: MapPin,
 };
 // S1: lib/game.ts の training[].fatigue は「従来の週あたり」の目安値のまま残している
 // （互換・参照用）。日次コマンドでの実際の1日あたりの疲労変化は
@@ -372,6 +380,8 @@ export default function Game() {
     );
   const focus = s.players.find((p) => p.id === s.focus),
     player = s.players.find((p) => p.id === selected),
+    // S4: ポジション練習の対象（選手＋ポジション）。
+    positionFocusPlayer = s.players.find((p) => p.id === s.positionFocus?.id),
     fatigue = s.players.reduce((a, p) => a + p.fatigue, 0) / s.players.length;
   // W2配線: 予定表・シーズン状況はすべて lib/competition.ts の大会データ（s.v3.competition）から
   // 導出する。旧 s.qualified/s.alive/s.summerAlive は試合結果の反映先ではなくなったため、表示にも使わない。
@@ -778,6 +788,27 @@ export default function Game() {
                         {focus?.name || '選手を指定する'} <ChevronRight size={15} />
                       </button>
                     </div>
+                    <div>
+                      <span className="muted">ポジション練習の対象</span>
+                      <button
+                        className="text-link"
+                        onClick={() => setTab('team')}
+                      >
+                        {positionFocusPlayer && s.positionFocus
+                          ? `${positionFocusPlayer.name} / ${detailInfo[s.positionFocus.pos].name}`
+                          : '選手とポジションを指定する'}{' '}
+                        <ChevronRight size={15} />
+                      </button>
+                      {s.positionFocus && (
+                        <button
+                          type="button"
+                          className="secondary small"
+                          onClick={() => run({ type: 'positionFocus', id: null, pos: null })}
+                        >
+                          解除
+                        </button>
+                      )}
+                    </div>
                     {!s.pending && (
                       <div className="training-footer">
                         <button
@@ -901,7 +932,7 @@ export default function Game() {
                       onChange={(v) =>
                         run({ type: 'formation', formation: v as Formation })
                       }
-                      items={['4-3-3', '4-4-2', '3-4-3'].map((v) => ({
+                      items={['4-3-3', '4-4-2', '3-4-3', '4-2-3-1'].map((v) => ({
                         value: v,
                         label: v,
                       }))}
@@ -1180,6 +1211,37 @@ export default function Game() {
                     />
                   )}
                 </div>
+              )}
+              {!s.match && s.v3.squad.players[player.id] && (
+                <div className="profile-actions position-focus-picker">
+                  <label className="field">
+                    ポジション練習の対象にする
+                    <select
+                      value={s.positionFocus?.id === player.id ? s.positionFocus.pos : ''}
+                      onChange={(e) => {
+                        if (e.target.value)
+                          run({
+                            type: 'positionFocus',
+                            id: player.id,
+                            pos: e.target.value as DetailPos,
+                          });
+                      }}
+                    >
+                      <option value="">鍛えるポジションを選ぶ</option>
+                      {DETAIL_POS.filter((d) => basePos(d) === player.pos).map((d) => (
+                        <option key={d} value={d}>
+                          {detailInfo[d].name}（{d}）
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+              {!s.match && s.v3.squad.players[player.id] && (
+                <>
+                  <PlayStyleSelector p={player} ps={s.v3.squad.players[player.id]} run={run} />
+                  <PrimaryPositionSelector p={player} ps={s.v3.squad.players[player.id]} run={run} />
+                </>
               )}
               <h3>
                 {s.match ? '交代する先発選手を選ぶ' : '先発の起用先を選ぶ'}

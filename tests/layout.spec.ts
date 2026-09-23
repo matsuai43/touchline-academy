@@ -23,7 +23,7 @@ test.describe('W6 横画面・アプリ的UI', () => {
     await seedGame(page, '横画面検証高校', 4001);
     await page.goto('/');
     await expect(
-      page.getByRole('heading', { name: '今週の練習', exact: true }),
+      page.getByRole('heading', { name: '今日の練習', exact: true }),
     ).toBeVisible();
 
     const nav = page.locator('.nav-wrap');

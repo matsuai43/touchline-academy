@@ -220,6 +220,11 @@ void test('10シーズン相当を進行させても士気・疲労・信頼・�
   };
   let totalTriggers = 0;
   let actions = 0;
+  let weeksWithTrigger = 0;
+  let lastTriggerWeekStamp = -1;
+  // S1: 1回のtrain操作は「1日」。ループ本体は変えず（意図は「試合の無い日に限り
+  // maybeTriggerLifeEventが呼ばれ、1週1回に収まる」ことの確認のまま）、
+  // 週ではなく日単位で回す。
   while (s.season <= 10) {
     hydrateLife(s);
     const cur = getCurrentLifeEvent(s);
@@ -234,14 +239,18 @@ void test('10シーズン相当を進行させても士気・疲労・信頼・�
       while (!s.match!.done) s = act(s, { type: 'segment' });
       s = act(s, { type: 'finish' });
     } else {
-      // act() の 'train' ハンドラが（試合の無い週に限り）内部で maybeTriggerLifeEvent を
-      // 既に呼んでいる。ここまでの時点で life.current が資格を持つのは、まさに今の
-      // act() 呼び出しで発生した場合だけ（前週分はループ先頭で resolve 済みのため）。
+      // act() の 'train' ハンドラは日ごとに maybeTriggerLifeEvent を呼ぶ（月〜金のみ）。
+      // ここまでの時点で life.current が資格を持つのは、まさに今の act() 呼び出しで
+      // 発生した場合だけ（前回分はループ先頭で resolve 済みのため）。
       hydrateLife(s);
       const cur2 = getCurrentLifeEvent(s);
       if (cur2) {
         totalTriggers++;
         categoryCounts[cur2.event.category]++;
+        const stamp = s.season * 48 + s.week;
+        assert.notEqual(stamp, lastTriggerWeekStamp, '同じ週に2回以上イベントが発生しています');
+        lastTriggerWeekStamp = stamp;
+        weeksWithTrigger++;
       }
       assert.ok(!readLifeState(s).current || getCurrentLifeEvent(s) !== null);
     }
@@ -256,12 +265,15 @@ void test('10シーズン相当を進行させても士気・疲労・信頼・�
     }
     validateLife(s);
     actions++;
-    assert.ok(actions < 700, '無限ループ防止');
+    assert.ok(actions < 5000, '無限ループ防止');
   }
+  // 目標: 1シーズン12〜18回（10シーズン平均でこの範囲、多少の幅は許容）。
+  const perSeason = totalTriggers / 10;
   assert.ok(
-    totalTriggers > 20,
-    `10シーズンで十分な数のイベントが発生していません: ${totalTriggers}件`,
+    perSeason >= 8 && perSeason <= 24,
+    `10シーズン平均のイベント発生回数が想定レンジ外です: ${perSeason}件/シーズン（合計${totalTriggers}件）`,
   );
+  assert.equal(weeksWithTrigger, totalTriggers, '同じ週に複数回発生したケースがあります');
   for (const cat of LIFE_CATEGORIES) {
     assert.ok(categoryCounts[cat] > 0, `カテゴリ「${cat}」が一度も出現しませんでした`);
     assert.ok(
@@ -270,16 +282,53 @@ void test('10シーズン相当を進行させても士気・疲労・信頼・�
     );
   }
 });
+void test('S1: 最初の8週以内に学校生活イベントが発生する（複数シードで高確率に）', () => {
+  // 週あたりの発生確率は約1/3（LIFE_EVENT_CHANCE=0.075、月〜金の5日判定）なので、
+  // 8週あれば1-(1-1/3)^8≒97%で発生する計算だが、外れシードもありうるので
+  // 「全シードで必ず」ではなく「十分な数のシードで発生する」ことを確認する
+  // （設計書2.5「複数シードで確認」の趣旨）。
+  let seedsWithTrigger = 0;
+  const seeds = Array.from({ length: 30 }, (_, i) => i + 1);
+  for (const seed of seeds) {
+    let s = newGame('序盤発生検証高校', seed);
+    hydrateLife(s);
+    let triggeredWithin8Weeks = false;
+    let actions = 0;
+    while (s.week < 8 && s.season === 1 && actions < 100) {
+      hydrateLife(s);
+      const cur = getCurrentLifeEvent(s);
+      if (cur) {
+        handleLife(s, { type: 'life', choiceId: cur.event.choices[0].id });
+        triggeredWithin8Weeks = true;
+      }
+      if (s.event) s = act(s, { type: 'event', choice: 'team' });
+      s = act(s, { type: 'train', training: pickTraining(s, s.week) });
+      if (s.pending) {
+        s = act(s, { type: 'start' });
+        while (!s.match!.done) s = act(s, { type: 'segment' });
+        s = act(s, { type: 'finish' });
+      }
+      actions++;
+    }
+    if (triggeredWithin8Weeks) seedsWithTrigger++;
+  }
+  assert.ok(
+    seedsWithTrigger / seeds.length >= 0.8,
+    `最初の8週以内にイベントが発生したシードが少なすぎます: ${seedsWithTrigger}/${seeds.length}`,
+  );
+});
 
 void test('決定性：同じシード・同じ操作列なら同じイベントと選手が選ばれる', () => {
   function run(seed: number) {
     let s = newGame('決定性検証高校', seed);
     hydrateLife(s);
     const picks: { eventId: string; playerId: number }[] = [];
-    // W2配線後は大会日程（U18リーグ・インターハイ・選手権）が空き週の大半を占めるため、
-    // 「試合の無い週」の絶対数が減っている。30週（1季）だけでは特定シードで
-    // 一度もイベントが発生しないことがあるため、複数季ぶん回して機会を確保する。
-    for (let i = 0; i < 200; i++) {
+    // S1: 1回のtrain操作は「1日」。日次判定になったことで機会そのものは増えたが、
+    // 確実に複数回の発生を確保するため十分な日数（約100週相当）を回す。
+    // act() の 'train' ハンドラが内部で maybeTriggerLifeEvent を呼んでいるので、
+    // ここでは直接呼び直さず、trainの結果としてlife.currentが立ったかどうかを読む
+    // （二重に呼ぶと lastTriggerStamp/current の1週1回ガードに阻まれて常にfalseになる）。
+    for (let i = 0; i < 600; i++) {
       hydrateLife(s);
       const cur = getCurrentLifeEvent(s);
       if (cur) handleLife(s, { type: 'life', choiceId: cur.event.choices[0].id });
@@ -291,10 +340,8 @@ void test('決定性：同じシード・同じ操作列なら同じイベント
         s = act(s, { type: 'finish' });
       } else {
         hydrateLife(s);
-        if (maybeTriggerLifeEvent(s)) {
-          const c = getCurrentLifeEvent(s)!;
-          picks.push({ eventId: c.event.id, playerId: c.player.id });
-        }
+        const c = getCurrentLifeEvent(s);
+        if (c) picks.push({ eventId: c.event.id, playerId: c.player.id });
       }
     }
     return picks;

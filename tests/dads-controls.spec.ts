@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { newGame, act, type State } from '../lib/game';
+import { getCurrentLifeEvent } from '../lib/school-life';
 
 // D2a: DADS ボタン・フォーム・表の検証。
 // - disabled 属性を持つ要素が無いこと（押せない理由はトースト/直下の補足文で示す方針に
@@ -9,10 +10,18 @@ import { newGame, act, type State } from '../lib/game';
 // - 5択以下のセレクトはラジオボタンになっていること（部員一覧の並び替え）。
 // - 表はスクロール領域に tabIndex とラベルを持つこと。
 
+// S1: 日次コマンド化により「1回のtrain操作=1週」の前提が崩れたため、週3(必ずU18リーグの
+// 試合がある週)の試合日(日曜)まで、休養で日次コマンドを進めてから試合を開始する。
 function startedMatch(school: string, seed: number): State {
   let s = newGame(school, seed);
   s.week = 3;
-  s = act(s, { type: 'train', training: 'rest' });
+  let guard = 0;
+  while (!s.pending && guard++ < 20) {
+    const cur = getCurrentLifeEvent(s);
+    if (cur) s = act(s, { type: 'life', choiceId: cur.event.choices[0].id });
+    if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    s = act(s, { type: 'train', training: 'rest' });
+  }
   s = act(s, { type: 'start' });
   return s;
 }

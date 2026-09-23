@@ -11,12 +11,6 @@ import { commandFactors } from '../lib/development.ts';
 import { getCurrentLifeEvent } from '../lib/school-life.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-const start = () => {
-  let s = newGame('未来学園', 2026);
-  s.week = 3;
-  s = act(s, { type: 'train', training: 'rest' });
-  return act(s, { type: 'start' });
-};
 // 学校生活イベント（W3）が出ている週は、解決するまで 'train' が進められない。
 // テストは常に先頭の選択肢を選んで先へ進める。
 function resolveLife(s: State) {
@@ -24,17 +18,38 @@ function resolveLife(s: State) {
   if (!cur) return s;
   return act(s, { type: 'life', choiceId: cur.event.choices[0].id });
 }
+// S1: 日次コマンド化により「1回のtrain操作=1週」の前提が崩れたため、
+// 「1週間進める」ヘルパーに置き換える（月〜土の6日を同じ練習メニューで進める）。
 function next(s: State, t: Training = 'rest') {
-  if (s.event) s = act(s, { type: 'event', choice: 'team' });
-  s = resolveLife(s);
-  s = act(s, { type: 'train', training: t });
-  if (s.pending) {
-    s = act(s, { type: 'start' });
-    while (!s.match!.done) s = act(s, { type: 'segment' });
-    s = act(s, { type: 'finish' });
+  const week0 = s.week;
+  while (s.week === week0) {
+    if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    s = resolveLife(s);
+    s = act(s, { type: 'train', training: t });
+    if (s.pending) {
+      s = act(s, { type: 'start' });
+      while (!s.match!.done) s = act(s, { type: 'segment' });
+      s = act(s, { type: 'finish' });
+    }
   }
   return s;
 }
+// 特定の週(試合が確実にある週)の試合日まで、同じメニューで日次コマンドを進める。
+function toMatchDay(s: State, t: Training = 'rest') {
+  let guard = 0;
+  while (!s.pending && guard++ < 20) {
+    if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    s = resolveLife(s);
+    s = act(s, { type: 'train', training: t });
+  }
+  return s;
+}
+const start = () => {
+  let s = newGame('未来学園', 2026);
+  s.week = 3;
+  s = toMatchDay(s, 'rest');
+  return act(s, { type: 'start' });
+};
 
 void test('v1 saves migrate without changing players, RNG, score, or schedule', () => {
   const s = start(),
@@ -81,15 +96,19 @@ void test('half-year policy grows matching skills, locks, rewards once and reset
   s = act(s, { type: 'plan', plan: 'defense' });
   assert.equal(s.development.plan, 'defense');
 });
-void test('manager care applies once per training week, selection never grants rewards', () => {
+void test('manager care applies once per training day-0 (weekly gate), selection never grants rewards', () => {
   let s = newGame('', 51);
+  s.players.forEach((p) => (p.fatigue = 50)); // 0クランプに当たらないよう余裕を持たせる
   s = act(s, { type: 'manager', manager: 0 });
   s = act(s, { type: 'support', support: 'care' });
   const f = s.players[0].fatigue;
   for (let i = 0; i < 5; i++) s = act(s, { type: 'manager', manager: i % 4 });
   assert.equal(s.players[0].fatigue, f);
+  // S1: 1回のtrainは1日。マネージャーの週次サポート(care)はその週の最初の日(day===0)
+  // にのみ適用される。balance の日次疲労は 7/6-3、ケアはさらに-4。
+  assert.equal(s.day, 0);
   const trained = act(s, { type: 'train', training: 'balance' });
-  assert.equal(trained.players[0].fatigue, f + 7 - 4);
+  assert.ok(Math.abs(trained.players[0].fatigue - (f + 7 / 6 - 3 - 4)) < 1e-9);
   const before = trained.morale;
   const changed = act(trained, { type: 'support', support: 'cheer' });
   assert.equal(changed.morale, before);

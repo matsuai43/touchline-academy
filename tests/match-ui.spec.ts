@@ -1,15 +1,23 @@
 import { test, expect, type Page } from '@playwright/test';
 import { newGame, act, type State } from '../lib/game';
+import { getCurrentLifeEvent } from '../lib/school-life';
 
 // W4: 試合UIの刷新（交代の2ステップ化）と試合後サマリの検証。
-// UI操作を高速化するため、練習週やランダムなライフイベントに依存せず、
-// lib/game.ts の act() を直接呼んで「試合開始直後」「試合終了直後」の State を作り、
-// localStorage にあらかじめ書き込んでからページを開く（development.spec.ts と同じ手法）。
-
+// UI操作を高速化するため、lib/game.ts の act() を直接呼んで「試合開始直後」
+// 「試合終了直後」の State を作り、localStorage にあらかじめ書き込んでからページを開く
+// （development.spec.ts と同じ手法）。S1で日次コマンド化されたため、週3(必ずU18リーグの
+// 試合がある週)の試合日まで日次で進める必要があるが、途中で学校生活イベントが出ても
+// 先頭の選択肢で即解決するだけなので、結果として得られる「試合開始直後」の状態には影響しない。
 function startedMatch(school: string, seed: number): State {
   let s = newGame(school, seed);
   s.week = 3;
-  s = act(s, { type: 'train', training: 'rest' });
+  let guard = 0;
+  while (!s.pending && guard++ < 20) {
+    const cur = getCurrentLifeEvent(s);
+    if (cur) s = act(s, { type: 'life', choiceId: cur.event.choices[0].id });
+    if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    s = act(s, { type: 'train', training: 'rest' });
+  }
   s = act(s, { type: 'start' });
   return s;
 }
@@ -140,7 +148,7 @@ test('post-match summary: shows MOTM, timeline, stat comparison and per-player g
 
   await page.getByRole('button', { name: '部に戻る' }).click();
   await expect(page.getByText('MATCH SUMMARY', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: '今週の練習', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '今日の練習', exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 

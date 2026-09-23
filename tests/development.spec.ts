@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { newGame, act } from '../lib/game';
+import { getCurrentLifeEvent } from '../lib/school-life';
 
 test('v2 future: policy locks, manager motivates, scouting is limited, mobile cards fit', async ({
   page,
@@ -62,7 +63,13 @@ test('v2 match: command, contextual coaching, real highlight canvas and replay d
 }) => {
   let s = newGame('映像試験高校', 2026);
   s.week = 3;
-  s = act(s, { type: 'train', training: 'rest' });
+  let guard = 0;
+  while (!s.pending && guard++ < 20) {
+    const cur = getCurrentLifeEvent(s);
+    if (cur) s = act(s, { type: 'life', choiceId: cur.event.choices[0].id });
+    if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    s = act(s, { type: 'train', training: 'rest' });
+  }
   s = act(s, { type: 'start' });
   await page.addInitScript(
     (value) =>

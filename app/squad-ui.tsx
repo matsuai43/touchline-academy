@@ -1,7 +1,6 @@
 'use client';
-import { useState } from 'react';
-import { Star } from 'lucide-react';
-import { Progress } from '@/components/ui/progress';
+import { Fragment, useState } from 'react';
+import { Star, ChevronDown, ChevronUp } from 'lucide-react';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   Table,
@@ -13,18 +12,23 @@ import {
 } from '@/components/ui/table';
 import { Portrait } from './development-ui';
 import { personalities } from '@/lib/development';
-import { type State, type Action, type Player, type Position } from '@/lib/game';
+import { type State, type Action, type Player, type Position, type Stat } from '@/lib/game';
 import {
-  detailInfo,
-  archetypes,
   extraStatNames,
-  SKILLS,
   squadOverall,
-  type DetailPos,
-  type Archetype,
   type ExtraStat,
   type PlayerSquad,
 } from '@/lib/squad';
+import {
+  AbilitySheet,
+  AbilityRow,
+  PositionBadge,
+  ArchetypeBadge,
+  RankBadge,
+  SkillChips,
+} from './ability-sheet';
+
+export { PositionBadge, ArchetypeBadge, SkillChips };
 
 const groupOrder: Position[] = ['GK', 'DF', 'MF', 'FW'];
 const groupLabel: Record<Position, string> = {
@@ -33,64 +37,32 @@ const groupLabel: Record<Position, string> = {
   MF: 'ミッドフィルダー',
   FW: 'フォワード',
 };
-
-export function PositionBadge({ detail }: { detail: DetailPos }) {
-  const info = detailInfo[detail];
-  return (
-    <span
-      className={`position pos-${info.base} detail-badge`}
-      title={info.name}
-    >
-      {detail}
-    </span>
-  );
-}
-export function ArchetypeBadge({ archetype }: { archetype: Archetype }) {
-  const a = archetypes[archetype];
-  return (
-    <span className="archetype-badge" title={a.desc}>
-      {a.name}
-    </span>
-  );
-}
-export function SkillChips({
-  ps,
-  empty = '未習得',
-}: {
-  ps: PlayerSquad;
-  empty?: string;
-}) {
-  if (!ps.skills.length && !ps.negatives.length)
-    return <span className="muted skill-empty">{empty}</span>;
-  return (
-    <span className="skill-chips">
-      {ps.skills.map((id) => (
-        <span key={id} className="skill-chip" title={SKILLS[id].desc}>
-          {SKILLS[id].name}
-        </span>
-      ))}
-      {ps.negatives.map((id) => (
-        <span
-          key={id}
-          className="skill-chip negative"
-          title={SKILLS[id].desc}
-        >
-          {SKILLS[id].name}
-        </span>
-      ))}
-    </span>
-  );
-}
-function ExtraMeter({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="meter">
-      <div>
-        <span>{label}</span>
-        <b>{Math.round(value)}</b>
-      </div>
-      <Progress aria-label={label} value={value} />
-    </div>
-  );
+// 一覧で見せる「主要能力」。全9能力ではなく、ポジションに応じた3つ＋総合ランクに絞る。
+const primaryStats: Record<Position, { key: Stat | ExtraStat; label: string }[]> = {
+  GK: [
+    { key: 'keep', label: 'GK技術' },
+    { key: 'mental', label: '精神力' },
+    { key: 'power', label: 'パワー' },
+  ],
+  DF: [
+    { key: 'defend', label: '守備' },
+    { key: 'power', label: 'パワー' },
+    { key: 'speed', label: '走力' },
+  ],
+  MF: [
+    { key: 'pass', label: 'パス' },
+    { key: 'mental', label: '精神力' },
+    { key: 'dribble', label: '突破' },
+  ],
+  FW: [
+    { key: 'shoot', label: '決定力' },
+    { key: 'dribble', label: '突破' },
+    { key: 'speed', label: '走力' },
+  ],
+};
+function statValue(p: Player, ps: PlayerSquad, key: Stat | ExtraStat): number {
+  if (key === 'dribble' || key === 'stamina' || key === 'power') return ps[key as ExtraStat];
+  return p.stats[key as Stat];
 }
 
 export function SquadProfile({ ps }: { ps: PlayerSquad }) {
@@ -103,9 +75,9 @@ export function SquadProfile({ ps }: { ps: PlayerSquad }) {
           {ps.team}チーム{ps.teamManual ? '・指定' : ''}
         </span>
       </div>
-      <div className="stat-grid">
+      <div className="ability-sheet-grid ability-sheet-grid-compact">
         {(Object.keys(extraStatNames) as ExtraStat[]).map((k) => (
-          <ExtraMeter key={k} label={extraStatNames[k]} value={ps[k]} />
+          <AbilityRow key={k} label={extraStatNames[k]} value={ps[k]} />
         ))}
       </div>
       <div className="squad-skills">
@@ -156,6 +128,14 @@ export function SquadPanel({
   const [sort, setSort] = useState<'overall' | 'name' | 'fatigue' | 'skills'>(
     'overall',
   );
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const toggleExpanded = (id: number) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const sq = s.v3.squad;
   const rows = s.players
     .map((p) => ({ p, ps: sq.players[p.id] }))
@@ -258,63 +238,102 @@ export function SquadPanel({
                 <TableHead>選手 / 学年</TableHead>
                 <TableHead>ポジション</TableHead>
                 <TableHead>アーキタイプ</TableHead>
-                <TableHead>総合</TableHead>
+                <TableHead>能力</TableHead>
                 <TableHead>特殊能力</TableHead>
                 <TableHead>疲労</TableHead>
                 <TableHead>チーム</TableHead>
                 <TableHead>起用</TableHead>
+                <TableHead>能力シート</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {list.map(({ p, ps }) => (
-                <TableRow key={p.id}>
-                  <TableCell>
-                    <button className="player-link" onClick={() => onSelect(p.id)}>
-                      <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
-                      <span className="roster-name">
-                        {p.name}
-                        {s.focus === p.id && (
-                          <span className="focus-dot">
-                            <Star size={12} aria-hidden="true" fill="currentColor" />
-                            <span className="sr-only">重点育成中</span>
+              {list.map(({ p, ps }) => {
+                const isOpen = expanded.has(p.id);
+                return (
+                  <Fragment key={p.id}>
+                    <TableRow>
+                      <TableCell>
+                        <button className="player-link" onClick={() => onSelect(p.id)}>
+                          <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
+                          <span className="roster-name">
+                            {p.name}
+                            {s.focus === p.id && (
+                              <span className="focus-dot">
+                                <Star size={12} aria-hidden="true" fill="currentColor" />
+                                <span className="sr-only">重点育成中</span>
+                              </span>
+                            )}
+                            <small>
+                              {p.year}年 /{' '}
+                              {p.injury
+                                ? `調整 ${p.injury}週`
+                                : personalities[p.identity.personality].name}
+                            </small>
                           </span>
-                        )}
-                        <small>
-                          {p.year}年 /{' '}
-                          {p.injury
-                            ? `調整 ${p.injury}週`
-                            : personalities[p.identity.personality].name}
-                        </small>
-                      </span>
-                    </button>
-                  </TableCell>
-                  <TableCell>
-                    <PositionBadge detail={ps.detail} />
-                  </TableCell>
-                  <TableCell>
-                    <ArchetypeBadge archetype={ps.archetype} />
-                  </TableCell>
-                  <TableCell>
-                    <b className="overall">{squadOverall(p, ps)}</b>
-                  </TableCell>
-                  <TableCell>
-                    <SkillChips ps={ps} empty="なし" />
-                  </TableCell>
-                  <TableCell>
-                    <span className={p.fatigue > 65 ? 'danger-text' : ''}>
-                      {Math.round(p.fatigue)}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span className={`team-badge team-${ps.team}`}>{ps.team}</span>
-                  </TableCell>
-                  <TableCell>
-                    <span className={s.lineup.includes(p.id) ? 'lime' : 'muted'}>
-                      {s.lineup.includes(p.id) ? '先発' : '控え'}
-                    </span>
-                  </TableCell>
-                </TableRow>
-              ))}
+                        </button>
+                      </TableCell>
+                      <TableCell>
+                        <PositionBadge detail={ps.detail} />
+                      </TableCell>
+                      <TableCell>
+                        <ArchetypeBadge archetype={ps.archetype} />
+                      </TableCell>
+                      <TableCell>
+                        <span className="ability-rank-cell">
+                          <RankBadge value={squadOverall(p, ps)} label="総合" size="sm" />
+                          {primaryStats[g].map(({ key, label }) => (
+                            <RankBadge
+                              key={label}
+                              value={statValue(p, ps, key)}
+                              label={label}
+                              size="sm"
+                            />
+                          ))}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <SkillChips ps={ps} empty="なし" />
+                      </TableCell>
+                      <TableCell>
+                        <span className={p.fatigue > 65 ? 'danger-text' : ''}>
+                          {Math.round(p.fatigue)}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className={`team-badge team-${ps.team}`}>{ps.team}</span>
+                      </TableCell>
+                      <TableCell>
+                        <span className={s.lineup.includes(p.id) ? 'lime' : 'muted'}>
+                          {s.lineup.includes(p.id) ? '先発' : '控え'}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <button
+                          type="button"
+                          className="secondary small ability-toggle"
+                          aria-expanded={isOpen}
+                          aria-label={`${p.name}の能力シートを${isOpen ? '閉じる' : '見る'}`}
+                          onClick={() => toggleExpanded(p.id)}
+                        >
+                          {isOpen ? (
+                            <ChevronUp size={14} aria-hidden="true" />
+                          ) : (
+                            <ChevronDown size={14} aria-hidden="true" />
+                          )}
+                          {isOpen ? '閉じる' : '見る'}
+                        </button>
+                      </TableCell>
+                    </TableRow>
+                    {isOpen && (
+                      <TableRow className="ability-sheet-row">
+                        <TableCell colSpan={9}>
+                          <AbilitySheet p={p} ps={ps} />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                );
+              })}
             </TableBody>
           </Table>
         </div>

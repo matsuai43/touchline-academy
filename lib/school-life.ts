@@ -113,10 +113,15 @@ export type LifeState = {
   current: LifeCurrent | null;
   /** 直近に出たイベントID（連続で同じ話が出ないようにするための履歴） */
   history: string[];
+  /** S1: 最後にイベントを発生させた週のスタンプ（season*48+week）。日次判定になった
+   *  ことで同じ週に何度も maybeTriggerLifeEvent が呼ばれるため、「同じ週に最大1回」を
+   *  保証するのに使う（current は選択すると null に戻ってしまい週内判定に使えないため）。
+   *  旧セーブには存在しないので -1（=一度も発生していない）で補う。 */
+  lastTriggerStamp: number;
 };
 
 export function defaultLifeState(): LifeState {
-  return { schema: 1, current: null, history: [] };
+  return { schema: 1, current: null, history: [], lastTriggerStamp: -1 };
 }
 
 /** 統括側が lib/v3.ts で life を足すまでの間、型を安全に橋渡しするための最小キャスト */
@@ -1000,6 +1005,8 @@ export function hydrateLife(s: State): void {
   const v = withLife(s);
   if (!v.life || v.life.schema !== 1) v.life = defaultLifeState();
   if (!Array.isArray(v.life.history)) v.life.history = [];
+  if (typeof v.life.lastTriggerStamp !== 'number' || !Number.isFinite(v.life.lastTriggerStamp))
+    v.life.lastTriggerStamp = -1;
   if (v.life.current && !s.players.some((p) => p.id === v.life!.current!.playerId))
     v.life.current = null;
 }
@@ -1021,6 +1028,8 @@ export function validateLife(s: State): void {
     life.history.some((id) => typeof id !== 'string' || !LIFE_EVENTS_BY_ID[id])
   )
     throw Error('学校生活の履歴データが不正です。');
+  if (!num(life.lastTriggerStamp, -1, 5000000))
+    throw Error('学校生活データが不正です。');
   if (life.current !== null) {
     const c = life.current;
     if (
@@ -1052,30 +1061,38 @@ export function getCurrentLifeEvent(
 // ---------------------------------------------------------------------------
 // 発生判定（週の進行フックから呼ばれる）
 // ---------------------------------------------------------------------------
-/** 1週あたりの基礎発生確率。呼び出し側は「試合が組まれていない週」に限って呼ぶこと。 */
-export const LIFE_EVENT_CHANCE = 0.28;
+/** S1: 1日あたりの基礎発生確率。日次判定（月〜金の5日が対象、土日は対象外）で、
+ *  「同じ週に最大1回」まで発生しうる。1-(1-p)^5 が週あたりの発生率になるので、
+ *  1シーズン(48週)で12〜18回（週あたり0.25〜0.375）に収まるよう、
+ *  p≈0.075（週あたり約33%）を狙う。実測は tests/game.test.ts / school-life.test.ts の
+ *  10シーズン平均で検証している。 */
+export const LIFE_EVENT_CHANCE = 0.075;
 
 export function maybeTriggerLifeEvent(s: State): boolean {
   const life = getLife(s);
-  if (life.current) return false; // 1週1イベント
-  if (s.match || s.pending) return false; // 試合週には出さない
+  const stamp = s.season * 48 + s.week;
+  if (life.current) return false; // 未解決のイベントがある間は出さない
+  if (life.lastTriggerStamp === stamp) return false; // 同じ週に最大1回
+  if (s.match || s.pending) return false; // 試合中・試合待ちには出さない
+  if (s.day > 4) return false; // 試合前日（土=5）・試合日（日=6）には出さない
   if (!s.players.length) return false;
-  const roll = hf(s.seed, s.season, s.week, 91001);
+  const roll = hf(s.seed, s.season, s.week, s.day, 91001);
   if (roll >= LIFE_EVENT_CHANCE) return false;
   const pool = LIFE_EVENTS.filter((e) => !life.history.includes(e.id));
   const candidates = pool.length ? pool : LIFE_EVENTS;
   const ei = Math.min(
     candidates.length - 1,
-    Math.floor(hf(s.seed, s.season, s.week, 91002) * candidates.length),
+    Math.floor(hf(s.seed, s.season, s.week, s.day, 91002) * candidates.length),
   );
   const event = candidates[ei];
   const pi = Math.min(
     s.players.length - 1,
-    Math.floor(hf(s.seed, s.season, s.week, 91003) * s.players.length),
+    Math.floor(hf(s.seed, s.season, s.week, s.day, 91003) * s.players.length),
   );
   const player = s.players[pi];
   life.current = { eventId: event.id, playerId: player.id, week: s.week, season: s.season };
   life.history = [event.id, ...life.history].slice(0, 8);
+  life.lastTriggerStamp = stamp;
   return true;
 }
 

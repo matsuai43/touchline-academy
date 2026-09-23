@@ -13,6 +13,27 @@ import {
   type Commands,
 } from '@/lib/development';
 import type { State, Player, Action } from '@/lib/game';
+import { RANK_BY_ID, type RankId } from '@/lib/ability-rank';
+
+// 成長の素質は「潜在力の高さ」を3段階で示す評価であり、能力値（1〜99）のランクとは
+// 別の指標。値の意味は変えず（ロジックは lib/development.ts のまま）、表示だけを
+// 能力ランクと同じギリシャ文字に揃える（英字の A/A+/B をアプリ内に残さない）。
+function potentialRankId(potential: number): RankId {
+  if (potential >= 1.7) return 'alpha';
+  if (potential >= 1.5) return 'beta';
+  return 'gamma';
+}
+function PotentialBadge({ potential }: { potential: number }) {
+  const r = RANK_BY_ID[potentialRankId(potential)];
+  return (
+    <span className={`rank-badge rank-${r.id} rank-md`} title={`成長の素質：${r.letter}（${r.reading}）`}>
+      <span aria-hidden="true">{r.letter}</span>
+      <span className="sr-only">
+        成長の素質はランク{r.letter}（{r.reading}）
+      </span>
+    </span>
+  );
+}
 export function Portrait({
   index,
   name,
@@ -304,15 +325,11 @@ export function DevelopmentView({
                       </span>
                       <span>
                         成長の素質{' '}
-                        <b>
-                          {c.scouted
-                            ? c.potential >= 1.7
-                              ? 'A+'
-                              : c.potential >= 1.5
-                                ? 'A'
-                                : 'B'
-                            : '？'}
-                        </b>
+                        {c.scouted ? (
+                          <PotentialBadge potential={c.potential} />
+                        ) : (
+                          <b>？</b>
+                        )}
                       </span>
                     </div>
                     <div className="scout-interest">

@@ -66,6 +66,7 @@ import {
   training,
   tactics,
   stats,
+  DOW_NAMES,
   type State,
   type Action,
   type Training,
@@ -100,6 +101,12 @@ const trainingIcons = {
   physical: Zap,
   rest: HeartPulse,
 };
+// S1: lib/game.ts の training[].fatigue は「従来の週あたり」の目安値のまま残している
+// （互換・参照用）。日次コマンドでの実際の1日あたりの疲労変化は
+// 休養=-15固定、それ以外=t.fatigue/6-3（自然回復込み）なので、表示用に換算する。
+function dailyFatigueDelta(key: Training): number {
+  return key === 'rest' ? -15 : Math.round(training[key].fatigue / 6 - 3);
+}
 export default function Game() {
   const [s, setS] = useState<State | null>(null),
     [tab, setTab] = useState('club'),
@@ -166,7 +173,10 @@ export default function Game() {
     const next = act(stateRef.current, a);
     persist(next);
     setNotice(
-      a.type === 'train' || a.type === 'event' || a.type === 'upgrade'
+      a.type === 'train' ||
+        a.type === 'autoWeek' ||
+        a.type === 'event' ||
+        a.type === 'upgrade'
         ? next.feed[0]
         : '',
     );
@@ -271,9 +281,9 @@ export default function Game() {
         },
       },
       {
-        name: 'complete_training_week',
+        name: 'complete_training_day',
         description:
-          'Complete one training week, grow players and advance the local game. Fails if a match or club event is pending.',
+          'Complete one training day (Mon-Sat), grow players and advance the local game by one day. A week is 6 training days plus a match (or an automatic off day) on Sunday. Fails if a match or club event is pending.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -291,6 +301,28 @@ export default function Game() {
           return {
             season: x.season,
             week: x.week,
+            day: x.day,
+            message: x.feed[0],
+            pending: x.pending?.label || x.event,
+          };
+        },
+      },
+      {
+        name: 'advance_to_match_day',
+        description:
+          'Automatically advance day by day using the saved weekly training menu until a match is scheduled, or stop early on a newly triggered life event, club event, or injury that day.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          additionalProperties: false,
+        },
+        annotations: { readOnlyHint: false },
+        execute: () => {
+          const x = actionRef.current({ type: 'autoWeek' });
+          return {
+            season: x.season,
+            week: x.week,
+            day: x.day,
             message: x.feed[0],
             pending: x.pending?.label || x.event,
           };
@@ -686,14 +718,29 @@ export default function Game() {
                   <section className="panel training-panel">
                     <div className="section-head">
                       <div>
-                        <span className="eyebrow">WEEKLY TRAINING</span>
-                        <h2>今週の練習</h2>
+                        <span className="eyebrow">DAILY TRAINING</span>
+                        <h2>今日の練習</h2>
                       </div>
-                      <span className="muted">1回で1週間進行</span>
+                      <span className="muted">月〜土は1日ごと・日曜は試合</span>
                     </div>
+                    {/* 今週6日間の予定と、どこまで実施済みかを1行で見せる（S1）。
+                        s.day より前の枠は実施済み、s.day は今日、それより先は予定。 */}
+                    {!s.pending && (
+                      <p className="muted" style={{ margin: '0 0 10px' }}>
+                        今週：
+                        {s.weeklyMenu.map((t, i) => (
+                          <span key={i}>
+                            {i > 0 ? ' / ' : ''}
+                            {DOW_NAMES[i]}
+                            {i < s.day ? '済' : i === s.day ? '(今日)' : ''}
+                            {training[t].name.slice(0, 2)}
+                          </span>
+                        ))}
+                      </p>
+                    )}
                     {/* 練習メニューを選ぶだけでは何も進行しない（ローカルなプレビュー
                         状態）ため、試合・イベント待ちの間も選ばせて構わない。実際に
-                        週を進める操作は下のボタン側でガードする。 */}
+                        日を進める操作は下のボタン側でガードする。 */}
                     <RadioGroup
                       className="training-grid"
                       value={plan}
@@ -715,35 +762,79 @@ export default function Game() {
                             <strong>{t.name}</strong>
                             <span>{t.desc}</span>
                             <small className={key === 'rest' ? 'lime' : ''}>
-                              疲労 {t.fatigue > 0 ? '+' : ''}
-                              {t.fatigue}
+                              疲労(1日) {dailyFatigueDelta(key) > 0 ? '+' : ''}
+                              {dailyFatigueDelta(key)}
                             </small>
                           </label>
                         );
                       })}
                     </RadioGroup>
-                    <div className="training-footer">
-                      <div>
-                        <span className="muted">重点育成</span>
-                        <button
-                          className="text-link"
-                          onClick={() => setTab('team')}
-                        >
-                          {focus?.name || '選手を指定する'}{' '}
-                          <ChevronRight size={15} />
-                        </button>
-                      </div>
+                    <div>
+                      <span className="muted">重点育成</span>
                       <button
-                        className="primary"
-                        aria-disabled={!!s.pending || !!s.event || !!s.v3.life.current}
-                        onClick={() => {
-                          playSfx('click');
-                          run({ type: 'train', training: plan });
-                        }}
+                        className="text-link"
+                        onClick={() => setTab('team')}
                       >
-                        この練習で1週間進める <ArrowRight size={18} />
+                        {focus?.name || '選手を指定する'} <ChevronRight size={15} />
                       </button>
                     </div>
+                    {!s.pending && (
+                      <div className="training-footer">
+                        <button
+                          className="secondary"
+                          aria-disabled={!!s.event || !!s.v3.life.current}
+                          onClick={() => {
+                            playSfx('click');
+                            run({ type: 'train', training: plan });
+                          }}
+                        >
+                          今日は{training[plan].name}で1日進める
+                        </button>
+                        <button
+                          className="primary"
+                          aria-disabled={!!s.event || !!s.v3.life.current}
+                          onClick={() => {
+                            playSfx('click');
+                            run({ type: 'autoWeek' });
+                          }}
+                        >
+                          試合日まで進める <ArrowRight size={18} />
+                        </button>
+                      </div>
+                    )}
+                    <details className="weekly-menu-editor">
+                      <summary>週間メニューを編集</summary>
+                      <p className="muted">
+                        「試合日まで進める」はここで決めたメニューで自動進行します。
+                      </p>
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: '10px',
+                        }}
+                      >
+                        {s.weeklyMenu.map((t, i) => (
+                          <label className="field" key={i} style={{ minWidth: '120px' }}>
+                            {DOW_NAMES[i]}曜
+                            <select
+                              value={t}
+                              onChange={(e) => {
+                                const menu = [...s.weeklyMenu];
+                                menu[i] = e.target.value as Training;
+                                run({ type: 'setMenu', menu });
+                              }}
+                            >
+                              {(Object.keys(training) as Training[]).map((key) => (
+                                <option key={key} value={key}>
+                                  {training[key].name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        ))}
+                      </div>
+                    </details>
                   </section>
                   <section className="panel lineup-preview">
                     <div className="section-head">
@@ -999,7 +1090,7 @@ export default function Game() {
           </label>
           <div className="onboarding-steps">
             <p>
-              <b>01</b> 練習を選び、1週間進める
+              <b>01</b> 週間メニューを決め、試合日まで進める
             </p>
             <p>
               <b>02</b> 疲労を見ながら、選手を育てる

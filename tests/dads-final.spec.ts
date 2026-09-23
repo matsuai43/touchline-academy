@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { newGame, act, type State } from '../lib/game';
+import { getCurrentLifeEvent } from '../lib/school-life';
 
 // D2b: DADS 対応の仕上げと最終検証。
 // - スキップリンク（本文へ移動）とフォーカス表示。
@@ -12,10 +13,18 @@ const TABS = ['クラブハウス', '選手・編成', '大会・日程', '育�
 const WIDTHS = [375, 1280] as const;
 const THEMES = ['light', 'dark'] as const;
 
+// S1: 日次コマンド化により「1回のtrain操作=1週」の前提が崩れたため、週3(必ずU18リーグの
+// 試合がある週)の試合日(日曜)まで、休養で日次コマンドを進めてから試合を開始する。
 function startedMatch(school: string, seed: number): State {
   let s = newGame(school, seed);
   s.week = 3;
-  s = act(s, { type: 'train', training: 'rest' });
+  let guard = 0;
+  while (!s.pending && guard++ < 20) {
+    const cur = getCurrentLifeEvent(s);
+    if (cur) s = act(s, { type: 'life', choiceId: cur.event.choices[0].id });
+    if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    s = act(s, { type: 'train', training: 'rest' });
+  }
   s = act(s, { type: 'start' });
   return s;
 }

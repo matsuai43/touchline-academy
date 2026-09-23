@@ -32,14 +32,29 @@ function resolveLife(s: State) {
   return act(s, { type: 'life', choiceId: cur.event.choices[0].id });
 }
 
+// S1: 日次コマンド化により「1回のtrain操作=1週」の前提が崩れたため、
+// 「1週間進める」ヘルパーに置き換える（月〜土の6日を同じ練習メニューで進める）。
 function step(s: State, t: Training = 'balance') {
-  if (s.event) s = act(s, { type: 'event', choice: 'team' });
-  s = resolveLife(s);
-  s = act(s, { type: 'train', training: t });
-  if (s.pending) {
-    s = act(s, { type: 'start' });
-    while (!s.match!.done) s = act(s, { type: 'segment' });
-    s = act(s, { type: 'finish' });
+  const week0 = s.week;
+  while (s.week === week0) {
+    if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    s = resolveLife(s);
+    s = act(s, { type: 'train', training: t });
+    if (s.pending) {
+      s = act(s, { type: 'start' });
+      while (!s.match!.done) s = act(s, { type: 'segment' });
+      s = act(s, { type: 'finish' });
+    }
+  }
+  return s;
+}
+// 特定の週(試合が確実にある週)の試合日まで、同じメニューで日次コマンドを進める。
+function toMatchDay(s: State, t: Training = 'rest') {
+  let guard = 0;
+  while (!s.pending && guard++ < 20) {
+    if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    s = resolveLife(s);
+    s = act(s, { type: 'train', training: t });
   }
   return s;
 }
@@ -132,7 +147,7 @@ void test('skills change skillMatchFactors and produce a real, measurable differ
         for (const sk of attackers) grantSkill(s, p.id, sk);
     }
     s.week = 3;
-    s = act(s, { type: 'train', training: 'rest' });
+    s = toMatchDay(s, 'rest');
     s = act(s, { type: 'start' });
     while (!s.match!.done) s = act(s, { type: 'segment' });
     return s.match!.home;

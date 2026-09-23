@@ -122,6 +122,12 @@ export type State = {
   school: string;
   season: number;
   week: number;
+  // S1: 1週=7日（月〜日）。0=月…5=土は日次コマンド、6=日は試合（試合の無い週は自動でオフ）。
+  // 旧セーブ（このフィールドが導入される前）は validateSave() が 0 を補う。
+  day: number;
+  // 月〜土6枠の既定練習メニュー。「試合日まで進める」はこのテンプレートで自動進行する。
+  // State に持つ（セーブに含まれる）。旧セーブは validateSave() が既定値を補う。
+  weeklyMenu: Training[];
   players: Player[];
   lineup: number[];
   formation: Formation;
@@ -263,6 +269,17 @@ const given = [
 ];
 export const clamp = (n: number, min = 0, max = 100) =>
   Math.min(max, Math.max(min, n));
+// S1: 曜日名（day: 0=月…6=日）。試合は必ず日曜（day 6）。
+export const DOW_NAMES = ['月', '火', '水', '木', '金', '土', '日'] as const;
+// 週間メニューの既定値（月〜土）。休養を週2日確保しつつ、パス・シュートで基礎を作る構成。
+export const DEFAULT_WEEKLY_MENU: Training[] = [
+  'rest',
+  'balance',
+  'possession',
+  'attack',
+  'balance',
+  'rest',
+];
 // 部員数の上限・下限。11人（先発フル）を割らず、30人（サッカーの部としての現実的な上限）を超えない。
 export const ROSTER_MIN = 11;
 export const ROSTER_MAX = 30;
@@ -386,6 +403,8 @@ export function newGame(
     school: school.trim().slice(0, 20) || '風見ヶ丘高校',
     season: 1,
     week: 0,
+    day: 0,
+    weeklyMenu: [...DEFAULT_WEEKLY_MENU],
     players: [],
     lineup: [],
     formation: '4-3-3',
@@ -422,7 +441,7 @@ export function newGame(
   return s;
 }
 export function dateLabel(s: State) {
-  return `${((Math.floor(s.week / 4) + 3) % 12) + 1}月 第${(s.week % 4) + 1}週`;
+  return `${((Math.floor(s.week / 4) + 3) % 12) + 1}月 第${(s.week % 4) + 1}週 ${DOW_NAMES[s.day]}曜`;
 }
 // 新入生の人数。学校評判と施設で 6〜12人の目安に決まり、部員が上限30人を超えないよう
 // クランプする（下限も ROSTER_MIN を割らないように補う）。
@@ -482,12 +501,90 @@ function finishWeek(s: State) {
   }
   syncHalf(s);
 }
+// S1: 週の1日ぶんの疲労回復確率。旧仕様の「fatigue>65なら週13%でけが」を、
+// 1-(1-0.13)^(1/6) ≒ 2.27%/日に決定的に換算する（6日続けても週あたりの
+// 発生率がほぼ変わらないようにするため）。
+const DAILY_INJURY_CHANCE = 1 - Math.pow(0.87, 1 / 6);
+// S1: 1日分の練習・休養を適用する（成長は旧・週あたり効果の1/6、疲労は
+// 練習日=旧・週あたり疲労の1/6を加算しつつ自然回復-3、休養日は-15固定）。
+// けがの回復も旧・週あたり回復量を7日で割った量にする。
+// スキル習得(trainSquadSkills)と半年方針の進捗(developmentWeek)は週単位の
+// 仕組み（streak・8回で達成など）のままなので、週の最初の日（day===0）にのみ
+// 呼ぶ（lib/squad.ts は担当外のため、日次×6回呼ぶと同じ週内で無関係に
+// 何度も抽選が走ってしまうのを避ける）。
+function advanceTrainingDay(s: State, tr: Training): { injured: boolean } {
+  const t = training[tr];
+  const isRest = tr === 'rest';
+  let growth = 0;
+  let injured = false;
+  for (const p of s.players) {
+    p.injury = Math.max(0, p.injury - (isRest ? 2 : 1) / 7);
+    if (!p.injury && !isRest) {
+      for (const k of t.stats) {
+        const gain =
+          ((t.stats.length === 6 ? 0.45 : t.stats.length === 1 ? 1.65 : 1.05) *
+            p.talent *
+            (1 + (s.facilities - 1) * 0.14) *
+            (1 - p.fatigue / 150) *
+            (p.id === s.focus ? 1.5 : 1) *
+            (p.stats[k] > 85 ? 0.35 : 1) *
+            growthFactor(s, p, k)) /
+          6;
+        p.stats[k] = clamp(p.stats[k] + gain, 20, 99);
+        growth += gain;
+      }
+      if (p.fatigue > 65 && rand(s) < DAILY_INJURY_CHANCE) {
+        p.injury = 2;
+        injured = true;
+        log(s, `${p.name}が筋肉に張り。数日の調整が必要です。`);
+      }
+    }
+    p.fatigue = clamp(p.fatigue + (isRest ? -15 : t.fatigue / 6 - 3));
+  }
+  s.cohesion = clamp(
+    s.cohesion + (tr === 'possession' ? 4 : isRest ? -1 : 1) / 6,
+  );
+  s.morale = clamp(s.morale + (isRest ? 5 : -1) / 6);
+  if (s.day === 0) {
+    s.funds += 2;
+    trainSquadSkills(s, tr);
+    developmentWeek(s, tr);
+  }
+  log(
+    s,
+    `${dateLabel(s)}：${t.name}。${isRest ? '選手の疲労が回復しました。' : `チーム全体で能力が計${Math.round(growth)}成長。`}`,
+  );
+  return { injured };
+}
+// S1: 1日ぶんの処理の後に呼ぶ。day を進め、日曜(6)に達したら試合の有無を判定する。
+// 試合が組まれていればその日で止まり（s.pending）、無ければ即座に週を終えて
+// 翌週の月曜(day 0)へ進む（従来どおりクラブイベントは7週ごとに判定）。
+function finishDay(s: State) {
+  s.day++;
+  if (s.day === 6) {
+    const f = competitionFixture(s, s.week);
+    if (f) {
+      s.pending = f;
+    } else {
+      finishWeek(s);
+      s.day = 0;
+      if (s.week > 0 && s.week % 7 === 0)
+        s.event = pick(s, [
+          '部員たちの自主練習',
+          '主将からの提案',
+          '雨の日のミーティング',
+        ]);
+    }
+  }
+}
 export type Action =
   | DevelopmentAction
   | SquadAction
   | LifeAction
   | CompetitionAction
   | { type: 'train'; training: Training }
+  | { type: 'autoWeek' }
+  | { type: 'setMenu'; menu: Training[] }
   | { type: 'event'; choice: 'team' | 'individual' }
   | { type: 'formation'; formation: Formation }
   | { type: 'swap'; index: number; id: number }
@@ -510,55 +607,36 @@ export function act(old: State, a: Action): State {
     if (s.pending || s.match || s.event || s.v3.life.current)
       throw Error('試合または部内イベントを先に終えてください。');
     if (!(a.training in training)) throw Error('練習メニューが不正です。');
-    const t = training[a.training];
-    let growth = 0;
-    for (const p of s.players) {
-      p.injury = Math.max(0, p.injury - (a.training === 'rest' ? 2 : 1));
-      if (!p.injury && a.training !== 'rest') {
-        for (const k of t.stats) {
-          const gain =
-            (t.stats.length === 6 ? 0.45 : t.stats.length === 1 ? 1.65 : 1.05) *
-            p.talent *
-            (1 + (s.facilities - 1) * 0.14) *
-            (1 - p.fatigue / 150) *
-            (p.id === s.focus ? 1.5 : 1) *
-            (p.stats[k] > 85 ? 0.35 : 1) *
-            growthFactor(s, p, k);
-          p.stats[k] = clamp(p.stats[k] + gain, 20, 99);
-          growth += gain;
-        }
-        if (p.fatigue > 65 && rand(s) < 0.13) {
-          p.injury = 2;
-          log(s, `${p.name}が筋肉に張り。2週の調整が必要です。`);
-        }
-      }
-      p.fatigue = clamp(p.fatigue + t.fatigue);
+    advanceTrainingDay(s, a.training);
+    maybeTriggerLifeEvent(s);
+    finishDay(s);
+    return s;
+  }
+  if (a.type === 'autoWeek') {
+    if (s.pending || s.match || s.event || s.v3.life.current)
+      throw Error('試合または部内イベントを先に終えてください。');
+    let guard = 0;
+    // 「試合日まで進める」: 週間メニューで自動進行し、試合が見つかるか、
+    // 日常イベント・クラブイベント・けがが起きたその日で止まる。最悪でも
+    // ガード上限（十分な週数分）で必ず終了する。
+    while (!s.pending && !s.event && !s.v3.life.current && guard < 60) {
+      guard++;
+      const t = s.weeklyMenu[s.day] ?? 'balance';
+      const { injured } = advanceTrainingDay(s, t in training ? t : 'balance');
+      maybeTriggerLifeEvent(s);
+      finishDay(s);
+      if (injured) break;
     }
-    s.cohesion = clamp(
-      s.cohesion +
-        (a.training === 'possession' ? 4 : a.training === 'rest' ? -1 : 1),
-    );
-    s.morale = clamp(s.morale + (a.training === 'rest' ? 5 : -1));
-    s.funds += 2;
-    trainSquadSkills(s, a.training);
-    developmentWeek(s, a.training);
-    log(
-      s,
-      `${dateLabel(s)}：${t.name}。${a.training === 'rest' ? '選手の疲労が回復しました。' : `チーム全体で能力が計${Math.round(growth)}成長。`}`,
-    );
-    const f = competitionFixture(s, s.week);
-    if (f) {
-      s.pending = f;
-    } else {
-      finishWeek(s);
-      if (s.week > 0 && s.week % 7 === 0)
-        s.event = pick(s, [
-          '部員たちの自主練習',
-          '主将からの提案',
-          '雨の日のミーティング',
-        ]);
-      if (!s.event) maybeTriggerLifeEvent(s);
-    }
+    return s;
+  }
+  if (a.type === 'setMenu') {
+    if (
+      !Array.isArray(a.menu) ||
+      a.menu.length !== 6 ||
+      a.menu.some((t) => !(t in training))
+    )
+      throw Error('週間メニューが不正です。');
+    s.weeklyMenu = [...a.menu];
     return s;
   }
   if (a.type === 'event') {
@@ -587,6 +665,7 @@ export function act(old: State, a: Action): State {
     s.match = null;
     s.pending = null;
     finishWeek(s);
+    s.day = 0; // 試合(日曜)を終えたので翌週の月曜へ
     return s;
   }
   if (a.type === 'tactic' || a.type === 'mentality') {
@@ -893,6 +972,12 @@ function simulateSegment(s: State) {
 export function validateSave(x: unknown): State {
   if (!x || typeof x !== 'object') throw Error('セーブ形式が違います。');
   const s = x as State;
+  // S1: 旧セーブ（day / weeklyMenu 導入前）を決定的に補う。フィールドが「無い」場合のみ
+  // 補完し、値が存在するのに不正な場合は下の厳密なチェックで拒否させる（壊れたセーブを
+  // 黙って直してしまわないため）。日は「月曜から」だが、試合が保留中(pending)のセーブは
+  // 日曜(6)扱いにする（pendingは day===6 の時にしか立たないため）。
+  if (s.day === undefined) s.day = s.pending ? 6 : 0;
+  if (s.weeklyMenu === undefined) s.weeklyMenu = [...DEFAULT_WEEKLY_MENU];
   const num = (v: unknown, min: number, max: number) =>
     typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
   if (
@@ -904,6 +989,11 @@ export function validateSave(x: unknown): State {
     !Number.isInteger(s.season) ||
     !num(s.week, 0, 47) ||
     !Number.isInteger(s.week) ||
+    !num(s.day, 0, 6) ||
+    !Number.isInteger(s.day) ||
+    !Array.isArray(s.weeklyMenu) ||
+    s.weeklyMenu.length !== 6 ||
+    s.weeklyMenu.some((t) => !(t in training)) ||
     !Array.isArray(s.players) ||
     s.players.length < ROSTER_MIN ||
     s.players.length > ROSTER_MAX ||
@@ -993,6 +1083,10 @@ export function validateSave(x: unknown): State {
     f.opponent.length < 100 &&
     Object.keys(tactics).includes(f.style);
   if (s.pending && !fixture(s.pending)) throw Error('日程データが不正です。');
+  // S1: 試合が保留中(pending)なのは day が日曜(6)に達した時だけ。試合中でない限りは
+  // 月〜土(0〜5)のはず。
+  if (s.pending && s.day !== 6) throw Error('曜日データが不正です。');
+  if (!s.pending && !s.match && s.day === 6) throw Error('曜日データが不正です。');
   if (s.match) {
     const m = s.match;
     if (

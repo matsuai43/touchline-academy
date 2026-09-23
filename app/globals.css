@@ -3906,3 +3906,289 @@ footer button::after,
   color: var(--primary);
   background: var(--accent);
 }
+
+/* -------------------------------------------------------------------------
+ * S2: 能力ランク（ギリシャ文字 α〜η）と能力シート。末尾に追記のみ。
+ * ランク色は lib/ability-rank.ts の値をそのまま書き写したもの（唯一の正はそちら）。
+ * 文字色(fg)は自身の背景色(bg)に対して4.5:1以上、ページ背景(--background)や
+ * --muted に対しても3:1以上（ゲージの塗りに currentColor で流用するため）を
+ * 両テーマで実測済み（PROGRESS.md ではなく tests/ability-rank.test.ts で計算検証）。
+ * 色だけでなくギリシャ文字そのもので段階が分かるため、色覚特性に依存しない。
+ * ------------------------------------------------------------------------- */
+:root {
+  --rank-alpha-fg: #5b21b6;
+  --rank-alpha-bg: #efe6fb;
+  --rank-beta-fg: #1d4ed8;
+  --rank-beta-bg: #e3edfb;
+  --rank-gamma-fg: #157347;
+  --rank-gamma-bg: #e1f5ea;
+  --rank-delta-fg: #8a5a00;
+  --rank-delta-bg: #fdf1d9;
+  --rank-epsilon-fg: #9a4b0a;
+  --rank-epsilon-bg: #fde8d9;
+  --rank-zeta-fg: #46586a;
+  --rank-zeta-bg: #e8eef2;
+  --rank-eta-fg: #7a3030;
+  --rank-eta-bg: #f4e4e4;
+  --skill-good-fg: #1d4ed8;
+  --skill-good-bg: #e3edfb;
+}
+[data-theme='dark'] {
+  --rank-alpha-fg: #d5b8fb;
+  --rank-alpha-bg: #2a1f42;
+  --rank-beta-fg: #a8c6fb;
+  --rank-beta-bg: #1a2740;
+  --rank-gamma-fg: #8fe0b6;
+  --rank-gamma-bg: #142a1e;
+  --rank-delta-fg: #f3cf7e;
+  --rank-delta-bg: #2c2210;
+  --rank-epsilon-fg: #f5b784;
+  --rank-epsilon-bg: #2c1d10;
+  --rank-zeta-fg: #b9c7d4;
+  --rank-zeta-bg: #202a32;
+  --rank-eta-fg: #e8a9a3;
+  --rank-eta-bg: #2c1a1a;
+  --skill-good-fg: #a8c6fb;
+  --skill-good-bg: #1a2740;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']):not([data-theme='dark']) {
+    --rank-alpha-fg: #d5b8fb;
+    --rank-alpha-bg: #2a1f42;
+    --rank-beta-fg: #a8c6fb;
+    --rank-beta-bg: #1a2740;
+    --rank-gamma-fg: #8fe0b6;
+    --rank-gamma-bg: #142a1e;
+    --rank-delta-fg: #f3cf7e;
+    --rank-delta-bg: #2c2210;
+    --rank-epsilon-fg: #f5b784;
+    --rank-epsilon-bg: #2c1d10;
+    --rank-zeta-fg: #b9c7d4;
+    --rank-zeta-bg: #202a32;
+    --rank-eta-fg: #e8a9a3;
+    --rank-eta-bg: #2c1a1a;
+    --skill-good-fg: #a8c6fb;
+    --skill-good-bg: #1a2740;
+  }
+}
+
+/* ランクバッジ（総合力・一覧の主要能力）。文字自体で段階が分かる。 */
+.rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  border-radius: 6px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.rank-badge.rank-sm {
+  font-size: 12px;
+  padding: 3px 6px;
+  min-width: 20px;
+}
+.rank-badge.rank-md {
+  font-size: 16px;
+  padding: 4px 8px;
+  min-width: 26px;
+}
+.rank-badge.rank-lg {
+  font-size: 30px;
+  padding: 6px 14px;
+  min-width: 48px;
+  border-radius: 8px;
+}
+.rank-badge.rank-alpha {
+  color: var(--rank-alpha-fg);
+  background: var(--rank-alpha-bg);
+}
+.rank-badge.rank-beta {
+  color: var(--rank-beta-fg);
+  background: var(--rank-beta-bg);
+}
+.rank-badge.rank-gamma {
+  color: var(--rank-gamma-fg);
+  background: var(--rank-gamma-bg);
+}
+.rank-badge.rank-delta {
+  color: var(--rank-delta-fg);
+  background: var(--rank-delta-bg);
+}
+.rank-badge.rank-epsilon {
+  color: var(--rank-epsilon-fg);
+  background: var(--rank-epsilon-bg);
+}
+.rank-badge.rank-zeta {
+  color: var(--rank-zeta-fg);
+  background: var(--rank-zeta-bg);
+}
+.rank-badge.rank-eta {
+  color: var(--rank-eta-fg);
+  background: var(--rank-eta-bg);
+}
+
+/* 部員一覧: 主要能力のランク文字をコンパクトに並べる列 */
+.ability-rank-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 175px;
+}
+
+/* 能力シート本体（選手詳細・一覧の行展開の両方で使う） */
+.ability-sheet {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin: 4px 0;
+  background: var(--surface-2);
+  white-space: normal;
+}
+.ability-sheet-row [data-slot='table-cell'] {
+  white-space: normal;
+  padding: 10px;
+  background: var(--surface-2);
+}
+.ability-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.ability-sheet-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ability-sheet-overall {
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+.ability-sheet-overall b {
+  color: var(--foreground);
+  font-size: 18px;
+  font-weight: 700;
+  margin-left: 4px;
+}
+.ability-sheet-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 24px;
+}
+.ability-sheet-grid-compact {
+  grid-template-columns: 1fr;
+  max-width: 380px;
+}
+@media (max-width: 640px) {
+  .ability-sheet-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 能力の1行: ランク文字（大）／能力名／数値／ゲージ */
+.ability-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+.ability-row-rank {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  width: 36px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.ability-row.rank-alpha {
+  color: var(--rank-alpha-fg);
+}
+.ability-row.rank-beta {
+  color: var(--rank-beta-fg);
+}
+.ability-row.rank-gamma {
+  color: var(--rank-gamma-fg);
+}
+.ability-row.rank-delta {
+  color: var(--rank-delta-fg);
+}
+.ability-row.rank-epsilon {
+  color: var(--rank-epsilon-fg);
+}
+.ability-row.rank-zeta {
+  color: var(--rank-zeta-fg);
+}
+.ability-row.rank-eta {
+  color: var(--rank-eta-fg);
+}
+.ability-row-body {
+  flex: 1;
+  min-width: 0;
+}
+.ability-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  margin-bottom: 4px;
+}
+.ability-row-value {
+  color: var(--foreground);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.ability-row-gauge[data-slot='progress'] {
+  display: flex;
+}
+.ability-row-gauge [data-slot='progress-track'] {
+  height: 6px;
+}
+.ability-row-gauge [data-slot='progress-indicator'] {
+  background: currentColor;
+}
+
+/* 特殊能力チップ: 良い特殊能力=青系／悪い特殊能力=赤系、カテゴリごとにアイコン。
+   ボタンとして実装し、押す・フォーカスして操作すると Popover で効果説明を表示する
+   （title だけに頼らない）。タップ領域は見た目のサイズはそのまま、::after で44pxを確保する
+   （既存の .chip-filter 等と同じ考え方。この規則群は独立しているため末尾に追記できる）。 */
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+  position: relative;
+  border: 1px solid transparent;
+  background: none;
+}
+.skill-chip.positive {
+  background: var(--skill-good-bg);
+  color: var(--skill-good-fg);
+  border-color: color-mix(in srgb, var(--skill-good-fg) 30%, transparent);
+}
+.skill-chip.negative {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+}
+.skill-chip::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+}
+.skill-acquire {
+  font-size: 12px;
+}
+
+/* 一覧行の「能力シート」開閉トグル */
+.ability-toggle {
+  white-space: nowrap;
+}

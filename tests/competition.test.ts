@@ -35,14 +35,19 @@ function resolveLife(s: State): State {
   if (!cur) return s;
   return act(s, { type: 'life', choiceId: cur.event.choices[0].id });
 }
+// S1: 日次コマンド化により「1回のtrain操作=1週」の前提が崩れたため、
+// 「1週間進める」ヘルパーに置き換える（月〜土の6日を同じ練習メニューで進める）。
 function step(s: State, t: Training = 'balance'): State {
-  if (s.event) s = act(s, { type: 'event', choice: 'team' });
-  s = resolveLife(s);
-  s = act(s, { type: 'train', training: t });
-  if (s.pending) {
-    s = act(s, { type: 'start' });
-    while (!s.match!.done) s = act(s, { type: 'segment' });
-    s = act(s, { type: 'finish' });
+  const week0 = s.week;
+  while (s.week === week0) {
+    if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    s = resolveLife(s);
+    s = act(s, { type: 'train', training: t });
+    if (s.pending) {
+      s = act(s, { type: 'start' });
+      while (!s.match!.done) s = act(s, { type: 'segment' });
+      s = act(s, { type: 'finish' });
+    }
   }
   return s;
 }
@@ -370,7 +375,12 @@ void test('validateCompetition accepts a freshly hydrated and a legacy-migrated 
   // match.fixture も同様に移行される（本物の Match を act() 経由で作り、fixture だけ差し替える）
   let s2 = newGame('検証高校2', 9);
   s2.week = 3;
-  s2 = act(s2, { type: 'train', training: 'rest' });
+  let guard = 0;
+  while (!s2.pending && guard++ < 20) {
+    if (s2.event) s2 = act(s2, { type: 'event', choice: 'team' });
+    s2 = resolveLife(s2);
+    s2 = act(s2, { type: 'train', training: 'rest' });
+  }
   assert.ok(s2.pending);
   s2 = act(s2, { type: 'start' });
   assert.ok(s2.match);

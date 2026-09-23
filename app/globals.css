@@ -4326,3 +4326,46 @@ footer button::after,
 .position-focus-picker {
   margin-top: 10px;
 }
+
+/* T2: 調子バッジ（文字＋アイコン。色だけに頼らない）。既存の監査済みトークンを
+   そのまま再利用し、新規のコントラスト検証対象を増やさない。 */
+.mood-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.mood-badge.mood-sm {
+  font-size: 12px;
+  padding: 2px 6px;
+}
+.mood-excellent {
+  background: var(--success-bg);
+  color: var(--success);
+}
+.mood-good {
+  background: var(--tag-alt-bg);
+  color: var(--tag-alt-fg);
+}
+.mood-normal {
+  background: var(--tag-neutral-bg);
+  color: var(--tag-neutral-fg);
+}
+.mood-poor {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+.mood-bad {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+.mood-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}

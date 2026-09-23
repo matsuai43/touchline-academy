@@ -75,10 +75,13 @@ import {
   tactics,
   DOW_NAMES,
   MATCH_MAX_SUBS,
+  LINEUP_POLICIES,
+  lineupPolicyInfo,
   type State,
   type Action,
   type Training,
   type Formation,
+  type LineupPolicy,
 } from '@/lib/game';
 
 const SAVE_KEY = 'touchline-academy-v1';
@@ -926,6 +929,31 @@ export default function Game() {
                         おすすめ編成
                       </button>
                     </div>
+                    <Choices
+                      label="おまかせ編成の方針"
+                      value={s.autoLineupPolicy}
+                      onChange={(v) =>
+                        run({ type: 'autoLineupPolicy', policy: v as LineupPolicy })
+                      }
+                      items={LINEUP_POLICIES.map((p) => ({
+                        value: p,
+                        label: lineupPolicyInfo[p].name,
+                      }))}
+                    />
+                    <p className="muted instruction">
+                      {lineupPolicyInfo[s.autoLineupPolicy].desc}
+                    </p>
+                    <Choices
+                      label="試合前に自動で編成する"
+                      value={s.autoLineupOnMatch ? 'on' : 'off'}
+                      onChange={(v) =>
+                        run({ type: 'autoLineupOnMatch', on: v === 'on' })
+                      }
+                      items={[
+                        { value: 'on', label: '自動で編成する' },
+                        { value: 'off', label: '手動のまま' },
+                      ]}
+                    />
                     <Choices
                       label="フォーメーション"
                       value={s.formation}

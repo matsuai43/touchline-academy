@@ -5,9 +5,12 @@ import {
   act,
   validateSave,
   autoLineup,
+  strength,
+  LINEUP_POLICIES,
   type State,
   type Training,
   type Fixture,
+  type LineupPolicy,
 } from '../lib/game.ts';
 import {
   basePos,
@@ -20,6 +23,10 @@ import {
   trainSquadSkills,
   formationSlots,
   positionFitMult,
+  moodLevel,
+  moodMultiplier,
+  MOOD_DEFAULT,
+  MASTERY_THRESHOLD,
   type DetailPos,
 } from '../lib/squad.ts';
 import { getCurrentLifeEvent } from '../lib/school-life.ts';
@@ -321,4 +328,226 @@ void test('10 seasons of play keep squad data valid, capped at 99, and A team ne
     assert.ok(actions < 600);
   }
   assert.ok(sawGrowth, 'roster should grow past the initial 18 at some point over 10 seasons');
+});
+
+// ---------------------------------------------------------------------------
+// T2: 調子（5段階）
+// ---------------------------------------------------------------------------
+void test('T2: moodLevel/moodMultiplier boundaries match the documented 5 levels and multipliers', () => {
+  assert.equal(moodLevel(100), 'excellent');
+  assert.equal(moodLevel(80), 'excellent');
+  assert.equal(moodLevel(79.9), 'good');
+  assert.equal(moodLevel(60), 'good');
+  assert.equal(moodLevel(59.9), 'normal');
+  assert.equal(moodLevel(40), 'normal');
+  assert.equal(moodLevel(39.9), 'poor');
+  assert.equal(moodLevel(20), 'poor');
+  assert.equal(moodLevel(19.9), 'bad');
+  assert.equal(moodLevel(0), 'bad');
+  assert.equal(moodMultiplier(90), 1.06);
+  assert.equal(moodMultiplier(65), 1.03);
+  assert.equal(moodMultiplier(MOOD_DEFAULT), 1.0);
+  assert.equal(moodMultiplier(25), 0.97);
+  assert.equal(moodMultiplier(5), 0.94);
+});
+
+void test('T2: every player has a required mood field from newGame, defaulting to "normal" (50)', () => {
+  const s = newGame('調子検証高校', 8);
+  for (const p of s.players) {
+    const ps = s.v3.squad.players[p.id];
+    assert.equal(typeof ps.mood, 'number');
+    assert.equal(ps.mood, MOOD_DEFAULT);
+    assert.equal(moodLevel(ps.mood), 'normal');
+  }
+});
+
+void test('T2: mood drifts deterministically day to day (same seed/actions -> identical mood), and reacts to rest vs. hard training', () => {
+  function run(seed: number) {
+    let s = newGame('決定性検証高校', seed);
+    s.week = 3;
+    for (let i = 0; i < 12; i++) {
+      if (s.event) s = act(s, { type: 'event', choice: 'team' });
+      s = resolveLife(s);
+      if (s.pending) break;
+      s = act(s, { type: 'train', training: i % 2 === 0 ? 'physical' : 'rest' });
+    }
+    return s;
+  }
+  const a = run(555);
+  const b = run(555);
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(a.v3.squad.players).map(([id, ps]) => [id, ps.mood])),
+    Object.fromEntries(Object.entries(b.v3.squad.players).map(([id, ps]) => [id, ps.mood])),
+    'the same seed and action sequence must produce identical mood values',
+  );
+  for (const ps of Object.values(a.v3.squad.players)) assert.ok(ps.mood >= 0 && ps.mood <= 100);
+});
+
+void test('T2: legacy saves (mood field missing) migrate every player to "normal" (50), both when v3 is entirely absent and when only `mood` is missing', () => {
+  const s = newGame('旧調子高校', 61);
+  const noV3 = JSON.parse(JSON.stringify(s));
+  delete noV3.v3;
+  const loadedNoV3 = validateSave(noV3);
+  for (const p of loadedNoV3.players)
+    assert.equal(loadedNoV3.v3.squad.players[p.id].mood, MOOD_DEFAULT);
+
+  const partial = JSON.parse(JSON.stringify(s));
+  for (const id of Object.keys(partial.v3.squad.players)) delete partial.v3.squad.players[id].mood;
+  const loadedPartial = validateSave(partial);
+  for (const p of loadedPartial.players)
+    assert.equal(loadedPartial.v3.squad.players[p.id].mood, MOOD_DEFAULT);
+});
+
+void test('T2: mood changes the effective ability used for team strength (excellent > normal > bad, same lineup and stats)', () => {
+  const s = newGame('調子効果検証高校', 40);
+  const base = strength(s);
+  const better = JSON.parse(JSON.stringify(s)) as State;
+  for (const id of better.lineup) better.v3.squad.players[id].mood = 95; // 絶好調
+  const worse = JSON.parse(JSON.stringify(s)) as State;
+  for (const id of worse.lineup) worse.v3.squad.players[id].mood = 5; // 絶不調
+  assert.ok(strength(better) > base, 'excellent mood should raise team strength');
+  assert.ok(strength(worse) < base, 'bad mood should lower team strength');
+  assert.ok(strength(better) > strength(worse));
+});
+
+// ---------------------------------------------------------------------------
+// T2: おまかせ編成の4方針
+// ---------------------------------------------------------------------------
+void test('T2: LINEUP_POLICIES exposes exactly the 4 documented policies', () => {
+  assert.deepEqual([...LINEUP_POLICIES].sort(), ['fit', 'growth', 'mood', 'overall'].sort());
+});
+
+void test('T2: "fit" policy keeps every starter at or above the mastery threshold (60) for their slot, for a fresh roster in all 4 formations', () => {
+  for (const seed of [2, 9, 40, 123]) {
+    for (const f of ['4-3-3', '4-4-2', '3-4-3', '4-2-3-1'] as const) {
+      let s = newGame('適性重視検証高校', seed);
+      s = act(s, { type: 'formation', formation: f });
+      s = act(s, { type: 'autoLineupPolicy', policy: 'fit' });
+      s = act(s, { type: 'auto' });
+      const dslots = formationSlots(s.formation);
+      s.lineup.forEach((id, i) => {
+        const ps = s.v3.squad.players[id];
+        assert.ok(
+          ps.prof[dslots[i]] >= MASTERY_THRESHOLD,
+          `seed ${seed} ${f} slot ${i} (${dslots[i]}): starter proficiency ${ps.prof[dslots[i]]} below ${MASTERY_THRESHOLD}`,
+        );
+      });
+    }
+  }
+});
+
+void test('T2: "mood" policy excludes a badly-out-of-form starter when a similar teammate in normal form is available', () => {
+  let s = newGame('調子重視検証高校', 17);
+  // 同じ枠(CBなど系統内で候補が複数いる枠)の先発の1人を絶不調にする。
+  const dslots = formationSlots(s.formation);
+  const cbIdx = dslots.findIndex((d) => d === 'CB');
+  const targetId = s.lineup[cbIdx];
+  s.v3.squad.players[targetId].mood = 2; // 絶不調
+  s = act(s, { type: 'autoLineupPolicy', policy: 'mood' });
+  s = act(s, { type: 'auto' });
+  assert.ok(
+    !s.lineup.includes(targetId),
+    '絶不調の選手は、同枠に他候補がいれば調子重視の編成から外れるはず',
+  );
+});
+
+void test('T2: "growth" policy favors younger players on average and only starts a GK with mastery (>=60) at GK', () => {
+  function avgStarterYear(s: State, policy: LineupPolicy): number {
+    let s2 = act(s, { type: 'autoLineupPolicy', policy });
+    s2 = act(s2, { type: 'auto' });
+    return s2.lineup.reduce((a, id) => a + s2.players.find((p) => p.id === id)!.year, 0) / 11;
+  }
+  let overallTotal = 0,
+    growthTotal = 0;
+  for (const seed of [3, 21, 58, 77, 140]) {
+    const s = newGame('育成重視検証高校', seed);
+    overallTotal += avgStarterYear(s, 'overall');
+    growthTotal += avgStarterYear(s, 'growth');
+    // GK制約: 育成重視でもGKは習熟度60以上の選手のみ起用する。
+    let g = act(s, { type: 'autoLineupPolicy', policy: 'growth' });
+    g = act(g, { type: 'auto' });
+    const dslots = formationSlots(g.formation);
+    const gkIdx = dslots.findIndex((d) => d === 'GK');
+    const gkPs = g.v3.squad.players[g.lineup[gkIdx]];
+    assert.ok(gkPs.prof['GK'] >= MASTERY_THRESHOLD, `seed ${seed}: growth policy started an unqualified GK`);
+  }
+  assert.ok(
+    growthTotal < overallTotal,
+    `growth policy should skew the starting XI younger on average: growth=${growthTotal} overall=${overallTotal}`,
+  );
+});
+
+void test('T2: "auto" respects the currently selected policy stored on State, and "試合前に自動で編成する" applies it right before kickoff', () => {
+  let s = newGame('自動適用検証高校', 5);
+  s = act(s, { type: 'autoLineupPolicy', policy: 'fit' });
+  assert.equal(s.autoLineupPolicy, 'fit');
+  s = act(s, { type: 'auto' });
+  const dslots = formationSlots(s.formation);
+  s.lineup.forEach((id, i) => {
+    assert.ok(s.v3.squad.players[id].prof[dslots[i]] >= MASTERY_THRESHOLD);
+  });
+  assert.equal(s.autoLineupOnMatch, false);
+  // オンにすると、次の試合開始時に選んだ方針で自動編成される。手動でわざと
+  // 崩した編成（習熟度の低い控えをスロット0に投入）でも、キックオフ時に
+  // fit方針で編成し直されるはず。
+  s = act(s, { type: 'autoLineupOnMatch', on: true });
+  const bench = s.players.find(
+    (p) => s.v3.squad.players[p.id].team === 'A' && !s.lineup.includes(p.id),
+  )!;
+  s = act(s, { type: 'swap', index: 0, id: bench.id });
+  s.week = 3;
+  s = toMatchDay(s, 'rest');
+  s = act(s, { type: 'start' });
+  const dslots2 = formationSlots(s.formation);
+  s.match!.original.forEach((id, i) => {
+    assert.ok(
+      s.v3.squad.players[id].prof[dslots2[i]] >= MASTERY_THRESHOLD,
+      '自動適用がキックオフ前に反映されているはず',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T2: 初期ポジションのバランス（受け入れ条件）
+// ---------------------------------------------------------------------------
+void test('T2: a fresh 20-player roster has at least 2 candidates with proficiency >= 60 for every slot, in all 4 formations, across many seeds', () => {
+  const formations = ['4-3-3', '4-4-2', '3-4-3', '4-2-3-1'] as const;
+  for (let seed = 1; seed <= 60; seed++) {
+    const s = newGame('初期バランス検証高校', seed);
+    const players = Object.values(s.v3.squad.players);
+    for (const f of formations) {
+      const slotSet = new Set(formationSlots(f));
+      for (const slot of slotSet) {
+        const count = players.filter((p) => p.prof[slot] >= MASTERY_THRESHOLD).length;
+        assert.ok(
+          count >= 2,
+          `seed ${seed} formation ${f} slot ${slot}: only ${count} candidate(s) with proficiency >= ${MASTERY_THRESHOLD}`,
+        );
+      }
+    }
+  }
+});
+
+void test('T2: the fresh 20-player roster matches the documented composition (GK2/CB3/LSB1/RSB1/DM2/CM2/LSH1/RSH1/AM1/LWG1/RWG1/SS1/CF2 + 1 extra CB or CM)', () => {
+  const s = newGame('内訳検証高校', 909);
+  const counts: Partial<Record<DetailPos, number>> = {};
+  for (const ps of Object.values(s.v3.squad.players)) counts[ps.detail] = (counts[ps.detail] ?? 0) + 1;
+  const expectedMin: Partial<Record<DetailPos, number>> = {
+    GK: 2,
+    CB: 3,
+    LSB: 1,
+    RSB: 1,
+    DM: 2,
+    CM: 2,
+    LSH: 1,
+    RSH: 1,
+    AM: 1,
+    LWG: 1,
+    RWG: 1,
+    SS: 1,
+    CF: 2,
+  };
+  for (const [d, min] of Object.entries(expectedMin))
+    assert.ok((counts[d as DetailPos] ?? 0) >= min, `${d}: expected at least ${min}, got ${counts[d as DetailPos] ?? 0}`);
+  assert.equal(Object.values(counts).reduce((a, n) => a + (n ?? 0), 0), 20);
 });

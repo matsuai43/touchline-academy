@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { newGame, act, type State } from '../lib/game';
 import { getCurrentLifeEvent } from '../lib/school-life';
 
-// W4: 試合UIの刷新（交代の2ステップ化）と試合後サマリの検証。
+// T1: 試合UIの刷新（まとめて交代・適性表示）と試合後の結果画面の検証。
 // UI操作を高速化するため、lib/game.ts の act() を直接呼んで「試合開始直後」
 // 「試合終了直後」の State を作り、localStorage にあらかじめ書き込んでからページを開く
 // （development.spec.ts と同じ手法）。S1で日次コマンド化されたため、週3(必ずU18リーグの
@@ -33,14 +33,14 @@ async function withSave(page: Page, s: State) {
   );
 }
 
-test('substitution dialog: pick outgoing then incoming, cancel resets, confirm applies and updates the cap', async ({
+test('substitution dialog: reserve one pair, cancel resets, and confirming the batch applies it and updates the cap', async ({
   page,
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await withSave(page, startedMatch('交代検証高校', 4242));
   await page.goto('/');
-  await expect(page.getByText('交代 0 / 5')).toBeVisible();
+  await expect(page.getByText('交代 0 / 5', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
   const overlay = page.locator('[data-slot="dialog-overlay"]');
@@ -50,25 +50,31 @@ test('substitution dialog: pick outgoing then incoming, cancel resets, confirm a
   const pitchPick = columns.nth(0).locator('.sub-pick').first();
   const benchPick = columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first();
 
-  // 確定ボタンは、下げる選手・入れる選手の両方を選ぶまでは表示/有効化されない。
-  await expect(page.getByRole('button', { name: 'この交代を確定' })).toHaveCount(0);
+  // 「予約に追加」は、下げる選手・入れる選手の両方を選ぶまでは表示されない。
+  await expect(page.getByRole('button', { name: '予約に追加' })).toHaveCount(0);
   await pitchPick.click();
   await expect(pitchPick).toHaveClass(/selected/);
   await benchPick.click();
   await expect(benchPick).toHaveClass(/selected/);
-  const confirmBtn = page.getByRole('button', { name: 'この交代を確定' });
-  await expect(confirmBtn).toBeEnabled();
+  const addBtn = page.getByRole('button', { name: '予約に追加' });
+  await expect(addBtn).toBeEnabled();
 
   // 「選び直す」で確定前ならいつでも取り消せる。
   await page.getByRole('button', { name: '選び直す' }).click();
-  await expect(page.getByRole('button', { name: 'この交代を確定' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '予約に追加' })).toHaveCount(0);
   await expect(pitchPick).not.toHaveClass(/selected/);
 
-  // 選び直して今度は確定する。
+  // 選び直して今度は予約に追加する。まだ交代は成立しない（予約段階）。
   await pitchPick.click();
   await benchPick.click();
   const incomingName = await benchPick.locator('.sub-pick-name').innerText();
-  await page.getByRole('button', { name: 'この交代を確定' }).click();
+  await page.getByRole('button', { name: '予約に追加' }).click();
+  await expect(overlay).toHaveCount(1);
+  await expect(page.locator('.sub-reserved-row')).toHaveCount(1);
+  await expect(page.getByText('交代 0 / 5', { exact: true })).toBeVisible();
+
+  // まとめて確定すると、はじめて既存の swap が発行され、交代数が増える。
+  await page.getByRole('button', { name: '1人の交代を確定' }).click();
   await expect(overlay).toHaveCount(0);
   await expect(page.getByText('交代 1 / 5')).toBeVisible();
   // 交代した選手が、今度はピッチ側の一覧に現れる。
@@ -77,66 +83,152 @@ test('substitution dialog: pick outgoing then incoming, cancel resets, confirm a
   expect(errors).toEqual([]);
 });
 
-test('substitution cap: bench entries mark aria-disabled once used, and the trigger marks aria-disabled at 5 subs (but stays pressable and explains why)', async ({
+test('batch substitution: reserving several pairs and confirming once increases the sub count by that many', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await withSave(page, startedMatch('まとめて交代検証高校', 91011));
+  await page.goto('/');
+
+  await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
+  const overlay = page.locator('[data-slot="dialog-overlay"]');
+  const columns = page.locator('.sub-column');
+
+  // 1組目: ピッチ1人目 → ベンチの空いている先頭。
+  await columns.nth(0).locator('.sub-pick').first().click();
+  await columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first().click();
+  await page.getByRole('button', { name: '予約に追加' }).click();
+  await expect(page.locator('.sub-reserved-row')).toHaveCount(1);
+
+  // 2組目: ピッチ2人目 → ベンチの（1組目を除いた）空いている先頭。
+  await columns.nth(0).locator('.sub-pick').nth(1).click();
+  await columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first().click();
+  await page.getByRole('button', { name: '予約に追加' }).click();
+  await expect(page.locator('.sub-reserved-row')).toHaveCount(2);
+  await expect(page.getByText('交代 0 / 5（予約 2）')).toBeVisible();
+
+  await page.getByRole('button', { name: '2人の交代を確定' }).click();
+  await expect(overlay).toHaveCount(0);
+  await expect(page.getByText('交代 2 / 5')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('batch substitution: a reservation can be withdrawn individually before confirming', async ({
+  page,
+}) => {
+  await withSave(page, startedMatch('予約取消検証高校', 20260923));
+  await page.goto('/');
+  await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
+  const columns = page.locator('.sub-column');
+  await columns.nth(0).locator('.sub-pick').first().click();
+  await columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first().click();
+  await page.getByRole('button', { name: '予約に追加' }).click();
+  await expect(page.locator('.sub-reserved-row')).toHaveCount(1);
+
+  await page.locator('.sub-reserved-remove').first().click();
+  await expect(page.locator('.sub-reserved-row')).toHaveCount(0);
+  // 予約が0件のときは、確定ボタンを押しても何も起きない旨の案内が出る。
+  await expect(page.getByText('交代する組を選んで「予約に追加」してから確定してください。')).toBeVisible();
+});
+
+test('substitution cap: a sixth reservation is blocked with a reason once the 5-sub cap (including pending reservations) is reached', async ({
   page,
 }) => {
   await withSave(page, startedMatch('交代上限検証高校', 777));
   await page.goto('/');
   const overlay = page.locator('[data-slot="dialog-overlay"]');
+  const columns = page.locator('.sub-column');
+  await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
+  // 5組を予約する（ピッチの先頭5人 → 毎回、空いているベンチの先頭）。
   for (let n = 0; n < 5; n++) {
-    await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
-    const columns = page.locator('.sub-column');
-    await columns.nth(0).locator('.sub-pick').first().click();
+    await columns.nth(0).locator('.sub-pick').nth(n).click();
     await columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first().click();
-    await page.getByRole('button', { name: 'この交代を確定' }).click();
-    await expect(overlay).toHaveCount(0);
-    await expect(page.getByText(`交代 ${n + 1} / 5`)).toBeVisible();
+    await page.getByRole('button', { name: '予約に追加' }).click();
   }
-  // D2a: DADSはdisabledを避ける方針のため、交代枠を使い切った後も
-  // 「交代する選手を選ぶ」ボタンは押せる状態のまま（aria-disabled="true"で見た目だけ
-  // 落ち着かせる）。押すとダイアログが開き、枠を使い切った旨の案内が出る。
+  await expect(page.locator('.sub-reserved-row')).toHaveCount(5);
+  await expect(page.getByRole('button', { name: '5人の交代を確定' })).toBeVisible();
+
+  // 6組目を選ぼうとしても、予約枠を使い切った理由が表示され、予約は増えない。
+  // 枠を使い切ると選手ボタンは aria-disabled になる（DADS: 押せるまま理由を示す）。Playwright は
+  // aria-disabled を無効扱いして待ち続けるため force で押し、理由が出ることを確かめる。
+  await columns.nth(0).locator('.sub-pick').nth(5).click({ force: true });
+  await columns.nth(1).locator('.sub-pick').first().click({ force: true });
+  await expect(page.getByText('交代枠（5人）を使い切りました（予約中5人を含む）。')).toBeVisible();
+  await page.getByRole('button', { name: '予約に追加' }).click({ force: true });
+  await expect(page.locator('.sub-reserved-row')).toHaveCount(5);
+
+  // まとめて確定すると5件とも成立し、以降は新たな交代を選べない旨が出る。
+  await page.getByRole('button', { name: '5人の交代を確定' }).click();
+  await expect(overlay).toHaveCount(0);
+  await expect(page.getByText('交代 5 / 5').first()).toBeVisible();
   const openBtn = page.getByRole('button', { name: '交代する選手を選ぶ' });
   await expect(openBtn).toHaveAttribute('aria-disabled', 'true');
-  // 実DOMのdisabledプロパティはfalseのまま（disabled属性を使っていない証拠）。
-  // Playwrightの.click()はaria-disabled="true"もアクショナビリティ判定で弾くため、
-  // 実ユーザーのクリックを再現するforce:trueで押す。
   expect(await openBtn.evaluate((el) => (el as HTMLButtonElement).disabled)).toBe(false);
   await openBtn.click({ force: true });
   await expect(overlay).toHaveCount(1);
   await expect(page.getByText('交代枠を使い切りました。')).toBeVisible();
-  // ピッチ上の選手・ベンチの選手を選んでも、確定ボタンは押せる状態のまま
-  // aria-disabled="true" になり、直下に理由が表示される。枠を使い切った後は
-  // ピッチ側の選択ボタンも aria-disabled="true" になるが、これも押せる。
-  const columns = page.locator('.sub-column');
-  await columns.nth(0).locator('.sub-pick').first().click({ force: true });
-  const confirmBtn = page.getByRole('button', { name: 'この交代を確定' });
-  await expect(confirmBtn).toHaveAttribute('aria-disabled', 'true');
-  // 交代枠を使い切っている間は、入れる選手を選んでいなくても理由は
-  // 「枠を使い切った」が優先して出る（blockReasonの判定順）。
-  await expect(page.getByText('交代枠（5人）を使い切りました。')).toBeVisible();
-  await confirmBtn.click({ force: true });
-  // 押しても交代は成立しない（枠は5のまま、ダイアログも開いたまま）。
-  await expect(overlay).toHaveCount(1);
-  await expect(page.getByText('交代 5 / 5').first()).toBeVisible();
 });
 
-test('post-match summary: shows MOTM, timeline, stat comparison and per-player growth, then returns to the clubhouse', async ({
+test('substitution dialog: picking an outgoing player shows bench proficiency ranks sorted from the best fit down', async ({
+  page,
+}) => {
+  await withSave(page, startedMatch('適性表示検証高校', 3131));
+  await page.goto('/');
+  await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
+  const columns = page.locator('.sub-column');
+
+  // 下げる選手を選ぶ前は、ピッチ側にも自分の適性ランクが大きく表示されている。
+  await expect(columns.nth(0).locator('.sub-pick').first().locator('.rank-badge.rank-lg')).toBeVisible();
+
+  await columns.nth(0).locator('.sub-pick').first().click();
+  const benchRanks = columns.nth(1).locator('.sub-pick .rank-badge.rank-lg');
+  const count = await benchRanks.count();
+  expect(count).toBeGreaterThan(0);
+  const titles = await benchRanks.evaluateAll((els) =>
+    els.map((el) => el.getAttribute('title') ?? ''),
+  );
+  const values = titles.map((t) => Number(/能力値(\d+)/.exec(t)?.[1] ?? '-1'));
+  expect(values.every((v) => v >= 0)).toBe(true);
+  const sorted = [...values].sort((a, b) => b - a);
+  expect(values).toEqual(sorted);
+});
+
+test('match result screen: shows ratings for every player who appeared, MOTM matches the top rating, timeline and growth, then returns to the clubhouse', async ({
   page,
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await withSave(page, finishedMatch('サマリ検証高校', 99001));
+  await withSave(page, finishedMatch('結果画面検証高校', 99001));
   await page.goto('/');
-  await expect(page.getByText('MATCH SUMMARY', { exact: true })).toBeVisible();
-  // スタッツ比較（シュート・得点期待値・保持率）はスコアボードに常時表示。
+  await expect(page.getByText('MATCH RESULT', { exact: true })).toBeVisible();
+  // スタッツ比較（シュート・得点期待値・保持率）は結果画面の見出しに表示される。
   const matchStats = page.locator('.match-stats');
   await expect(matchStats.getByText('シュート', { exact: false })).toBeVisible();
   await expect(matchStats.getByText('得点期待値', { exact: false })).toBeVisible();
   await expect(matchStats.getByText('ボール保持', { exact: false })).toBeVisible();
-  // MOTM: 1人が選ばれ、選出理由が一文添えられる。
+
+  // 評価点: 出場した選手の行が複数あり、それぞれ10点満点の数値が付く。
+  const ratingRows = page.locator('.mr-rating-row');
+  const rowCount = await ratingRows.count();
+  expect(rowCount).toBeGreaterThanOrEqual(11);
+  const ratingValues = await page.locator('.mr-rating-value').evaluateAll((els) =>
+    els.map((el) => Number(el.textContent)),
+  );
+  for (const v of ratingValues) {
+    expect(v).toBeGreaterThanOrEqual(3);
+    expect(v).toBeLessThanOrEqual(10);
+  }
+  // 評価点は高い順に並び、1位が MOTM と一致する。
+  const sorted = [...ratingValues].sort((a, b) => b - a);
+  expect(ratingValues).toEqual(sorted);
+  await expect(page.locator('.mr-rating-top')).toHaveCount(1);
+  const topName = await page.locator('.mr-rating-top .mr-rating-name').innerText();
   await expect(page.locator('.motm-card')).toBeVisible();
-  await expect(page.locator('.motm-card b').first()).not.toBeEmpty();
+  const motmName = await page.locator('.motm-card b').first().innerText();
+  expect(topName.replace(/\s+/g, ' ').trim().startsWith(motmName)).toBe(true);
   await expect(page.locator('.motm-card p').first()).not.toBeEmpty();
+
   // タイムライン。
   await expect(page.getByRole('heading', { name: 'タイムライン' })).toBeVisible();
   // 成長差分：全員が出場したので、少なくとも精神力+0.5などの変化が1人以上に出る。
@@ -147,19 +239,16 @@ test('post-match summary: shows MOTM, timeline, stat comparison and per-player g
   ).toHaveCount(0);
 
   await page.getByRole('button', { name: '部に戻る' }).click();
-  await expect(page.getByText('MATCH SUMMARY', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('MATCH RESULT', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: '今日の練習', exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
-test('match cinema: only one .cinema section renders after advancing the match', async ({
+test('match cinema: only one .cinema section renders while the match is live', async ({
   page,
 }) => {
-  // 回帰テスト: MatchCinema の key（m.minute）と SubstitutionDialog の key（subToken）が
-  // どちらも 0 始まりで、同じ Fragment の兄弟同士として衝突していたため、React の
-  // reconciliation が古い MatchCinema の DOM を取り除けずに残していた
-  // （.cinema が2つ表示される不具合）。名前空間付きのキーで衝突を無くし、
-  // 15分を2回進めても .cinema が常にちょうど1つであることを確認する。
+  // 回帰テスト: MatchCinema の key（m.minute）が、試合終了後は結果画面に置き換わって
+  // 描画されなくなったため、生きている間だけ .cinema が常にちょうど1つであることを確認する。
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await withSave(page, startedMatch('試合図重複検証高校', 2024));
@@ -176,7 +265,7 @@ test('match cinema: only one .cinema section renders after advancing the match',
   expect(errors).toEqual([]);
 });
 
-test('mobile 390px: substitution dialog and match summary fit the viewport', async ({ page }) => {
+test('mobile 390px: substitution dialog and match result fit the viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await withSave(page, startedMatch('モバイル交代検証高校', 555));
   await page.goto('/');
@@ -190,11 +279,11 @@ test('mobile 390px: substitution dialog and match summary fit the viewport', asy
   ).toBe(true);
   await page.keyboard.press('Escape');
 
-  await withSave(page, finishedMatch('モバイルサマリ検証高校', 556));
+  await withSave(page, finishedMatch('モバイル結果検証高校', 556));
   await page.goto('/');
-  await expect(page.getByText('MATCH SUMMARY', { exact: true })).toBeVisible();
+  await expect(page.getByText('MATCH RESULT', { exact: true })).toBeVisible();
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
   ).toBe(true);
-  await page.screenshot({ path: 'test-results/match-summary-mobile.png', fullPage: true });
+  await page.screenshot({ path: 'test-results/match-result-mobile.png', fullPage: true });
 });

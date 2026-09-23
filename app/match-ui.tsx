@@ -1,22 +1,28 @@
 'use client';
-// W4: 試合UIの刷新と試合後サマリ。
+// W4/T1: 試合UIの刷新、まとめて交代、試合後の結果画面。
 // app/game-ui.tsx から試合画面（旧 MatchView）をここへ切り出し、次を追加する。
-//  - 交代を「下げる選手→入れる選手→確認」の明示的な2ステップに作り直す（SubstitutionDialog）。
-//  - 試合終了後、部に戻る前に試合後サマリ（MOTM・タイムライン・成長差分）を挟む（MatchSummary）。
+//  - 交代を「下げる選手→入れる選手」の組を予約し、まとめて確定する複数交代フロー
+//    （SubstitutionDialog）。下げる選手を選ぶと、ベンチにそのポジションでの習熟度
+//    ランク（α〜η）を適性順に表示する。
+//  - 試合終了後は試合画面の下に続けず、別画面（app/match-result.tsx の MatchResult）に
+//    切り替える。評価点の算出は lib/match-rating.ts（純粋関数）。
 // Pitch / Choices / Meter / Metric は試合以外のタブ（クラブ・編成）からも使われる小さな部品なので、
 // ここにまとめて置き、app/game-ui.tsx からインポートして使う。
 import { useState } from 'react';
 import { Portrait } from './development-ui';
 import { MatchCommands, VoicePanel } from './development-ui';
 import MatchCinema from './match-cinema';
+import { MatchResult } from './match-result';
+import { RankBadge } from './ability-sheet';
 import { playSfx } from '@/lib/audio';
 import {
   detailInfo,
   formationSlots,
-  extraStatNames,
-  SKILLS,
   isBenchPlayer,
-  type ExtraStat,
+  basePos,
+  moodLevel,
+  MOOD_LABEL,
+  type DetailPos,
 } from '@/lib/squad';
 import {
   overall,
@@ -24,12 +30,10 @@ import {
   slots,
   clamp,
   tactics,
-  stats,
   MATCH_MAX_SUBS,
   type State,
   type Action,
   type Player,
-  type Stat,
   type Tactic,
 } from '@/lib/game';
 import { Progress } from '@/components/ui/progress';
@@ -40,13 +44,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import {
-  ArrowRight,
-  ArrowRightLeft,
-  Award,
-  Flag,
-  Shield,
-} from 'lucide-react';
+import { ArrowRight, ArrowRightLeft, Flag, Shield, X } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // 小さな共有部品（クラブ・編成タブからも利用）
@@ -215,10 +213,35 @@ function conditionLabel(score: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// 交代パネル：下げる選手 → 入れる選手 → 確認、の明示的な2ステップ。
-// 途中まで選んでも確定前なら「選び直す」でいつでも取り消せる。
-// 現行の「ベンチをタップ」「ピッチの選手をタップ」もこのダイアログを開く入口として残す。
+// T1: 指定ポジションでの習熟度（0〜100）。lib/squad.ts の positionFitMult と
+// 同じフォールバック（現ポジション=100・同系統=40・それ以外=10）を使う、表示専用のヘルパー。
 // ---------------------------------------------------------------------------
+function profFor(s: State, id: number, slot: DetailPos): number {
+  const ps = s.v3.squad.players[id];
+  if (ps?.prof) {
+    const v = ps.prof[slot];
+    if (typeof v === 'number') return v;
+    return ps.detail === slot ? 100 : basePos(ps.detail) === basePos(slot) ? 40 : 10;
+  }
+  const p = s.players.find((pp) => pp.id === id);
+  if (!p) return 10;
+  return p.pos === basePos(slot) ? 40 : 10;
+}
+// T2（別エージェント）が lib/squad.ts に追加した「調子」（0〜100、mood）。
+// 値が無い（旧セーブ移行前など）ときは何も返さず、表示側はそのまま出さない。
+function moodLabelFor(s: State, id: number): string | null {
+  const ps = s.v3.squad.players[id];
+  if (!ps || typeof ps.mood !== 'number' || !Number.isFinite(ps.mood)) return null;
+  return MOOD_LABEL[moodLevel(ps.mood)];
+}
+
+// ---------------------------------------------------------------------------
+// 交代パネル：まとめて交代（S6）。
+// 「下げる選手→入れる選手」を選ぶと1組が予約リストに入り、続けて次の組を選べる。
+// 予約は個別に取り消せる。最後に「◯人の交代を確定」で、予約した組を順番に既存の
+// 'swap' アクションとして発行する（1件でも失敗したら、そこで止めて残りは予約に残す）。
+// ---------------------------------------------------------------------------
+type PendingReservation = { outgoing: number; incoming: number; index: number };
 function SubstitutionDialog({
   s,
   run,
@@ -240,26 +263,55 @@ function SubstitutionDialog({
   // 「開くたびに初期選択を反映する」という要件を effect なしで満たせる。
   const [outgoing, setOutgoing] = useState<number | null>(initialOutgoing);
   const [incoming, setIncoming] = useState<number | null>(initialIncoming);
-  const capReached = m.subs >= MATCH_MAX_SUBS;
+  const [reservations, setReservations] = useState<PendingReservation[]>([]);
+  const dslots = formationSlots(s.formation);
+  // 残り枠は「既に成立した交代」と「予約中の交代」の両方を差し引く。
+  const remainingSlots = MATCH_MAX_SUBS - m.subs;
+  const capReached = reservations.length >= remainingSlots;
+  const reservedOutIds = new Set(reservations.map((r) => r.outgoing));
+  const reservedInIds = new Set(reservations.map((r) => r.incoming));
   const outPlayer = outgoing != null ? s.players.find((p) => p.id === outgoing) : null;
   const inPlayer = incoming != null ? s.players.find((p) => p.id === incoming) : null;
-  // SubstitutionDialog は match-ui.tsx 側で m.done の間はそもそも描画されない
-  // （試合終了後は MatchSummary に差し替わる）ため、m.done は防御的にだけ残す。
-  const canConfirm = !m.done && !capReached && outgoing != null && incoming != null;
-  // 確定できない理由。DADSの「押すと理由を直下の補足文で示す」に沿って、
-  // 確定ボタンの近くに常時表示する（トーストを待たず先に伝える）。
+  // 下げる選手が決まっているときだけ、その選手が守るスロットでの習熟度でベンチを並べ替える。
+  const outIndex = outgoing != null ? s.lineup.indexOf(outgoing) : -1;
+  const outSlot: DetailPos | null = outIndex >= 0 ? dslots[outIndex] : null;
+  const outAlreadyReserved = outgoing != null && reservedOutIds.has(outgoing);
+  const inAlreadyReserved = incoming != null && reservedInIds.has(incoming);
+  const canReserve =
+    !capReached && outgoing != null && incoming != null && !outAlreadyReserved && !inAlreadyReserved;
   const blockReason = capReached
-    ? `交代枠（${MATCH_MAX_SUBS}人）を使い切りました。`
+    ? `交代枠（${MATCH_MAX_SUBS}人）を使い切りました（予約中${reservations.length}人を含む）。`
     : outgoing == null
       ? '下げる選手も選んでください。'
       : incoming == null
         ? '入れる選手も選んでください。'
-        : null;
-  const confirm = () => {
-    if (!canConfirm || outgoing == null || incoming == null) return;
+        : outAlreadyReserved
+          ? `${outPlayer?.name ?? 'この選手'}は既に交代を予約済みです。`
+          : inAlreadyReserved
+            ? `${inPlayer?.name ?? 'この選手'}は既に別の交代で予約済みです。`
+            : null;
+  const addReservation = () => {
+    if (!canReserve || outgoing == null || incoming == null) return;
     const idx = s.lineup.indexOf(outgoing);
     if (idx < 0) return;
-    if (run({ type: 'swap', index: idx, id: incoming })) {
+    setReservations((rs) => [...rs, { outgoing, incoming, index: idx }]);
+    setOutgoing(null);
+    setIncoming(null);
+    playSfx('click');
+  };
+  const removeReservation = (i: number) => {
+    setReservations((rs) => rs.filter((_, idx) => idx !== i));
+  };
+  const confirmAll = () => {
+    let rest = reservations;
+    while (rest.length) {
+      const next = rest[0];
+      const result = run({ type: 'swap', index: next.index, id: next.incoming });
+      if (!result) break;
+      rest = rest.slice(1);
+    }
+    setReservations(rest);
+    if (!rest.length) {
       playSfx('click');
       onOpenChange(false);
     }
@@ -269,14 +321,39 @@ function SubstitutionDialog({
       <DialogContent className="game-dialog sub-dialog">
         <DialogTitle>交代する選手を選ぶ</DialogTitle>
         <DialogDescription>
-          下げる選手を選ぶと対象がハイライトされます。続けてベンチから投入する選手を選び、確認して確定してください。
+          下げる選手を選ぶと、ベンチの各選手にそのポジションでの習熟度ランクが適性の高い順に表示されます。
+          組ができたら「予約に追加」、続けて次の組も選べます。最後に「まとめて確定」でまとめて交代します。
         </DialogDescription>
         <div className="subs-counter-row">
           <span className="subs-counter">
             交代 {m.subs} / {MATCH_MAX_SUBS}
+            {reservations.length > 0 ? `（予約 ${reservations.length}）` : ''}
           </span>
           {capReached && <span className="muted">交代枠を使い切りました。</span>}
         </div>
+        {reservations.length > 0 && (
+          <ul className="sub-reserved-list" aria-label="予約中の交代">
+            {reservations.map((r, i) => {
+              const out = s.players.find((p) => p.id === r.outgoing);
+              const inn = s.players.find((p) => p.id === r.incoming);
+              return (
+                <li key={`${r.outgoing}-${r.incoming}`} className="sub-reserved-row">
+                  <span>
+                    <b>{out?.name ?? '?'}</b> → <b>{inn?.name ?? '?'}</b>
+                  </span>
+                  <button
+                    type="button"
+                    className="icon-button sub-reserved-remove"
+                    aria-label={`${out?.name ?? ''}と${inn?.name ?? ''}の交代予約を取り消す`}
+                    onClick={() => removeReservation(i)}
+                  >
+                    <X size={16} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
         <div className="sub-columns">
           <div className="sub-column">
             <h3>ピッチ上の選手</h3>
@@ -284,27 +361,35 @@ function SubstitutionDialog({
               {roster(s).map((p, i) => {
                 const cond = conditionScore(s, p);
                 const recommend = cond < 40 || p.fatigue > 72;
+                const slot = dslots[i];
+                const reserved = reservedOutIds.has(p.id);
+                const mood = moodLabelFor(s, p.id);
                 return (
                   <button
                     key={p.id}
                     type="button"
                     className={`sub-pick ${outgoing === p.id ? 'selected' : ''}`}
-                    aria-disabled={capReached}
+                    aria-disabled={capReached || reserved}
                     aria-pressed={outgoing === p.id}
                     onClick={() => {
                       setOutgoing(p.id);
-                      if (incoming != null && m.used.includes(incoming)) setIncoming(null);
+                      if (incoming != null && (m.used.includes(incoming) || reservedInIds.has(incoming)))
+                        setIncoming(null);
                     }}
                   >
                     <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
+                    <span className="sub-pick-rank">
+                      <RankBadge value={profFor(s, p.id, slot)} label={detailInfo[slot].name} size="lg" />
+                    </span>
                     <span className="sub-pick-body">
                       <b className="sub-pick-name">{p.name}</b>
                       <span className="sub-pick-meta">
-                        {detailInfo[formationSlots(s.formation)[i]].name} ・ 疲労{' '}
-                        {Math.round(p.fatigue)} ・ {conditionLabel(cond)}
+                        {detailInfo[slot].name} ・ 疲労 {Math.round(p.fatigue)}
+                        {mood ? ` ・ ${mood}` : ''} ・ {conditionLabel(cond)}
                       </span>
                     </span>
-                    {recommend && <span className="sub-recommend">交代推奨</span>}
+                    {reserved && <span className="sub-recommend">予約済み</span>}
+                    {!reserved && recommend && <span className="sub-recommend">交代推奨</span>}
                   </button>
                 );
               })}
@@ -313,12 +398,21 @@ function SubstitutionDialog({
           <div className="sub-column">
             <h3>ベンチ</h3>
             <div className="sub-list">
-              {/* S3: 交代投入できるのはベンチ入り(9人)の選手のみ。ベンチ外は一覧に出さない。 */}
+              {/* S3: 交代投入できるのはベンチ入り(9人)の選手のみ。ベンチ外は一覧に出さない。
+                  下げる選手が決まっている間は、そのスロットでの習熟度が高い順に並べる。 */}
               {s.players
                 .filter((p) => isBenchPlayer(s, p.id))
-                .map((p) => {
+                .map((p) => ({ p, prof: outSlot ? profFor(s, p.id, outSlot) : null }))
+                .sort((a, b) => (b.prof ?? 0) - (a.prof ?? 0))
+                .map(({ p, prof }) => {
+                  const reserved = reservedInIds.has(p.id);
                   const locked =
-                    m.used.includes(p.id) || capReached || !!p.injury || outgoing == null;
+                    m.used.includes(p.id) ||
+                    capReached ||
+                    !!p.injury ||
+                    outgoing == null ||
+                    reserved;
+                  const mood = moodLabelFor(s, p.id);
                   return (
                     <button
                       key={p.id}
@@ -329,15 +423,26 @@ function SubstitutionDialog({
                       onClick={() => setIncoming(p.id)}
                     >
                       <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
+                      {prof != null && (
+                        <span className="sub-pick-rank">
+                          <RankBadge
+                            value={prof}
+                            label={outSlot ? detailInfo[outSlot].name : undefined}
+                            size="lg"
+                          />
+                        </span>
+                      )}
                       <span className="sub-pick-body">
                         <b className="sub-pick-name">{p.name}</b>
                         <span className="sub-pick-meta">
                           {p.pos}{' '}
-                          {m.used.includes(p.id)
-                            ? '・交代済'
-                            : p.injury
-                              ? '・調整中'
-                              : `・疲労 ${Math.round(p.fatigue)}`}
+                          {reserved
+                            ? '・予約済み'
+                            : m.used.includes(p.id)
+                              ? '・交代済'
+                              : p.injury
+                                ? '・調整中'
+                                : `・疲労 ${Math.round(p.fatigue)}${mood ? ` ・ ${mood}` : ''}`}
                         </span>
                       </span>
                     </button>
@@ -370,11 +475,11 @@ function SubstitutionDialog({
               </button>
               <button
                 type="button"
-                className="primary"
-                aria-disabled={!canConfirm}
-                onClick={confirm}
+                className="secondary"
+                aria-disabled={!canReserve}
+                onClick={addReservation}
               >
-                この交代を確定
+                予約に追加
               </button>
             </div>
             {blockReason && (
@@ -383,258 +488,38 @@ function SubstitutionDialog({
             )}
           </div>
         )}
+        <div className="sub-confirm-all">
+          <button
+            type="button"
+            className="primary"
+            aria-disabled={reservations.length === 0}
+            onClick={confirmAll}
+          >
+            {reservations.length}人の交代を確定
+          </button>
+          {reservations.length === 0 && (
+            <output className="muted sub-hint">
+              交代する組を選んで「予約に追加」してから確定してください。
+            </output>
+          )}
+        </div>
+        <style>{`
+          .sub-pick { flex-wrap: wrap; }
+          .sub-pick-rank { flex-shrink: 0; }
+          .sub-reserved-list { list-style: none; margin: 10px 0 0; padding: 0;
+            display: flex; flex-direction: column; gap: 6px; }
+          .sub-reserved-row { display: flex; align-items: center; justify-content: space-between;
+            gap: 10px; min-height: 40px; padding: 6px 10px; border-radius: 7px;
+            border: 1px solid var(--border); background: var(--accent); font-size: 13px; }
+          .sub-reserved-remove { min-width: 32px; min-height: 32px; flex-shrink: 0; }
+          .sub-confirm-all { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+          .sub-confirm-all > button { width: 100%; min-height: 46px; }
+          @media (max-width: 640px) {
+            .sub-pick-rank .rank-badge.rank-lg { font-size: 22px; padding: 4px 9px; min-width: 36px; }
+          }
+        `}</style>
       </DialogContent>
     </Dialog>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// 試合後サマリ：MOTM・タイムライン・選手ごとの成長差分。
-// ---------------------------------------------------------------------------
-type GrowthRow = {
-  id: number;
-  name: string;
-  statDiffs: { label: string; diff: number }[];
-  extraDiffs: { label: string; diff: number }[];
-  trustDiff: number;
-  newSkills: string[];
-  newNegatives: string[];
-};
-function computeGrowth(s: State): GrowthRow[] {
-  const m = s.match!;
-  const snaps = m.snapshot ?? [];
-  const rows: GrowthRow[] = [];
-  for (const snap of snaps) {
-    const p = s.players.find((pp) => pp.id === snap.id);
-    if (!p) continue;
-    const statDiffs = (Object.keys(stats) as Stat[])
-      .map((k) => ({ label: stats[k], diff: p.stats[k] - snap.stats[k] }))
-      .filter((d) => Math.abs(d.diff) >= 0.5);
-    const ps = s.v3.squad.players[p.id];
-    const extraDiffs: { label: string; diff: number }[] = [];
-    if (ps && snap.extra) {
-      for (const k of ['dribble', 'stamina', 'power'] as ExtraStat[]) {
-        const diff = ps[k] - snap.extra[k];
-        if (Math.abs(diff) >= 0.5) extraDiffs.push({ label: extraStatNames[k], diff });
-      }
-    }
-    const trustDiff = p.identity.trust - snap.trust;
-    const newSkills = ps ? ps.skills.filter((id) => !snap.skills.includes(id)) : [];
-    const newNegatives = ps ? ps.negatives.filter((id) => !snap.negatives.includes(id)) : [];
-    if (
-      statDiffs.length ||
-      extraDiffs.length ||
-      Math.abs(trustDiff) >= 1 ||
-      newSkills.length ||
-      newNegatives.length
-    )
-      rows.push({ id: p.id, name: p.name, statDiffs, extraDiffs, trustDiff, newSkills, newNegatives });
-  }
-  return rows;
-}
-type GrowthRowLike = ReturnType<typeof computeGrowth>[number];
-function isNotableGrowth(row: GrowthRowLike): boolean {
-  return (
-    row.newSkills.length > 0 ||
-    row.newNegatives.length > 0 ||
-    row.extraDiffs.length > 0 ||
-    Math.abs(row.trustDiff) >= 1 ||
-    row.statDiffs.length >= 2 ||
-    row.statDiffs.some((d) => Math.abs(d.diff) >= 1)
-  );
-}
-function growthSignature(row: GrowthRowLike): string {
-  return row.statDiffs.map((d) => `${d.label}${fmtDiff(d.diff)}`).join(' / ');
-}
-function groupMinorGrowth(rows: GrowthRowLike[]) {
-  const map = new Map<string, { names: string[]; chips: GrowthRowLike['statDiffs'] }>();
-  for (const row of rows) {
-    if (isNotableGrowth(row)) continue;
-    const sig = growthSignature(row);
-    const hit = map.get(sig);
-    if (hit) hit.names.push(row.name);
-    else map.set(sig, { names: [row.name], chips: row.statDiffs });
-  }
-  return [...map.values()];
-}
-function fmtDiff(n: number): string {
-  const r = Math.round(n * 10) / 10;
-  return `${r > 0 ? '+' : ''}${r}`;
-}
-type MotmResult = { player: Player; reason: string };
-function computeMotm(s: State): MotmResult | null {
-  const m = s.match!;
-  const snapMap = new Map((m.snapshot ?? []).map((e) => [e.id, e]));
-  const cast = m.used.length ? m.used : m.original;
-  const cleanSheet = m.away === 0;
-  let best: { player: Player; score: number; goals: number } | null = null;
-  for (const id of cast) {
-    const p = s.players.find((pp) => pp.id === id);
-    if (!p) continue;
-    const snap = snapMap.get(id);
-    const matchGoals = snap ? Math.max(0, p.goals - snap.goals) : 0;
-    const isDefensive = p.pos === 'GK' || p.pos === 'DF';
-    const ps = s.v3.squad.players[id];
-    let score = matchGoals * 34 + overall(p) * 0.5 + (ps ? ps.skills.length : 0) * 1.5;
-    if (cleanSheet && isDefensive) score += 22;
-    if (m.original.includes(id)) score += 4;
-    if (!best || score > best.score) best = { player: p, score, goals: matchGoals };
-  }
-  if (!best) return null;
-  const { player, goals } = best;
-  const isDefensive = player.pos === 'GK' || player.pos === 'DF';
-  let reason: string;
-  if (goals >= 3) reason = 'ハットトリックの大活躍で試合を決定づけた。';
-  else if (goals === 2) reason = '2得点の活躍でチームを勝利に導いた。';
-  else if (goals === 1) reason = '値千金の1点でチームに貢献した。';
-  else if (isDefensive && cleanSheet)
-    reason =
-      player.pos === 'GK'
-        ? 'ゴールを守り抜き、無失点に貢献した。'
-        : '最後まで体を張り、無失点を守り抜いた。';
-  else reason = '要所を締める安定したプレーでチームを支えた。';
-  return { player, reason };
-}
-function buildTimeline(s: State): string[] {
-  const m = s.match!;
-  return [...m.logs].reverse().filter((l) => /GOAL|失点|交代|PK戦|HALF TIME/.test(l));
-}
-function MatchSummary({
-  s,
-  run,
-  onPlayer,
-}: {
-  s: State;
-  run: (a: Action) => State | null;
-  onPlayer: (p: Player) => void;
-}) {
-  const m = s.match!;
-  const motm = computeMotm(s);
-  const growth = computeGrowth(s);
-  const notableGrowth = growth.filter(isNotableGrowth);
-  const minorGrowth = groupMinorGrowth(growth);
-  const timeline = buildTimeline(s);
-  const resultLabel = m.won
-    ? '勝利'
-    : m.home === m.away && !m.penalties
-      ? '引き分け'
-      : '敗北';
-  return (
-    <section className="panel match-summary" aria-label="試合結果サマリ">
-      <div className="summary-head">
-        <span className="eyebrow">MATCH SUMMARY</span>
-        <h2>
-          {m.fixture.label} ・ {resultLabel}
-        </h2>
-        <p className="muted">
-          対戦相手：{m.fixture.opponent}
-          {m.penalties ? ` ・ PK戦 ${m.penalties}` : ''}
-        </p>
-      </div>
-      {motm && (
-        <button
-          type="button"
-          className="motm-card"
-          onClick={() => onPlayer(motm.player)}
-        >
-          <span className="eyebrow">
-            <Award size={16} /> MAN OF THE MATCH
-          </span>
-          <div className="motm-body">
-            <Portrait index={motm.player.identity.portrait} name={motm.player.name} size="large" />
-            <div>
-              <b>{motm.player.name}</b>
-              <p>{motm.reason}</p>
-            </div>
-          </div>
-        </button>
-      )}
-      <div className="summary-timeline">
-        <h3>タイムライン</h3>
-        {timeline.length ? (
-          timeline.map((l, i) => <p key={i}>{l}</p>)
-        ) : (
-          <p className="muted">目立った出来事はありませんでした。</p>
-        )}
-      </div>
-      <div className="summary-growth">
-        <h3>選手の成長</h3>
-        {growth.length ? (
-          notableGrowth.map((row) => (
-            <div key={row.id} className="growth-row">
-              <b>{row.name}</b>
-              <span className="growth-chips">
-                {row.statDiffs.map((d) => (
-                  <span
-                    key={d.label}
-                    className={`growth-chip ${d.diff > 0 ? 'up' : 'down'}`}
-                  >
-                    {d.label} {fmtDiff(d.diff)}
-                  </span>
-                ))}
-                {row.extraDiffs.map((d) => (
-                  <span
-                    key={d.label}
-                    className={`growth-chip ${d.diff > 0 ? 'up' : 'down'}`}
-                  >
-                    {d.label} {fmtDiff(d.diff)}
-                  </span>
-                ))}
-                {Math.abs(row.trustDiff) >= 1 && (
-                  <span
-                    className={`growth-chip ${row.trustDiff > 0 ? 'up' : 'down'}`}
-                  >
-                    信頼 {fmtDiff(row.trustDiff)}
-                  </span>
-                )}
-                {row.newSkills.map((id) => (
-                  <span key={id} className="growth-chip skill-new">
-                    習得：{SKILLS[id]?.name ?? id}
-                  </span>
-                ))}
-                {row.newNegatives.map((id) => (
-                  <span key={id} className="growth-chip skill-new negative">
-                    {SKILLS[id]?.name ?? id}
-                  </span>
-                ))}
-              </span>
-            </div>
-          ))
-        ) : (
-          <></>
-        )}
-        {minorGrowth.map((g) => (
-          <div key={g.names.join(',')} className="growth-row growth-row-group">
-            <b>出場した{g.names.length}人</b>
-            <span className="growth-chips">
-              {g.chips.map((d) => (
-                <span
-                  key={d.label}
-                  className={`growth-chip ${d.diff > 0 ? 'up' : 'down'}`}
-                >
-                  {d.label} {fmtDiff(d.diff)}
-                </span>
-              ))}
-            </span>
-            <small className="muted growth-group-names">{g.names.join('・')}</small>
-          </div>
-        ))}
-        {!growth.length && (
-          <p className="muted">
-            {m.snapshot
-              ? 'この試合で大きく変化した選手はいませんでした。'
-              : 'この試合の成長記録はありません（この試合開始時点では未対応のセーブでした）。'}
-          </p>
-        )}
-      </div>
-      <button
-        type="button"
-        className="primary summary-close"
-        onClick={() => run({ type: 'finish' })}
-      >
-        部に戻る <ArrowRight size={18} />
-      </button>
-    </section>
   );
 }
 
@@ -664,17 +549,20 @@ export function MatchView({
     setSubToken((t) => t + 1);
     setSubOpen(true);
   };
+  // T1: 試合終了後は、試合画面（スコアボード・映像・交代パネル）の下に続けるのではなく、
+  // 全画面の「試合結果」画面（MatchResult）に切り替える（試合ビューの置き換え）。
+  if (m.done) {
+    return (
+      <section className="match-view">
+        <MatchResult s={s} run={run} onPlayer={onPlayer} />
+      </section>
+    );
+  }
   return (
     <section className="match-view">
       <div className="scoreboard">
         <div className="match-caption">
-          <span className="pill">
-            {m.done
-              ? 'FULL TIME'
-              : m.minute === 45
-                ? 'HALF TIME'
-                : 'MATCH LIVE'}
-          </span>
+          <span className="pill">{m.minute === 45 ? 'HALF TIME' : 'MATCH LIVE'}</span>
           <span>{m.fixture.label}</span>
         </div>
         <div className="score-row">
@@ -691,16 +579,7 @@ export function MatchView({
               <span>:</span>
               {m.away}
             </strong>
-            <b>
-              {m.done
-                ? m.won
-                  ? 'WIN'
-                  : m.home === m.away && !m.penalties
-                    ? 'DRAW'
-                    : 'LOSE'
-                : `${m.minute}′`}
-            </b>
-            {m.penalties && <small>PK {m.penalties}</small>}
+            <b>{m.minute}′</b>
           </div>
           <div>
             <span className="club-emblem away">
@@ -731,13 +610,6 @@ export function MatchView({
           </span>
         </div>
       </div>
-      {m.done ? (
-        <>
-          <MatchCinema key={`cinema-${m.minute}`} s={s} />
-          <MatchSummary s={s} run={run} onPlayer={onPlayer} />
-        </>
-      ) : (
-        <>
           <div className="match-actionbar">
             <nav aria-label="試合中の移動">
               <a href="#match-movie">映像</a>
@@ -786,9 +658,9 @@ export function MatchView({
               <p className="muted">
                 相手：{tactics[m.fixture.style].name} / 総合力 {m.fixture.strength}
               </p>
-              {/* この一帯は m.done の間は描画されず（上の分岐でMatchSummaryに
-                  置き換わる）disabled={m.done} は常にfalseの死んだ条件だったため、
-                  DADSの方針どおりそもそも付けない。 */}
+              {/* この一帯は m.done の間はそもそも描画されない（上の早期returnで
+                  MatchResult に置き換わる）ため、disabled={m.done} のような
+                  常にfalseの死んだ条件は、DADSの方針どおりそもそも付けない。 */}
               <RadioGroup
                 className="tactic-grid"
                 aria-label="試合の戦術"
@@ -889,8 +761,6 @@ export function MatchView({
             initialOutgoing={subInitial.outgoing}
             initialIncoming={subInitial.incoming}
           />
-        </>
-      )}
     </section>
   );
 }

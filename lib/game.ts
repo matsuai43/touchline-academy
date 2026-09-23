@@ -30,6 +30,13 @@ import {
   gainProficiency,
   DETAIL_POS,
   detailInfo,
+  moodMultiplier,
+  moodLevel,
+  advanceSquadMood,
+  applyInitialDetailPlan,
+  applyRealisticSubProficiency,
+  INITIAL_ROSTER_PLAN,
+  MASTERY_THRESHOLD,
   type SquadAction,
   type DetailPos,
 } from './squad.ts';
@@ -56,6 +63,27 @@ export type Training =
 export type Tactic = 'balanced' | 'possession' | 'counter' | 'press';
 export type Formation = '4-3-3' | '4-4-2' | '3-4-3' | '4-2-3-1';
 export const FORMATIONS: Formation[] = ['4-3-3', '4-4-2', '3-4-3', '4-2-3-1'];
+// T2: おまかせ編成の4方針。
+export type LineupPolicy = 'overall' | 'fit' | 'mood' | 'growth';
+export const LINEUP_POLICIES: LineupPolicy[] = ['overall', 'fit', 'mood', 'growth'];
+export const lineupPolicyInfo: Record<LineupPolicy, { name: string; desc: string }> = {
+  overall: {
+    name: '総合力重視',
+    desc: '起用時の実効能力（習熟度・疲労・調子込み）が最大になる11人を選びます。',
+  },
+  fit: {
+    name: '適性ポジション重視',
+    desc: '各枠の習熟度が高い選手を優先し、習熟度60未満の起用をできるだけ避けます。',
+  },
+  mood: {
+    name: '調子重視',
+    desc: '調子と疲労を強く重み付けし、不調・高疲労の選手をできるだけ外します。',
+  },
+  growth: {
+    name: '育成重視',
+    desc: '下級生・素質の高い選手や、習得途中のポジションの選手に出場機会を与えます（GKは習熟度60以上のみ）。',
+  },
+};
 export type Player = {
   identity: Identity;
   id: number;
@@ -151,6 +179,10 @@ export type State = {
   players: Player[];
   lineup: number[];
   formation: Formation;
+  // T2: おまかせ編成の方針と、「試合前に自動で編成する」オン/オフ。旧セーブ
+  // （導入前）は validateSave() が既定値（'overall' / false）を補う。
+  autoLineupPolicy: LineupPolicy;
+  autoLineupOnMatch: boolean;
   reputation: number;
   cohesion: number;
   morale: number;
@@ -381,8 +413,10 @@ function effective(s: State, p: Player, slot: DetailPos) {
       : p.pos === 'GK' || basePos(slot) === 'GK'
         ? 0.48
         : 0.8;
+  // T2: 調子を実効能力へ反映（絶好調×1.06 〜 絶不調×0.94）。
+  const mood = ps ? moodMultiplier(ps.mood) : 1;
   return (
-    overall(p) * fit * (1 - p.fatigue * 0.004) * (p.injury ? 0.5 : 1)
+    overall(p) * fit * mood * (1 - p.fatigue * 0.004) * (p.injury ? 0.5 : 1)
   );
 }
 function makePlayer(s: State, year: number, pos: Position): Player {
@@ -415,14 +449,80 @@ function makePlayer(s: State, year: number, pos: Position): Player {
   ] += 9;
   return p;
 }
+// T2: おまかせ編成4方針それぞれのスコア（値が高いほどそのスロットに起用したい）。
+// 'overall'はeffective()そのもの（習熟度・疲労・調子込みの実効能力）で、既存の
+// autoLineup()の挙動と完全に一致する（後方互換）。
+function policyScore(s: State, p: Player, slot: DetailPos, policy: LineupPolicy): number {
+  const ps = s.v3?.squad?.players[p.id];
+  const eff = effective(s, p, slot);
+  if (policy === 'overall') return eff;
+  if (policy === 'fit') {
+    // 適性ポジション重視: 各枠の習熟度が高い選手を優先し、習熟度60未満は避ける。
+    const prof = ps ? (ps.prof[slot] ?? 0) : 0;
+    return (prof >= MASTERY_THRESHOLD ? 100000 : 0) + prof * 10 + eff * 0.01;
+  }
+  if (policy === 'mood') {
+    // 調子重視: 調子と疲労を強く重み付けし、不調・高疲労を外す。
+    const lv = ps ? moodLevel(ps.mood) : 'normal';
+    const moodBias = { excellent: 1.5, good: 1.15, normal: 0.9, poor: 0.5, bad: 0.15 }[lv];
+    const fatigueBias = clamp(1 - p.fatigue / 60, 0.1, 1);
+    return eff * moodBias * fatigueBias;
+  }
+  // 育成重視: 下級生・素質の高い選手・習得途中のポジションの選手に出場機会を
+  // 与える（ただしGKはGKの習熟度60以上から。それ以外に候補がいない場合のみ
+  // 最終手段として習熟度60未満も許す）。
+  const prof = ps ? (ps.prof[slot] ?? 0) : 0;
+  if (basePos(slot) === 'GK' && prof < MASTERY_THRESHOLD) return -1;
+  const yearBonus = p.year === 1 ? 1.35 : p.year === 2 ? 1.15 : 1;
+  const talentBonus = 0.8 + p.talent * 0.3;
+  const learningBonus = prof >= MASTERY_THRESHOLD ? 1 : 1 + (MASTERY_THRESHOLD - prof) / 200;
+  return eff * yearBonus * talentBonus * learningBonus;
+}
+// T2: ベンチ9人も同じ方針の裏返し。系統(GK/DF/MF/FW)ごとにAチームの人数が
+// フォーメーションの必要数を上回るのに、その系統の選手が1人もベンチに
+// 残っていない場合は、その系統でスコアが最も低い先発とベンチの最善候補を
+// 入れ替える（各系統最低1人はベンチにいるようにする）。
+function ensureBenchSystemDiversity(s: State, policy: LineupPolicy) {
+  const systems: Position[] = ['GK', 'DF', 'MF', 'FW'];
+  const teamA = s.players.filter((p) => s.v3?.squad?.players[p.id]?.team === 'A');
+  const dslots = formationSlots(s.formation);
+  for (const sys of systems) {
+    const teamAOfSys = teamA.filter((p) => p.pos === sys);
+    if (teamAOfSys.length < 2) continue; // 控えに回せる余裕がそもそも無い
+    const lineupSlotsOfSys = s.lineup
+      .map((id, i) => ({ id, i }))
+      .filter(({ id }) => s.players.find((p) => p.id === id)!.pos === sys);
+    if (lineupSlotsOfSys.length < teamAOfSys.length) continue; // 既に1人以上ベンチにいる
+    let worstIdx = -1,
+      worstScore = Infinity;
+    for (const { id, i } of lineupSlotsOfSys) {
+      const p = s.players.find((pp) => pp.id === id)!;
+      const sc = policyScore(s, p, dslots[i], policy);
+      if (sc < worstScore) {
+        worstScore = sc;
+        worstIdx = i;
+      }
+    }
+    if (worstIdx < 0) continue;
+    const bench = teamA.filter((p) => !s.lineup.includes(p.id));
+    if (!bench.length) continue;
+    bench.sort(
+      (a, b) => policyScore(s, b, dslots[worstIdx], policy) - policyScore(s, a, dslots[worstIdx], policy),
+    );
+    s.lineup[worstIdx] = bench[0].id;
+  }
+}
 // S3: 先発（＝試合登録20人の一部）はAチームの選手からのみ選ぶ。Aチームは常に
 // 20人以上（ROSTER_MIN=20）いるので11人を選べないことはない。
-export function autoLineup(s: State) {
+// T2: policyを渡すとおまかせ編成の4方針に沿って選ぶ（既定は'overall'＝従来通り）。
+export function autoLineup(s: State, policy: LineupPolicy = 'overall') {
   const left = s.players.filter((p) => s.v3?.squad?.players[p.id]?.team === 'A');
-  s.lineup = formationSlots(s.formation).map((slot) => {
-    left.sort((a, b) => effective(s, b, slot) - effective(s, a, slot));
+  const dslots = formationSlots(s.formation);
+  s.lineup = dslots.map((slot) => {
+    left.sort((a, b) => policyScore(s, b, slot, policy) - policyScore(s, a, slot, policy));
     return left.shift()!.id;
   });
+  ensureBenchSystemDiversity(s, policy);
 }
 export function newGame(
   school = '風見ヶ丘高校',
@@ -443,6 +543,8 @@ export function newGame(
     players: [],
     lineup: [],
     formation: '4-3-3',
+    autoLineupPolicy: 'overall',
+    autoLineupOnMatch: false,
     reputation: 15,
     cohesion: 45,
     morale: 70,
@@ -463,15 +565,14 @@ export function newGame(
     feed: ['新しい春。20人の部員と、全国への一歩を踏み出そう。'],
     nextId: 1,
   };
-  // S3: 新規ゲームは部員20人（各学年6〜7人、試合登録20人＝先発11＋ベンチ9をそのまま満たす）。
-  const positions: Position[][] = [
-    ['GK', 'DF', 'DF', 'DF', 'MF', 'MF', 'FW'],
-    ['DF', 'DF', 'MF', 'MF', 'MF', 'FW', 'FW'],
-    ['GK', 'DF', 'DF', 'MF', 'FW', 'FW'],
-  ];
-  for (let y = 1; y <= 3; y++)
-    for (const pos of positions[y - 1]) s.players.push(makePlayer(s, y, pos));
+  // S3/T2: 新規ゲームは部員20人（各学年6〜7人、試合登録20人＝先発11＋ベンチ9を
+  // そのまま満たす）。詳細ポジションは squad.ts の INITIAL_ROSTER_PLAN（GK2/CB3/
+  // LSB1/RSB1/DM2/CM2/LSH1/RSH1/AM1/LWG1/RWG1/SS1/CF2＋CB1）に沿って決定的に割り当てる
+  // （DESIGN_V3_3.md 3.3: 4フォーメーションすべてで各枠に習熟度60以上の候補が2人以上）。
+  for (const { year, detail } of INITIAL_ROSTER_PLAN)
+    s.players.push(makePlayer(s, year, basePos(detail)));
   hydrateV3(s);
+  applyInitialDetailPlan(s);
   autoLineup(s);
   s.development = newDevelopment(s);
   return s;
@@ -535,7 +636,11 @@ function finishWeek(s: State) {
     s.morale = 75;
     applyIntake(s, fresh);
     hydrateV3(s);
-    autoLineup(s);
+    // T2: 新入生にも現実的なサブポジション習熟度を付ける（手薄なポジションは
+    // assignDetailPos が優先的に割り当てる。習熟度は初期プラン以外の全新規選手と
+    // 同じロジックだが、旧セーブ移行の固定100/40/10には影響しない）。
+    applyRealisticSubProficiency(s, fresh.map((p) => p.id));
+    autoLineup(s, s.autoLineupPolicy);
     log(
       s,
       `${grads.length}人が卒業。新入生${fresh.length}人が入部しました。部員は${s.players.length}人です。${s.season}年目の春です。`,
@@ -589,6 +694,9 @@ function advanceTrainingDay(s: State, tr: Training): { injured: boolean } {
   );
   s.morale = clamp(s.morale + (isRest ? 5 : -1) / 6);
   if (s.day === 0) s.funds += 2;
+  // T2: 調子は1日ぶんずつ決定的に変動させる（普通へ戻る力＋休養で上向き・
+  // 高疲労で下向き・士気が高いと上向き・小さな揺らぎ）。
+  advanceSquadMood(s, isRest);
   s.weekTrainings.push(tr);
   // S4: ポジション練習は s.positionFocus で指定した1人だけ、指定ポジションの
   // 習熟度を+4/日（素質で補正）伸ばす。チーム全体の能力成長は起きない。
@@ -675,6 +783,8 @@ export type Action =
   | { type: 'formation'; formation: Formation }
   | { type: 'swap'; index: number; id: number }
   | { type: 'auto' }
+  | { type: 'autoLineupPolicy'; policy: LineupPolicy }
+  | { type: 'autoLineupOnMatch'; on: boolean }
   | { type: 'focus'; id: number | null }
   | { type: 'positionFocus'; id: number | null; pos: DetailPos | null }
   | { type: 'upgrade' }
@@ -731,6 +841,15 @@ export function act(old: State, a: Action): State {
     s.weeklyMenu = [...a.menu];
     return s;
   }
+  if (a.type === 'autoLineupPolicy') {
+    if (!LINEUP_POLICIES.includes(a.policy)) throw Error('編成方針が不正です。');
+    s.autoLineupPolicy = a.policy;
+    return s;
+  }
+  if (a.type === 'autoLineupOnMatch') {
+    s.autoLineupOnMatch = !!a.on;
+    return s;
+  }
   if (a.type === 'event') {
     if (!s.event) throw Error('イベントはありません。');
     if (a.choice === 'team') {
@@ -771,6 +890,8 @@ export function act(old: State, a: Action): State {
   }
   if (a.type === 'start') {
     if (!s.pending || s.match) throw Error('予定された試合がありません。');
+    // T2: 「試合前に自動で編成する」がオンなら、選んだ方針でキックオフ直前に編成する。
+    if (s.autoLineupOnMatch) autoLineup(s, s.autoLineupPolicy);
     s.match = {
       details: matchDetails(),
       fixture: s.pending,
@@ -845,12 +966,12 @@ export function act(old: State, a: Action): State {
     return s;
   }
   if (s.match) throw Error('試合を終えてから変更してください。');
-  if (a.type === 'auto') autoLineup(s);
+  if (a.type === 'auto') autoLineup(s, s.autoLineupPolicy);
   if (a.type === 'formation') {
     if (!FORMATIONS.includes(a.formation))
       throw Error('布陣が不正です。');
     s.formation = a.formation;
-    autoLineup(s);
+    autoLineup(s, s.autoLineupPolicy);
   }
   if (a.type === 'focus') {
     if (a.id !== null && !s.players.some((p) => p.id === a.id))
@@ -1129,6 +1250,9 @@ export function validateSave(x: unknown): State {
   if (s.weekTrainings === undefined) s.weekTrainings = [];
   // S4: ポジション練習の対象（導入前のセーブ）は「指定なし」で補う。
   if (s.positionFocus === undefined) s.positionFocus = null;
+  // T2: おまかせ編成の方針・自動適用（導入前のセーブ）は既定値で補う。
+  if (s.autoLineupPolicy === undefined) s.autoLineupPolicy = 'overall';
+  if (s.autoLineupOnMatch === undefined) s.autoLineupOnMatch = false;
   const num = (v: unknown, min: number, max: number) =>
     typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
   if (
@@ -1151,7 +1275,9 @@ export function validateSave(x: unknown): State {
     !Array.isArray(s.players) ||
     s.players.length < ROSTER_MIN ||
     s.players.length > ROSTER_MAX ||
-    !FORMATIONS.includes(s.formation)
+    !FORMATIONS.includes(s.formation) ||
+    !LINEUP_POLICIES.includes(s.autoLineupPolicy) ||
+    typeof s.autoLineupOnMatch !== 'boolean'
   )
     throw Error('このセーブは対応していないか、壊れています。');
   for (const p of s.players) {

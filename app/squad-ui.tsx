@@ -30,6 +30,7 @@ import {
   ArchetypeBadge,
   RankBadge,
   SkillChips,
+  MoodBadge,
 } from './ability-sheet';
 
 export { PositionBadge, ArchetypeBadge, SkillChips };
@@ -300,6 +301,7 @@ export function SquadPanel({
                 <TableHead>アーキタイプ</TableHead>
                 <TableHead>能力</TableHead>
                 <TableHead>特殊能力</TableHead>
+                <TableHead>調子</TableHead>
                 <TableHead>疲労</TableHead>
                 <TableHead>チーム</TableHead>
                 <TableHead>起用</TableHead>
@@ -350,6 +352,9 @@ export function SquadPanel({
                   </TableCell>
                   <TableCell>
                     <SkillChips ps={ps} empty="なし" />
+                  </TableCell>
+                  <TableCell>
+                    <MoodBadge value={ps.mood} size="sm" />
                   </TableCell>
                   <TableCell>
                     <span className={p.fatigue > 65 ? 'danger-text' : ''}>

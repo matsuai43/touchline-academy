@@ -177,7 +177,7 @@ test.describe('D2b 最終検証: 横はみ出し（375px/1280px × ライト/ダ
         await page.setViewportSize({ width, height: width < 768 ? 844 : 900 });
         await page.emulateMedia({ colorScheme: theme });
         await page.goto('/');
-        await expect(page.getByText('交代 0 / 5')).toBeVisible();
+        await expect(page.getByText('交代 0 / 5').first()).toBeVisible();
         const overMatch = await overflowPx(page);
         expect(overMatch, `${width}px/${theme}: 試合画面で横に${overMatch}pxはみ出し`).toBe(0);
 
@@ -185,7 +185,7 @@ test.describe('D2b 最終検証: 横はみ出し（375px/1280px × ライト/ダ
         await page.setViewportSize({ width, height: width < 768 ? 844 : 900 });
         await page.emulateMedia({ colorScheme: theme });
         await page.goto('/');
-        await expect(page.getByText('MATCH SUMMARY', { exact: true })).toBeVisible();
+        await expect(page.getByRole('region', { name: '試合結果' })).toBeVisible();
         const overSummary = await overflowPx(page);
         expect(overSummary, `${width}px/${theme}: 試合後サマリで横に${overSummary}pxはみ出し`).toBe(
           0,
@@ -212,13 +212,13 @@ test.describe('D2b 最終検証: コントラスト再監査（文字4.5:1・境
 
         await withSave(page, startedMatch(`監査試合${width}${theme}`, 6001));
         await page.goto('/');
-        await expect(page.getByText('交代 0 / 5')).toBeVisible();
+        await expect(page.getByText('交代 0 / 5').first()).toBeVisible();
         const matchResult = await auditContrast(page);
         for (const f of matchResult.fails) allFails.push(`[試合画面] ${f}`);
 
         await withSave(page, finishedMatch(`監査サマリ${width}${theme}`, 6002));
         await page.goto('/');
-        await expect(page.getByText('MATCH SUMMARY', { exact: true })).toBeVisible();
+        await expect(page.getByRole('region', { name: '試合結果' })).toBeVisible();
         const summaryResult = await auditContrast(page);
         for (const f of summaryResult.fails) allFails.push(`[試合後サマリ] ${f}`);
 

@@ -1,5 +1,17 @@
 'use client';
-import { Target, Shield, Hand, Brain, Zap, TriangleAlert } from 'lucide-react';
+import {
+  Target,
+  Shield,
+  Hand,
+  Brain,
+  Zap,
+  TriangleAlert,
+  ChevronsUp,
+  ChevronUp,
+  Minus,
+  ChevronDown,
+  ChevronsDown,
+} from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import {
   Popover,
@@ -18,11 +30,14 @@ import {
   DETAIL_POS,
   MASTERY_THRESHOLD,
   PLAY_STYLES,
+  moodLevel,
+  MOOD_LABEL,
   type DetailPos,
   type Archetype,
   type ExtraStat,
   type PlayerSquad,
   type SkillCategory,
+  type MoodLevel,
 } from '@/lib/squad';
 import { rankOf, rankAriaLabel } from '@/lib/ability-rank';
 
@@ -68,6 +83,27 @@ export function ArchetypeBadge({ archetype }: { archetype: Archetype }) {
   return (
     <span className="archetype-badge" title={a.desc}>
       {a.name}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// T2: 調子（5段階）。色だけに頼らず、文字＋Lucideの矢印アイコンで表す。
+// ---------------------------------------------------------------------------
+const moodIcon: Record<MoodLevel, typeof ChevronsUp> = {
+  excellent: ChevronsUp,
+  good: ChevronUp,
+  normal: Minus,
+  poor: ChevronDown,
+  bad: ChevronsDown,
+};
+export function MoodBadge({ value, size = 'md' }: { value: number; size?: 'sm' | 'md' }) {
+  const lv = moodLevel(value);
+  const Icon = moodIcon[lv];
+  return (
+    <span className={`mood-badge mood-${lv} mood-${size}`} title={`調子：${MOOD_LABEL[lv]}`}>
+      <Icon size={size === 'sm' ? 12 : 14} aria-hidden="true" />
+      {MOOD_LABEL[lv]}
     </span>
   );
 }
@@ -235,6 +271,7 @@ export function AbilitySheet({ p, ps }: { p: Player; ps: PlayerSquad }) {
           <div className="squad-profile-head">
             <PositionBadge detail={ps.detail} />
             <ArchetypeBadge archetype={ps.archetype} />
+            <MoodBadge value={ps.mood} />
           </div>
         </div>
       </div>

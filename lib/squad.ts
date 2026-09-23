@@ -667,6 +667,131 @@ export function initialProficiency(detail: DetailPos): Proficiency {
   for (const d of DETAIL_POS) rec[d] = d === detail ? 100 : basePos(d) === base ? 40 : 10;
   return rec;
 }
+// ---------------------------------------------------------------------------
+// T2: 新規に部員となる選手（新規ゲームの初期20人・卒業後の新入生）へ「現実的な
+// サブポジション」の習熟度を初期から付ける。主ポジションごとに、隣接する
+// ポジションへ習熟度60（MASTERY_THRESHOLD）前後の適性を持たせることで、
+// 「4つのフォーメーションすべてで各枠に習熟度60以上の候補が2人以上」という
+// 受け入れ条件を満たす。旧セーブ移行（legacy migration）は initialProficiency()
+// の単純な100/40/10のまま変えない（既存テストが固定値を検証しているため）。
+// ---------------------------------------------------------------------------
+const SUB_POSITION_BACKUP: Partial<Record<DetailPos, { pos: DetailPos; value: number }[]>> = {
+  CB: [
+    { pos: 'LSB', value: 60 },
+    { pos: 'RSB', value: 60 },
+  ],
+  LSB: [
+    { pos: 'LWB', value: 65 },
+    { pos: 'CB', value: 50 },
+  ],
+  RSB: [
+    { pos: 'RWB', value: 65 },
+    { pos: 'CB', value: 50 },
+  ],
+  LWB: [
+    { pos: 'LSB', value: 60 },
+    { pos: 'LSH', value: 50 },
+  ],
+  RWB: [
+    { pos: 'RSB', value: 60 },
+    { pos: 'RSH', value: 50 },
+  ],
+  DM: [
+    { pos: 'CM', value: 65 },
+    { pos: 'CB', value: 45 },
+  ],
+  CM: [
+    { pos: 'DM', value: 55 },
+    { pos: 'AM', value: 45 },
+  ],
+  LSH: [
+    { pos: 'LWG', value: 60 },
+    { pos: 'LWB', value: 60 },
+  ],
+  RSH: [
+    { pos: 'RWG', value: 60 },
+    { pos: 'RWB', value: 60 },
+  ],
+  AM: [
+    { pos: 'SS', value: 50 },
+    { pos: 'CM', value: 45 },
+  ],
+  LWG: [
+    { pos: 'LSH', value: 60 },
+    { pos: 'SS', value: 45 },
+  ],
+  RWG: [
+    { pos: 'RSH', value: 60 },
+    { pos: 'SS', value: 45 },
+  ],
+  SS: [
+    { pos: 'AM', value: 60 },
+    { pos: 'CF', value: 50 },
+  ],
+  CF: [
+    { pos: 'SS', value: 60 },
+    { pos: 'CM', value: 35 },
+  ],
+};
+export function realisticInitialProficiency(detail: DetailPos): Proficiency {
+  const rec = initialProficiency(detail);
+  for (const { pos, value } of SUB_POSITION_BACKUP[detail] ?? [])
+    rec[pos] = Math.max(rec[pos], value);
+  return rec;
+}
+// ---------------------------------------------------------------------------
+// T2: 新規ゲーム20人分の詳細ポジション・学年の割り当て（決定的な固定プラン）。
+// GK2/CB3/LSB1/RSB1/DM2/CM2/LSH1/RSH1/AM1/LWG1/RWG1/SS1/CF2＋CB1（計20）。
+// newGame() が作る20人の Player と同じ順序で zip して使う（applyInitialDetailPlan）。
+// ---------------------------------------------------------------------------
+export const INITIAL_ROSTER_PLAN: { year: number; detail: DetailPos }[] = [
+  { year: 1, detail: 'GK' },
+  { year: 3, detail: 'GK' },
+  { year: 1, detail: 'CB' },
+  { year: 2, detail: 'CB' },
+  { year: 3, detail: 'CB' },
+  { year: 2, detail: 'CB' },
+  { year: 1, detail: 'LSB' },
+  { year: 2, detail: 'RSB' },
+  { year: 1, detail: 'DM' },
+  { year: 3, detail: 'DM' },
+  { year: 2, detail: 'CM' },
+  { year: 3, detail: 'CM' },
+  { year: 1, detail: 'LSH' },
+  { year: 2, detail: 'RSH' },
+  { year: 3, detail: 'AM' },
+  { year: 1, detail: 'LWG' },
+  { year: 2, detail: 'RWG' },
+  { year: 3, detail: 'SS' },
+  { year: 1, detail: 'CF' },
+  { year: 2, detail: 'CF' },
+];
+/** newGame() が作った20人（INITIAL_ROSTER_PLANと同じ順序）へ、プラン通りの詳細
+ * ポジション・現実的なサブポジション習熟度・整合するプレースタイルを確定させる。
+ * hydrateV3(s) 実行後（各選手のPlayerSquadエントリが揃った後）にだけ呼ぶこと。 */
+export function applyInitialDetailPlan(s: State): void {
+  const sq = s.v3.squad;
+  s.players.forEach((p, i) => {
+    const plan = INITIAL_ROSTER_PLAN[i];
+    const ps = sq.players[p.id];
+    if (!plan || !ps) return;
+    ps.detail = plan.detail;
+    ps.prof = realisticInitialProficiency(plan.detail);
+    ps.style = assignStyle(p, plan.detail);
+  });
+}
+/** 卒業後の新入生（intake）など、選んだ詳細ポジションはそのまま(assignDetailPos)に、
+ * 習熟度だけ「現実的なサブポジション」を持つ状態へ差し替える。hydrateV3(s) 実行後
+ * （対象プレイヤーのPlayerSquadエントリが揃った後）にだけ呼ぶこと。旧セーブ移行の
+ * 挙動（100/40/10固定）には影響しない。 */
+export function applyRealisticSubProficiency(s: State, ids: number[]): void {
+  const sq = s.v3.squad;
+  for (const id of ids) {
+    const ps = sq.players[id];
+    if (!ps) continue;
+    ps.prof = realisticInitialProficiency(ps.detail);
+  }
+}
 /** 習熟度を加算し、60到達で習得メッセージをフィードへ出す。系統が近いポジションにも少し波及する。 */
 export function gainProficiency(
   s: State,
@@ -714,6 +839,9 @@ export type PlayerSquad = {
   teamManual: boolean;
   streakMenu: Training | null;
   streakCount: number;
+  // T2: 調子（0〜100、50=普通）。旧セーブは全員 MOOD_DEFAULT(50) で補う。
+  // optionalにせず必須で持たせる（交代ダイアログなど他機能が常に参照できるようにするため）。
+  mood: number;
 };
 export type SquadState = {
   schema: 1;
@@ -732,10 +860,28 @@ function hf(...ns: number[]): number {
   return h32(...ns) / 4294967296;
 }
 
+// T2: 「手薄なポジション（候補が少ない枠）を優先して割り当てる」。既に部に
+// 所属している選手の詳細ポジション分布を数え、同じ系統の選択肢の中で最も人数が
+// 少ないものを優先する（同数なら決定的なハッシュで選ぶ）。新規ゲームの初期20人は
+// applyInitialDetailPlan() が別途プラン通りに上書きするので、この関数が実際に
+// 効くのは卒業後の新入生（finishWeek の intake）が中心になる。
+function countDetailAssignments(s: State): Partial<Record<DetailPos, number>> {
+  const counts: Partial<Record<DetailPos, number>> = {};
+  const sq = s.v3?.squad;
+  if (!sq) return counts;
+  for (const key of Object.keys(sq.players)) {
+    const d = sq.players[+key].detail;
+    counts[d] = (counts[d] ?? 0) + 1;
+  }
+  return counts;
+}
 export function assignDetailPos(s: State, p: Player): DetailPos {
-  const options = detailByBase[p.pos];
-  const idx = Math.floor(hf(s.seed, p.id, 7) * options.length);
-  return options[Math.min(idx, options.length - 1)];
+  const options = [...new Set(detailByBase[p.pos])];
+  const counts = countDetailAssignments(s);
+  const minCount = Math.min(...options.map((o) => counts[o] ?? 0));
+  const scarce = options.filter((o) => (counts[o] ?? 0) === minCount);
+  const idx = Math.floor(hf(s.seed, p.id, 7) * scarce.length);
+  return scarce[Math.min(idx, scarce.length - 1)];
 }
 export function assignArchetype(s: State, p: Player): Archetype {
   const options = archByBase[p.pos];
@@ -844,6 +990,56 @@ export function isBenchPlayer(s: State, id: number): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// T2: 調子（5段階）。毎日決定的に変動し、試合の実効能力に小さな倍率で反映する。
+// 表示は文字＋Lucideの矢印アイコン（app/ability-sheet.tsx 側）で、色だけに頼らない。
+// ---------------------------------------------------------------------------
+export type MoodLevel = 'excellent' | 'good' | 'normal' | 'poor' | 'bad';
+export const MOOD_LEVELS: MoodLevel[] = ['bad', 'poor', 'normal', 'good', 'excellent'];
+export const MOOD_LABEL: Record<MoodLevel, string> = {
+  excellent: '絶好調',
+  good: '好調',
+  normal: '普通',
+  poor: '不調',
+  bad: '絶不調',
+};
+export const MOOD_MULT: Record<MoodLevel, number> = {
+  excellent: 1.06,
+  good: 1.03,
+  normal: 1.0,
+  poor: 0.97,
+  bad: 0.94,
+};
+// 旧セーブ・新規選手の初期値。5段階のちょうど中央（普通）。
+export const MOOD_DEFAULT = 50;
+export function moodLevel(value: number): MoodLevel {
+  if (value >= 80) return 'excellent';
+  if (value >= 60) return 'good';
+  if (value >= 40) return 'normal';
+  if (value >= 20) return 'poor';
+  return 'bad';
+}
+export function moodMultiplier(value: number): number {
+  return MOOD_MULT[moodLevel(value)];
+}
+/** 1日ぶんの調子の変動。普通(50)へ戻ろうとする力＋休養で上向き・高疲労で下向き・
+ * 士気が高いと上向き・小さな揺らぎ、を決定的に適用する。s.seedは消費しない
+ * （ハッシュのみを種にするため、ゲーム進行の決定性・再現性には影響しない）。 */
+export function advanceSquadMood(s: State, isRest: boolean): void {
+  const sq = s.v3?.squad;
+  if (!sq) return;
+  for (const p of s.players) {
+    const ps = sq.players[p.id];
+    if (!ps) continue;
+    const revert = (MOOD_DEFAULT - ps.mood) * 0.12;
+    const restBonus = isRest ? 3 : 0;
+    const fatiguePenalty = p.fatigue > 65 ? -2.5 : p.fatigue > 45 ? -1 : 0;
+    const moraleBonus = s.morale > 70 ? 1 : s.morale < 40 ? -1 : 0;
+    const wobble = (hf(s.seed, p.id, s.week, s.day, 9001) - 0.5) * 6;
+    ps.mood = clamp(ps.mood + revert + restBonus + fatiguePenalty + moraleBonus + wobble, 0, 100);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // hydrate / validate
 // ---------------------------------------------------------------------------
 export function hydrateSquad(s: State): void {
@@ -856,6 +1052,10 @@ export function hydrateSquad(s: State): void {
         detail,
         archetype: assignArchetype(s, p),
         style: assignStyle(p, detail),
+        // 旧セーブ移行（既存プレイヤーがv3データを初めて持つ場合を含む）は決定的な
+        // 100/40/10のまま（既存テストが固定値を検証している）。新規ゲームの初期20人・
+        // 卒業後の新入生への「現実的なサブポジション」付与は、この関数の外側
+        // （applyInitialDetailPlan / applyRealisticSubProficiency）で別途行う。
         prof: initialProficiency(detail),
         dribble: extra.dribble,
         stamina: extra.stamina,
@@ -866,6 +1066,7 @@ export function hydrateSquad(s: State): void {
         teamManual: false,
         streakMenu: null,
         streakCount: 0,
+        mood: MOOD_DEFAULT,
       };
     } else {
       // S4: 旧セーブ（15ポジション・習熟度・プレースタイル導入前）を決定的に補う。
@@ -880,6 +1081,8 @@ export function hydrateSquad(s: State): void {
         !PLAY_STYLES[ps.style].positions.includes(ps.detail)
       )
         ps.style = assignStyle(p, ps.detail);
+      // T2: 旧セーブ（調子導入前）は全員「普通」で補う。
+      if (typeof ps.mood !== 'number' || !Number.isFinite(ps.mood)) ps.mood = MOOD_DEFAULT;
     }
   }
   for (const key of Object.keys(sq.players)) {
@@ -932,6 +1135,7 @@ export function validateSquad(s: State): void {
     if (ps.streakMenu !== null && typeof ps.streakMenu !== 'string')
       throw Error('練習継続データが不正です。');
     if (!num(ps.streakCount, 0, 999)) throw Error('練習継続データが不正です。');
+    if (!num(ps.mood, 0, 100)) throw Error('調子データが不正です。');
     if (ps.team === 'A') teamACount++;
   }
   if (teamACount > 20) throw Error('Aチームの人数が上限を超えています。');

@@ -770,6 +770,38 @@ h1 > span {
 .pitch-player.injured .number {
   border-color: var(--danger);
 }
+.pitch-player.subbed-in .number {
+  border-color: var(--primary);
+}
+/* T1修正: 交代時にポジションが分からなくなる不具合対策。ピッチ上の各選手に、
+   今いる枠のポジション略号を常に見える形で表示する（#eaf0e3 on #16251dbd は
+   .pitch-name と同じ組み合わせで、コントラストは監査済み）。 */
+.pitch-slot {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-shadow: 0 1px 4px black;
+  background: #16251dbd;
+  padding: 0 4px;
+  border-radius: 2px;
+  color: #eaf0e3;
+  white-space: nowrap;
+}
+/* 交代で入った選手であることが残るように、名前の横に小さく「IN」を残す
+   （#253523 on #c5ed77 は .number と同じ組み合わせで、コントラストは監査済み）。 */
+.pitch-sub-mark {
+  display: inline-block;
+  margin-left: 3px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: #253523;
+  background: #c5ed77;
+  border-radius: 2px;
+  padding: 0 3px;
+  vertical-align: middle;
+}
 .pitch-name {
   font-size: 12px;
   text-shadow: 0 1px 4px black;
@@ -3908,65 +3940,66 @@ footer button::after,
 }
 
 /* -------------------------------------------------------------------------
- * S2: 能力ランク（ギリシャ文字 α〜η）と能力シート。末尾に追記のみ。
+ * S2: 能力ランク（A〜G、Aが最上位）と能力シート。末尾に追記のみ。
  * ランク色は lib/ability-rank.ts の値をそのまま書き写したもの（唯一の正はそちら）。
  * 文字色(fg)は自身の背景色(bg)に対して4.5:1以上、ページ背景(--background)や
  * --muted に対しても3:1以上（ゲージの塗りに currentColor で流用するため）を
  * 両テーマで実測済み（PROGRESS.md ではなく tests/ability-rank.test.ts で計算検証）。
- * 色だけでなくギリシャ文字そのもので段階が分かるため、色覚特性に依存しない。
+ * 色だけでなく文字そのもので段階が分かるため、色覚特性に依存しない。「Aチーム/
+ * Bチーム」と紛れないよう、ランクは四角いバッジ(.rank-badge)に固定して使う。
  * ------------------------------------------------------------------------- */
 :root {
-  --rank-alpha-fg: #5b21b6;
-  --rank-alpha-bg: #efe6fb;
-  --rank-beta-fg: #1d4ed8;
-  --rank-beta-bg: #e3edfb;
-  --rank-gamma-fg: #157347;
-  --rank-gamma-bg: #e1f5ea;
-  --rank-delta-fg: #8a5a00;
-  --rank-delta-bg: #fdf1d9;
-  --rank-epsilon-fg: #9a4b0a;
-  --rank-epsilon-bg: #fde8d9;
-  --rank-zeta-fg: #46586a;
-  --rank-zeta-bg: #e8eef2;
-  --rank-eta-fg: #7a3030;
-  --rank-eta-bg: #f4e4e4;
+  --rank-A-fg: #5b21b6;
+  --rank-A-bg: #efe6fb;
+  --rank-B-fg: #1d4ed8;
+  --rank-B-bg: #e3edfb;
+  --rank-C-fg: #157347;
+  --rank-C-bg: #e1f5ea;
+  --rank-D-fg: #8a5a00;
+  --rank-D-bg: #fdf1d9;
+  --rank-E-fg: #9a4b0a;
+  --rank-E-bg: #fde8d9;
+  --rank-F-fg: #46586a;
+  --rank-F-bg: #e8eef2;
+  --rank-G-fg: #7a3030;
+  --rank-G-bg: #f4e4e4;
   --skill-good-fg: #1d4ed8;
   --skill-good-bg: #e3edfb;
 }
 [data-theme='dark'] {
-  --rank-alpha-fg: #d5b8fb;
-  --rank-alpha-bg: #2a1f42;
-  --rank-beta-fg: #a8c6fb;
-  --rank-beta-bg: #1a2740;
-  --rank-gamma-fg: #8fe0b6;
-  --rank-gamma-bg: #142a1e;
-  --rank-delta-fg: #f3cf7e;
-  --rank-delta-bg: #2c2210;
-  --rank-epsilon-fg: #f5b784;
-  --rank-epsilon-bg: #2c1d10;
-  --rank-zeta-fg: #b9c7d4;
-  --rank-zeta-bg: #202a32;
-  --rank-eta-fg: #e8a9a3;
-  --rank-eta-bg: #2c1a1a;
+  --rank-A-fg: #d5b8fb;
+  --rank-A-bg: #2a1f42;
+  --rank-B-fg: #a8c6fb;
+  --rank-B-bg: #1a2740;
+  --rank-C-fg: #8fe0b6;
+  --rank-C-bg: #142a1e;
+  --rank-D-fg: #f3cf7e;
+  --rank-D-bg: #2c2210;
+  --rank-E-fg: #f5b784;
+  --rank-E-bg: #2c1d10;
+  --rank-F-fg: #b9c7d4;
+  --rank-F-bg: #202a32;
+  --rank-G-fg: #e8a9a3;
+  --rank-G-bg: #2c1a1a;
   --skill-good-fg: #a8c6fb;
   --skill-good-bg: #1a2740;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']):not([data-theme='dark']) {
-    --rank-alpha-fg: #d5b8fb;
-    --rank-alpha-bg: #2a1f42;
-    --rank-beta-fg: #a8c6fb;
-    --rank-beta-bg: #1a2740;
-    --rank-gamma-fg: #8fe0b6;
-    --rank-gamma-bg: #142a1e;
-    --rank-delta-fg: #f3cf7e;
-    --rank-delta-bg: #2c2210;
-    --rank-epsilon-fg: #f5b784;
-    --rank-epsilon-bg: #2c1d10;
-    --rank-zeta-fg: #b9c7d4;
-    --rank-zeta-bg: #202a32;
-    --rank-eta-fg: #e8a9a3;
-    --rank-eta-bg: #2c1a1a;
+    --rank-A-fg: #d5b8fb;
+    --rank-A-bg: #2a1f42;
+    --rank-B-fg: #a8c6fb;
+    --rank-B-bg: #1a2740;
+    --rank-C-fg: #8fe0b6;
+    --rank-C-bg: #142a1e;
+    --rank-D-fg: #f3cf7e;
+    --rank-D-bg: #2c2210;
+    --rank-E-fg: #f5b784;
+    --rank-E-bg: #2c1d10;
+    --rank-F-fg: #b9c7d4;
+    --rank-F-bg: #202a32;
+    --rank-G-fg: #e8a9a3;
+    --rank-G-bg: #2c1a1a;
     --skill-good-fg: #a8c6fb;
     --skill-good-bg: #1a2740;
   }
@@ -3998,33 +4031,33 @@ footer button::after,
   min-width: 48px;
   border-radius: 8px;
 }
-.rank-badge.rank-alpha {
-  color: var(--rank-alpha-fg);
-  background: var(--rank-alpha-bg);
+.rank-badge.rank-A {
+  color: var(--rank-A-fg);
+  background: var(--rank-A-bg);
 }
-.rank-badge.rank-beta {
-  color: var(--rank-beta-fg);
-  background: var(--rank-beta-bg);
+.rank-badge.rank-B {
+  color: var(--rank-B-fg);
+  background: var(--rank-B-bg);
 }
-.rank-badge.rank-gamma {
-  color: var(--rank-gamma-fg);
-  background: var(--rank-gamma-bg);
+.rank-badge.rank-C {
+  color: var(--rank-C-fg);
+  background: var(--rank-C-bg);
 }
-.rank-badge.rank-delta {
-  color: var(--rank-delta-fg);
-  background: var(--rank-delta-bg);
+.rank-badge.rank-D {
+  color: var(--rank-D-fg);
+  background: var(--rank-D-bg);
 }
-.rank-badge.rank-epsilon {
-  color: var(--rank-epsilon-fg);
-  background: var(--rank-epsilon-bg);
+.rank-badge.rank-E {
+  color: var(--rank-E-fg);
+  background: var(--rank-E-bg);
 }
-.rank-badge.rank-zeta {
-  color: var(--rank-zeta-fg);
-  background: var(--rank-zeta-bg);
+.rank-badge.rank-F {
+  color: var(--rank-F-fg);
+  background: var(--rank-F-bg);
 }
-.rank-badge.rank-eta {
-  color: var(--rank-eta-fg);
-  background: var(--rank-eta-bg);
+.rank-badge.rank-G {
+  color: var(--rank-G-fg);
+  background: var(--rank-G-bg);
 }
 
 /* 部員一覧: 主要能力のランク文字を横一列に並べる列（折り返し不可。
@@ -4103,26 +4136,26 @@ footer button::after,
   text-align: center;
   flex-shrink: 0;
 }
-.ability-row.rank-alpha {
-  color: var(--rank-alpha-fg);
+.ability-row.rank-A {
+  color: var(--rank-A-fg);
 }
-.ability-row.rank-beta {
-  color: var(--rank-beta-fg);
+.ability-row.rank-B {
+  color: var(--rank-B-fg);
 }
-.ability-row.rank-gamma {
-  color: var(--rank-gamma-fg);
+.ability-row.rank-C {
+  color: var(--rank-C-fg);
 }
-.ability-row.rank-delta {
-  color: var(--rank-delta-fg);
+.ability-row.rank-D {
+  color: var(--rank-D-fg);
 }
-.ability-row.rank-epsilon {
-  color: var(--rank-epsilon-fg);
+.ability-row.rank-E {
+  color: var(--rank-E-fg);
 }
-.ability-row.rank-zeta {
-  color: var(--rank-zeta-fg);
+.ability-row.rank-F {
+  color: var(--rank-F-fg);
 }
-.ability-row.rank-eta {
-  color: var(--rank-eta-fg);
+.ability-row.rank-G {
+  color: var(--rank-G-fg);
 }
 .ability-row-body {
   flex: 1;
@@ -4196,7 +4229,7 @@ footer button::after,
 }
 
 /* Wave2: 選手詳細ダイアログの積み残し解消。能力表をAbilitySheetへ、
-   英字の素質評価(A/B/C)をrank-badge(ギリシャ文字)へ置き換えた分の調整。 */
+   素質評価をrank-badge(能力ランクA〜G)へ置き換えた分の調整。 */
 .profile-summary {
   grid-template-columns: repeat(2, 1fr);
 }

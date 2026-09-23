@@ -335,8 +335,8 @@ export function MatchResult({
         .mr-rating-row button { width: 100%; display: flex; align-items: center; gap: 12px;
           padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border);
           background: var(--card); text-align: left; min-height: 44px; cursor: pointer; }
-        .mr-rating-row.mr-rating-top button { border-color: var(--rank-alpha-fg, #5b21b6);
-          background: var(--rank-alpha-bg, #efe6fb); }
+        .mr-rating-row.mr-rating-top button { border-color: var(--rank-A-fg, #5b21b6);
+          background: var(--rank-A-bg, #efe6fb); }
         .mr-rating-body { flex: 1 1 auto; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
         .mr-rating-name { display: flex; align-items: center; gap: 6px; }
         .mr-rating-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;

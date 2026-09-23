@@ -73,7 +73,9 @@ function statValue(p: Player, ps: PlayerSquad, key: Stat | ExtraStat): number {
 
 // ポジション・アーキタイプ・能力・特殊能力は AbilitySheet（app/ability-sheet.tsx）に
 // 一本化した。ここでは AbilitySheet に含まれない「Aチーム/Bチーム」の所属表示のみ行う
-// （A/Bは評価ではなくチーム分けなので、ギリシャ文字ランクの対象にはしない）。
+// （A/Bは評価ではなくチーム分けなので能力ランクの対象にはしない。能力ランクもA〜Gの
+// 英字になったため、単独の1文字「A」「B」だけでは紛らわしい。必ず「Aチーム」
+// 「Bチーム」と文字で書く）。
 export function SquadProfile({ ps }: { ps: PlayerSquad }) {
   return (
     <div className="squad-profile">
@@ -369,7 +371,9 @@ export function SquadPanel({
                     </span>
                   </TableCell>
                   <TableCell>
-                    <span className={`team-badge team-${ps.team}`}>{ps.team}</span>
+                    {/* 能力ランクがA〜Gの英字になったため、単独の1文字「A」「B」だけの
+                        バッジは紛らわしい。必ず「Aチーム」「Bチーム」と文字で書く。 */}
+                    <span className={`team-badge team-${ps.team}`}>{ps.team}チーム</span>
                   </TableCell>
                   <TableCell>
                     {/* S3: 試合登録20人＝先発11＋ベンチ9。Aチームは常にちょうど20人

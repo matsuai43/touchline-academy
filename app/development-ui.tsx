@@ -17,20 +17,20 @@ import { RANK_BY_ID, type RankId } from '@/lib/ability-rank';
 
 // 成長の素質は「潜在力の高さ」を3段階で示す評価であり、能力値（1〜99）のランクとは
 // 別の指標。値の意味は変えず（ロジックは lib/development.ts のまま）、表示だけを
-// 能力ランクと同じギリシャ文字に揃える（英字の A/A+/B をアプリ内に残さない）。
+// 能力ランクと同じA〜G表記・同じ四角いバッジ（RankBadgeと同じ見た目）に揃える。
+// 「Aチーム/Bチーム」と紛れないよう、単独の1文字テキストではなく必ずこのバッジ
+// （rank-badge）の形で出す。
 function potentialRankId(potential: number): RankId {
-  if (potential >= 1.7) return 'alpha';
-  if (potential >= 1.5) return 'beta';
-  return 'gamma';
+  if (potential >= 1.7) return 'A';
+  if (potential >= 1.5) return 'B';
+  return 'C';
 }
 export function PotentialBadge({ potential }: { potential: number }) {
   const r = RANK_BY_ID[potentialRankId(potential)];
   return (
-    <span className={`rank-badge rank-${r.id} rank-md`} title={`成長の素質：${r.letter}（${r.reading}）`}>
+    <span className={`rank-badge rank-${r.id} rank-md`} title={`成長の素質：ランク${r.letter}`}>
       <span aria-hidden="true">{r.letter}</span>
-      <span className="sr-only">
-        成長の素質はランク{r.letter}（{r.reading}）
-      </span>
+      <span className="sr-only">成長の素質はランク{r.letter}</span>
     </span>
   );
 }

@@ -3,7 +3,7 @@
 // app/game-ui.tsx から試合画面（旧 MatchView）をここへ切り出し、次を追加する。
 //  - 交代を「下げる選手→入れる選手」の組を予約し、まとめて確定する複数交代フロー
 //    （SubstitutionDialog）。下げる選手を選ぶと、ベンチにそのポジションでの習熟度
-//    ランク（α〜η）を適性順に表示する。
+//    ランク（A〜G）を適性順に表示する。
 //  - 試合終了後は試合画面の下に続けず、別画面（app/match-result.tsx の MatchResult）に
 //    切り替える。評価点の算出は lib/match-rating.ts（純粋関数）。
 // Pitch / Choices / Meter / Metric は試合以外のタブ（クラブ・編成）からも使われる小さな部品なので、
@@ -13,8 +13,9 @@ import { Portrait } from './development-ui';
 import { MatchCommands, VoicePanel } from './development-ui';
 import MatchCinema from './match-cinema';
 import { MatchResult } from './match-result';
-import { RankBadge } from './ability-sheet';
+import { RankBadge, PositionBadge } from './ability-sheet';
 import { playSfx } from '@/lib/audio';
+import { rankOf } from '@/lib/ability-rank';
 import {
   detailInfo,
   formationSlots,
@@ -130,6 +131,9 @@ export function Pitch({
   const detailSlots = formationSlots(s.formation);
   const positions = slots(s.formation);
   const team = roster(s);
+  // T1修正: 試合中はスタメン(m.original)に無い=交代で入った選手を「交代出場」として
+  // 見た目と読み上げの両方に残す。ライブでない（先発編成中）ときは常にfalse。
+  const original = live ? s.match?.original : undefined;
   return (
     <div
       className={`pitch ${live ? 'live' : ''}`}
@@ -153,18 +157,32 @@ export function Pitch({
           y = pos === 'GK' ? 86 : pos === 'DF' ? 65 : pos === 'MF' ? 42 : 19;
         const slotDetail = detailSlots[i],
           slotName = detailInfo[slotDetail].name;
+        // T1修正: 交代で入った選手（＝キックオフ時点のスタメンに含まれない）かどうか。
+        const subbedIn = !!original && !original.includes(p.id);
         return (
           <button
-            className={`pitch-player ${p.pos !== pos ? 'mismatch' : ''} ${p.injury ? 'injured' : ''}`}
+            className={`pitch-player ${p.pos !== pos ? 'mismatch' : ''} ${p.injury ? 'injured' : ''} ${subbedIn ? 'subbed-in' : ''}`}
             key={p.id}
             style={{ left: `${x}%`, top: `${y}%` }}
             onClick={() => onPick?.(p)}
-            title={`起用先：${slotName}（${slotDetail}）`}
-            aria-label={`${p.name} ${slotName} 総合${overall(p)} 疲労${Math.round(p.fatigue)}`}
+            title={`起用先：${slotName}（${slotDetail}）${subbedIn ? '・交代出場' : ''}`}
+            aria-label={`${p.name} ${slotName} 総合${overall(p)} 疲労${Math.round(p.fatigue)}${subbedIn ? ' 交代出場' : ''}`}
           >
             <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
             <span className="number">{i + 1}</span>
-            <span className="pitch-name">{p.name.split(' ')[0]}</span>
+            {/* 交代時にポジションが分からなくなる不具合の修正: 今いる枠のポジション名を
+                常に見える形で出す（略号。日本語フル名はtitle/aria-labelに残す）。 */}
+            <span className="pitch-slot" aria-hidden="true">
+              {slotDetail}
+            </span>
+            <span className="pitch-name">
+              {p.name.split(' ')[0]}
+              {subbedIn && (
+                <span className="pitch-sub-mark" aria-hidden="true" title="交代出場">
+                  IN
+                </span>
+              )}
+            </span>
             <span className="energy">
               <i style={{ width: `${100 - p.fatigue}%` }} />
             </span>
@@ -324,6 +342,14 @@ function SubstitutionDialog({
           下げる選手を選ぶと、ベンチの各選手にそのポジションでの習熟度ランクが適性の高い順に表示されます。
           組ができたら「予約に追加」、続けて次の組も選べます。最後に「まとめて確定」でまとめて交代します。
         </DialogDescription>
+        {/* 交代時に下げる選手のポジションが分からなくなる不具合の修正: 下げる選手を
+            選んだ時点で、ダイアログ上部にそのポジションつきで明示する。 */}
+        {outPlayer && (
+          <p className="sub-outgoing-banner">
+            <b>{outPlayer.name}</b>
+            {outSlot ? `（${detailInfo[outSlot].name}）` : ''}を下げる
+          </p>
+        )}
         <div className="subs-counter-row">
           <span className="subs-counter">
             交代 {m.subs} / {MATCH_MAX_SUBS}
@@ -336,10 +362,16 @@ function SubstitutionDialog({
             {reservations.map((r, i) => {
               const out = s.players.find((p) => p.id === r.outgoing);
               const inn = s.players.find((p) => p.id === r.incoming);
+              // 交代時にポジションが分からなくなる不具合の修正: 予約リストの各行にも
+              // 「枠のポジション名：下げる選手 → 入れる選手（入れる選手の習熟度）」を出す。
+              const slot = dslots[r.index];
+              const prof = profFor(s, r.incoming, slot);
               return (
                 <li key={`${r.outgoing}-${r.incoming}`} className="sub-reserved-row">
                   <span>
-                    <b>{out?.name ?? '?'}</b> → <b>{inn?.name ?? '?'}</b>
+                    <b>{detailInfo[slot].name}</b>：<b>{out?.name ?? '?'}</b> →{' '}
+                    <b>{inn?.name ?? '?'}</b>
+                    （習熟度 {rankOf(prof).letter}）
                   </span>
                   <button
                     type="button"
@@ -364,6 +396,9 @@ function SubstitutionDialog({
                 const slot = dslots[i];
                 const reserved = reservedOutIds.has(p.id);
                 const mood = moodLabelFor(s, p.id);
+                // 交代時にポジションが分からなくなる不具合の修正:
+                // 今いる枠のポジション名を、習熟度ランクとは別に見出しとして出す。
+                const subbedIn = !m.original.includes(p.id);
                 return (
                   <button
                     key={p.id}
@@ -382,9 +417,13 @@ function SubstitutionDialog({
                       <RankBadge value={profFor(s, p.id, slot)} label={detailInfo[slot].name} size="lg" />
                     </span>
                     <span className="sub-pick-body">
-                      <b className="sub-pick-name">{p.name}</b>
+                      <span className="sub-pick-toprow">
+                        <b className="sub-pick-name">{p.name}</b>
+                        <PositionBadge detail={slot} />
+                        {subbedIn && <span className="sub-in-tag">交代出場</span>}
+                      </span>
                       <span className="sub-pick-meta">
-                        {detailInfo[slot].name} ・ 疲労 {Math.round(p.fatigue)}
+                        疲労 {Math.round(p.fatigue)}
                         {mood ? ` ・ ${mood}` : ''} ・ {conditionLabel(cond)}
                       </span>
                     </span>
@@ -433,9 +472,13 @@ function SubstitutionDialog({
                         </span>
                       )}
                       <span className="sub-pick-body">
+                        {/* 交代時にポジションが分からなくなる不具合の修正:
+                            「どの枠に入るのか」を文字でも明示する。 */}
                         <b className="sub-pick-name">{p.name}</b>
                         <span className="sub-pick-meta">
-                          {p.pos}{' '}
+                          {outSlot
+                            ? `${detailInfo[outSlot].name}に入った場合の習熟度 ${rankOf(prof ?? 0).letter}`
+                            : p.pos}{' '}
                           {reserved
                             ? '・予約済み'
                             : m.used.includes(p.id)
@@ -506,6 +549,11 @@ function SubstitutionDialog({
         <style>{`
           .sub-pick { flex-wrap: wrap; }
           .sub-pick-rank { flex-shrink: 0; }
+          .sub-outgoing-banner { margin: 2px 0 0; font-size: 14px; }
+          .sub-pick-toprow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+          .sub-in-tag { font-size: 12px; font-weight: 700; padding: 2px 6px; border-radius: 999px;
+            background: var(--accent); color: var(--accent-foreground); border: 1px solid var(--border);
+            white-space: nowrap; }
           .sub-reserved-list { list-style: none; margin: 10px 0 0; padding: 0;
             display: flex; flex-direction: column; gap: 6px; }
           .sub-reserved-row { display: flex; align-items: center; justify-content: space-between;

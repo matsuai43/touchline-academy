@@ -11,21 +11,21 @@ import {
   type RankId,
 } from '../lib/ability-rank.ts';
 
-void test('rankOf classifies every documented boundary value into the right rank (alpha is the top)', () => {
+void test('rankOf classifies every documented boundary value into the right rank (A is the top)', () => {
   const cases: [number, RankId][] = [
-    [19, 'eta'],
-    [20, 'zeta'],
-    [39, 'zeta'],
-    [40, 'epsilon'],
-    [49, 'epsilon'],
-    [50, 'delta'],
-    [59, 'delta'],
-    [60, 'gamma'],
-    [69, 'gamma'],
-    [70, 'beta'],
-    [79, 'beta'],
-    [80, 'alpha'],
-    [99, 'alpha'],
+    [19, 'G'],
+    [20, 'F'],
+    [39, 'F'],
+    [40, 'E'],
+    [49, 'E'],
+    [50, 'D'],
+    [59, 'D'],
+    [60, 'C'],
+    [69, 'C'],
+    [70, 'B'],
+    [79, 'B'],
+    [80, 'A'],
+    [99, 'A'],
   ];
   for (const [value, expected] of cases) {
     assert.equal(
@@ -37,23 +37,25 @@ void test('rankOf classifies every documented boundary value into the right rank
 });
 
 void test('rankOf handles out-of-range values by clamping to the nearest end (never throws, never undefined)', () => {
-  assert.equal(rankOf(0).id, 'eta');
-  assert.equal(rankOf(-5).id, 'eta');
-  assert.equal(rankOf(150).id, 'alpha');
+  assert.equal(rankOf(0).id, 'G');
+  assert.equal(rankOf(-5).id, 'G');
+  assert.equal(rankOf(150).id, 'A');
 });
 
 void test('rankLetterOf returns the same letter as rankOf(...).letter', () => {
   for (let v = 0; v <= 99; v++) assert.equal(rankLetterOf(v), rankOf(v).letter);
 });
 
-void test('all 7 ranks are present, ordered alpha (highest) to eta (lowest), each with a unique Greek letter and reading', () => {
-  const expectedIds: RankId[] = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta'];
+void test('all 7 ranks are present, ordered A (highest) to G (lowest), each with a unique letter matching its id', () => {
+  const expectedIds: RankId[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
   assert.deepEqual(RANK_IDS, expectedIds);
   assert.equal(RANKS.length, 7);
   const letters = new Set(RANKS.map((r) => r.letter));
   assert.equal(letters.size, 7, 'each rank must have a distinct letter');
-  assert.equal(RANKS[0].letter, 'α');
-  assert.equal(RANKS[RANKS.length - 1].letter, 'η');
+  assert.equal(RANKS[0].letter, 'A');
+  assert.equal(RANKS[RANKS.length - 1].letter, 'G');
+  // the letter always matches the rank id (single uppercase A-G, no Greek/other chars).
+  for (const r of RANKS) assert.equal(r.letter, r.id);
   // strictly descending thresholds
   for (let i = 1; i < RANKS.length; i++) {
     assert.ok(
@@ -61,9 +63,8 @@ void test('all 7 ranks are present, ordered alpha (highest) to eta (lowest), eac
       `${RANKS[i - 1].id} min (${RANKS[i - 1].min}) should be greater than ${RANKS[i].id} min (${RANKS[i].min})`,
     );
   }
-  // every rank has a non-empty reading and full light/dark color info
+  // every rank has full light/dark color info
   for (const r of RANKS) {
-    assert.ok(r.reading.length > 0);
     assert.ok(/^#[0-9a-f]{6}$/i.test(r.colors.light.fg));
     assert.ok(/^#[0-9a-f]{6}$/i.test(r.colors.light.bg));
     assert.ok(/^#[0-9a-f]{6}$/i.test(r.colors.dark.fg));
@@ -72,10 +73,9 @@ void test('all 7 ranks are present, ordered alpha (highest) to eta (lowest), eac
   }
 });
 
-void test('rankAriaLabel includes the letter, reading and numeric value, with an optional label prefix', () => {
+void test('rankAriaLabel includes the letter and numeric value, with an optional label prefix, in the "ランクA" form', () => {
   const label = rankAriaLabel(85);
-  assert.match(label, /α/);
-  assert.match(label, /アルファ/);
+  assert.match(label, /ランクA/);
   assert.match(label, /85/);
   const withName = rankAriaLabel(85, '総合力');
   assert.match(withName, /^総合力：/);

@@ -194,6 +194,54 @@ test('substitution dialog: picking an outgoing player shows bench proficiency ra
   expect(values).toEqual(sorted);
 });
 
+test('substitution: outgoing banner, reservation row and post-confirm pitch view all show the position involved', async ({
+  page,
+}) => {
+  // 回帰テスト: 交代時に下げる選手のポジションが分からなくなる不具合の修正。
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await withSave(page, startedMatch('ポジション表示検証高校', 424242));
+  await page.goto('/');
+  await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
+  const columns = page.locator('.sub-column');
+  const pitchPick = columns.nth(0).locator('.sub-pick').first();
+
+  // ピッチ上の選手の各行に、習熟度ランクとは別枠でポジション名の見出しが出る。
+  await expect(pitchPick.locator('.position.detail-badge')).toBeVisible();
+
+  const outName = await pitchPick.locator('.sub-pick-name').innerText();
+  await pitchPick.click();
+  // 下げる選手を選ぶと、ダイアログ上部にポジション付きで明示される。
+  const banner = page.locator('.sub-outgoing-banner');
+  await expect(banner).toContainText(outName);
+  await expect(banner).toContainText('を下げる');
+  await expect(banner).toContainText('（');
+
+  // ベンチ側にも、どの枠に入るのかが習熟度と一緒に文字で示される。
+  const benchPick = columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first();
+  await expect(benchPick.locator('.sub-pick-meta')).toContainText('に入った場合の習熟度');
+  await benchPick.click();
+  await page.getByRole('button', { name: '予約に追加' }).click();
+
+  // 予約リストの行:「枠のポジション名：下げる選手 → 入れる選手（習熟度 X）」の形。
+  const reservedRow = page.locator('.sub-reserved-row').first();
+  await expect(reservedRow).toContainText('：');
+  await expect(reservedRow).toContainText('→');
+  await expect(reservedRow).toContainText('習熟度');
+
+  await page.getByRole('button', { name: '1人の交代を確定' }).click();
+  await expect(page.locator('[data-slot="dialog-overlay"]')).toHaveCount(0);
+
+  // 交代確定後、試合画面のピッチ図に入った選手のポジション略号と交代出場の印が残る。
+  await expect(page.locator('.pitch-slot').first()).toBeVisible();
+  await expect(page.locator('.pitch-sub-mark')).toHaveCount(1);
+
+  // 交代ダイアログを開き直しても、その選手の行にポジション名の見出しが残る。
+  await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
+  await expect(columns.nth(0).getByText('交代出場')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test('match result screen: shows ratings for every player who appeared, MOTM matches the top rating, timeline and growth, then returns to the clubhouse', async ({
   page,
 }) => {

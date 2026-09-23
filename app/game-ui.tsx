@@ -4,10 +4,12 @@ import {
   IdentityDetails,
   DevelopmentView,
   ManagerNote,
+  PotentialBadge,
 } from './development-ui';
 import { personalities } from '@/lib/development';
-import { formationSlots, detailInfo } from '@/lib/squad';
+import { formationSlots, detailInfo, isBenchPlayer } from '@/lib/squad';
 import { SquadPanel, SquadProfile, SquadTeamToggle } from './squad-ui';
+import { AbilitySheet } from './ability-sheet';
 import { LifeEventPanel } from './life-ui';
 import { AudioSettingsPanel } from './audio-ui';
 import { playScene, playSfx, primeAudio } from '@/lib/audio';
@@ -59,19 +61,17 @@ import {
   act,
   newGame,
   validateSave,
-  overall,
   strength,
   roster,
   dateLabel,
   training,
   tactics,
-  stats,
   DOW_NAMES,
+  MATCH_MAX_SUBS,
   type State,
   type Action,
   type Training,
   type Formation,
-  type Stat,
 } from '@/lib/game';
 
 const SAVE_KEY = 'touchline-academy-v1';
@@ -1138,26 +1138,19 @@ export default function Game() {
               </DialogDescription>
               <IdentityDetails player={player} />
               <div className="profile-summary">
-                <Metric label="総合能力" value={overall(player)} />
                 <Metric label="疲労" value={Math.round(player.fatigue)} />
-                <Metric
-                  label="成長の素質"
-                  value={
-                    player.talent > 1.35
-                      ? 'A'
-                      : player.talent > 1.15
-                        ? 'B'
-                        : 'C'
-                  }
-                />
-              </div>
-              <div className="stat-grid">
-                {(Object.keys(stats) as Stat[]).map((k) => (
-                  <Meter key={k} label={stats[k]} value={player.stats[k]} />
-                ))}
+                <div className="metric">
+                  <span>成長の素質</span>
+                  <strong className="profile-potential-value">
+                    <PotentialBadge potential={player.talent} />
+                  </strong>
+                </div>
               </div>
               {s.v3.squad.players[player.id] && (
-                <SquadProfile ps={s.v3.squad.players[player.id]} />
+                <>
+                  <AbilitySheet p={player} ps={s.v3.squad.players[player.id]} />
+                  <SquadProfile ps={s.v3.squad.players[player.id]} />
+                </>
               )}
               {!s.match && (
                 <div className="profile-actions">
@@ -1201,9 +1194,11 @@ export default function Game() {
                       s.match
                         ? !!s.match.done ||
                           s.match.used.includes(player.id) ||
-                          s.match.subs >= 3 ||
-                          !!player.injury
-                        : p.id === player.id
+                          s.match.subs >= MATCH_MAX_SUBS ||
+                          !!player.injury ||
+                          !isBenchPlayer(s, player.id)
+                        : p.id === player.id ||
+                          s.v3.squad.players[player.id]?.team !== 'A'
                     }
                     onClick={() => {
                       if (run({ type: 'swap', index: i, id: player.id }))
@@ -1219,7 +1214,12 @@ export default function Game() {
               </div>
               {s.match && (
                 <p className="muted">
-                  交代は未出場の選手と3人まで。交代する控え選手をベンチから選んでください。
+                  交代はベンチ入りの未出場・健康な選手と{MATCH_MAX_SUBS}人まで。ベンチ外の選手は交代投入できません。
+                </p>
+              )}
+              {!s.match && s.v3.squad.players[player.id]?.team !== 'A' && (
+                <p className="muted">
+                  Bチームの選手は先発にできません。先にAチームへ移してください。
                 </p>
               )}
             </>
@@ -1322,7 +1322,7 @@ export default function Game() {
         <DialogContent className="game-dialog help-dialog">
           <DialogTitle>監督の手引き</DialogTitle>
           <DialogDescription>
-            最大30人の部員を育て、世代をつなぐ高校サッカー部シミュレーション。
+            最大50人の部員を育て、世代をつなぐ高校サッカー部シミュレーション。
           </DialogDescription>
           <div className="help-copy">
             <h3>練習と育成</h3>
@@ -1334,7 +1334,7 @@ export default function Game() {
               選手を押して先発の起用先を選びます。起用先は「左サイドバック」「ボランチ」のような詳細ポジションで決まり、近いポジションなら影響は小さく、GK・DF・MF・FWの系統をまたぐと総合力が大きく下がります。試合は15分ごとに進行。ポゼッションはカウンターに、カウンターはハイプレスに、ハイプレスはポゼッションに有利です。選手の能力や疲労、運も結果に影響します。
             </p>
             <p>
-              攻撃重視は得点と失点が増え、守備重視は両方が減ります。交代はベンチの選手を選んで3人まで。大会の同点はPK戦です。試合後は元の先発編成に戻ります。
+              攻撃重視は得点と失点が増え、守備重視は両方が減ります。交代はベンチの選手を選んで{MATCH_MAX_SUBS}人まで。大会の同点はPK戦です。試合後は元の先発編成に戻ります。
             </p>
             <h3>大会と世代交代</h3>
             <p>

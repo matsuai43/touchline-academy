@@ -4192,3 +4192,22 @@ footer button::after,
 .ability-toggle {
   white-space: nowrap;
 }
+
+/* Wave2: 選手詳細ダイアログの積み残し解消。能力表をAbilitySheetへ、
+   英字の素質評価(A/B/C)をrank-badge(ギリシャ文字)へ置き換えた分の調整。 */
+.profile-summary {
+  grid-template-columns: repeat(2, 1fr);
+}
+.profile-potential-value {
+  display: flex;
+  align-items: center;
+}
+.squad-profile {
+  margin: 10px 0;
+}
+
+/* S3: 部員一覧の「起用」列。先発/ベンチ/控えの3状態を色分けする。 */
+.squad-role-bench {
+  color: var(--primary);
+  font-weight: 700;
+}

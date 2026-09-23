@@ -346,10 +346,10 @@ function peerPoints(seedNum: number, season: number, club: LeagueClub): number {
 function bRosterCount(s: State): number {
   return s.players.filter((p) => s.v3.squad.players[p.id]?.team === 'B').length;
 }
-// Aチームは最大20人まで（lib/squad.ts）。部員上限30人のもとでは B の人数は最大でも10人にしか
-// ならないため、しきい値は「フル11人」ではなく「そこそこ層がある」8人に置く。
+// Aチームは20人ちょうど（試合登録メンバー、lib/squad.ts）。部員上限50人なので B は最大30人になり、
+// 1チームを組める11人をしきい値にできる。
 export function bTeamEligible(s: State): boolean {
-  return s.reputation >= 55 && bRosterCount(s) >= 8;
+  return s.reputation >= 55 && bRosterCount(s) >= 11;
 }
 function bTeamStrength(s: State): number {
   const bs = s.players.filter((p) => s.v3.squad.players[p.id]?.team === 'B');

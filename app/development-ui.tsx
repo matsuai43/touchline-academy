@@ -23,7 +23,7 @@ function potentialRankId(potential: number): RankId {
   if (potential >= 1.5) return 'beta';
   return 'gamma';
 }
-function PotentialBadge({ potential }: { potential: number }) {
+export function PotentialBadge({ potential }: { potential: number }) {
   const r = RANK_BY_ID[potentialRankId(potential)];
   return (
     <span className={`rank-badge rank-${r.id} rank-md`} title={`成長の素質：${r.letter}（${r.reading}）`}>

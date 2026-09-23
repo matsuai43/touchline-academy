@@ -61,7 +61,7 @@ function toMatchDay(s: State, t: Training = 'rest') {
 
 void test('fresh game gives every player a detailed position, archetype and extra stats consistent with their base position', () => {
   const s = newGame('検証高校', 3);
-  assert.equal(Object.keys(s.v3.squad.players).length, 18);
+  assert.equal(Object.keys(s.v3.squad.players).length, 20);
   for (const p of s.players) {
     const ps = s.v3.squad.players[p.id];
     assert.ok(ps, `${p.id} に編成データがありません`);
@@ -81,7 +81,7 @@ void test('legacy save without v3 data is migrated deterministically, preserving
   const old = JSON.parse(JSON.stringify(s));
   delete old.v3;
   const loaded = validateSave(old);
-  assert.equal(Object.keys(loaded.v3.squad.players).length, 18);
+  assert.equal(Object.keys(loaded.v3.squad.players).length, 20);
   assert.deepEqual(
     loaded.players.map((p) => [p.name, p.stats, p.year, p.goals, p.appearances]),
     s.players.map((p) => [p.name, p.stats, p.year, p.goals, p.appearances]),

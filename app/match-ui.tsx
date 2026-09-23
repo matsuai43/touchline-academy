@@ -15,6 +15,7 @@ import {
   formationSlots,
   extraStatNames,
   SKILLS,
+  isBenchPlayer,
   type ExtraStat,
 } from '@/lib/squad';
 import {
@@ -24,6 +25,7 @@ import {
   clamp,
   tactics,
   stats,
+  MATCH_MAX_SUBS,
   type State,
   type Action,
   type Player,
@@ -238,7 +240,7 @@ function SubstitutionDialog({
   // 「開くたびに初期選択を反映する」という要件を effect なしで満たせる。
   const [outgoing, setOutgoing] = useState<number | null>(initialOutgoing);
   const [incoming, setIncoming] = useState<number | null>(initialIncoming);
-  const capReached = m.subs >= 3;
+  const capReached = m.subs >= MATCH_MAX_SUBS;
   const outPlayer = outgoing != null ? s.players.find((p) => p.id === outgoing) : null;
   const inPlayer = incoming != null ? s.players.find((p) => p.id === incoming) : null;
   // SubstitutionDialog は match-ui.tsx 側で m.done の間はそもそも描画されない
@@ -247,7 +249,7 @@ function SubstitutionDialog({
   // 確定できない理由。DADSの「押すと理由を直下の補足文で示す」に沿って、
   // 確定ボタンの近くに常時表示する（トーストを待たず先に伝える）。
   const blockReason = capReached
-    ? '交代枠（3人）を使い切りました。'
+    ? `交代枠（${MATCH_MAX_SUBS}人）を使い切りました。`
     : outgoing == null
       ? '下げる選手も選んでください。'
       : incoming == null
@@ -270,7 +272,9 @@ function SubstitutionDialog({
           下げる選手を選ぶと対象がハイライトされます。続けてベンチから投入する選手を選び、確認して確定してください。
         </DialogDescription>
         <div className="subs-counter-row">
-          <span className="subs-counter">交代 {m.subs} / 3</span>
+          <span className="subs-counter">
+            交代 {m.subs} / {MATCH_MAX_SUBS}
+          </span>
           {capReached && <span className="muted">交代枠を使い切りました。</span>}
         </div>
         <div className="sub-columns">
@@ -309,8 +313,9 @@ function SubstitutionDialog({
           <div className="sub-column">
             <h3>ベンチ</h3>
             <div className="sub-list">
+              {/* S3: 交代投入できるのはベンチ入り(9人)の選手のみ。ベンチ外は一覧に出さない。 */}
               {s.players
-                .filter((p) => !s.lineup.includes(p.id))
+                .filter((p) => isBenchPlayer(s, p.id))
                 .map((p) => {
                   const locked =
                     m.used.includes(p.id) || capReached || !!p.injury || outgoing == null;
@@ -822,29 +827,35 @@ export function MatchView({
               <MatchCommands s={s} run={run} />
               <div className="bench-head" id="match-bench">
                 <h3>交代</h3>
-                <span className="subs-counter">交代 {m.subs} / 3</span>
+                <span className="subs-counter">
+                  交代 {m.subs} / {MATCH_MAX_SUBS}
+                </span>
               </div>
               {/* 交代する選手を選ぶ、は「次の15分を進める」と同じ画面に同時に出る
                   ため、DADSの「塗り(Primary)は1画面1つ」に合わせて枠線(Secondary)に
-                  格下げした。交代枠3人使用後もダイアログ自体は開け、枠を使い切った
+                  格下げした。交代枠を使い切った後もダイアログ自体は開け、枠を使い切った
                   旨の案内とcapReachedによる見た目のトーン落としで示す（disabled は
                   使わない）。 */}
               <button
                 type="button"
                 className="secondary sub-open-btn"
-                aria-disabled={m.subs >= 3}
+                aria-disabled={m.subs >= MATCH_MAX_SUBS}
                 onClick={() => openSub({})}
               >
                 <ArrowRightLeft size={17} /> 交代する選手を選ぶ
               </button>
+              {/* S3: 交代できるのはベンチ入り(Aチームの先発以外9人)の選手のみ。
+                  Bチームや、Aチームでもベンチ外の選手は一覧にすら出さない。 */}
               <div className="bench">
                 {s.players
-                  .filter((p) => !s.lineup.includes(p.id))
+                  .filter((p) => isBenchPlayer(s, p.id))
                   .map((p) => (
                     <button
                       key={p.id}
                       type="button"
-                      aria-disabled={m.used.includes(p.id) || m.subs >= 3 || !!p.injury}
+                      aria-disabled={
+                        m.used.includes(p.id) || m.subs >= MATCH_MAX_SUBS || !!p.injury
+                      }
                       onClick={() => openSub({ incoming: p.id })}
                     >
                       <Portrait

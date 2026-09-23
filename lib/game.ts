@@ -26,6 +26,7 @@ import {
   formationSlots,
   positionFitMult,
   basePos,
+  isBenchPlayer,
   type SquadAction,
   type DetailPos,
 } from './squad.ts';
@@ -128,6 +129,10 @@ export type State = {
   // 月〜土6枠の既定練習メニュー。「試合日まで進める」はこのテンプレートで自動進行する。
   // State に持つ（セーブに含まれる）。旧セーブは validateSave() が既定値を補う。
   weeklyMenu: Training[];
+  // S1回帰修正: その週（月〜土）に実施した練習メニューの記録。週の練習日が終わる
+  // 時点（土曜実施後、日曜の試合／オフの前）で最多メニューを集計し trainSquadSkills /
+  // developmentWeek を週1回呼んだ後、空配列にリセットする。旧セーブは空配列で補う。
+  weekTrainings: Training[];
   players: Player[];
   lineup: number[];
   formation: Formation;
@@ -280,10 +285,13 @@ export const DEFAULT_WEEKLY_MENU: Training[] = [
   'balance',
   'rest',
 ];
-// 部員数の上限・下限。11人（先発フル）を割らず、30人（サッカーの部としての現実的な上限）を超えない。
-export const ROSTER_MIN = 11;
-export const ROSTER_MAX = 30;
-// 新入生の学年内ポジション構成（初期3学年18人と同じ比率: GK2:DF6:MF6:FW4）。
+// S3: 部員数の上限・下限。試合登録20人（先発11＋ベンチ9）をAチームがそのまま満たせる
+// よう最小20人、評判・施設が伸びた部の現実的な上限として最大50人。
+export const ROSTER_MIN = 20;
+export const ROSTER_MAX = 50;
+// S3: 1試合あたりの交代上限。旧仕様(3人)の途中セーブも読み込める（validateSaveが吸収）。
+export const MATCH_MAX_SUBS = 5;
+// 新入生の学年内ポジション構成（初期3学年20人と概ね同じ比率: GK2:DF6:MF6:FW4）。
 // 卒業で空いた枠を超えて部員を増やすときの「純増分」はここから重み付きで選ぶ。
 const INTAKE_POS_POOL: Position[] = [
   'GK',
@@ -384,8 +392,10 @@ function makePlayer(s: State, year: number, pos: Position): Player {
   ] += 9;
   return p;
 }
+// S3: 先発（＝試合登録20人の一部）はAチームの選手からのみ選ぶ。Aチームは常に
+// 20人以上（ROSTER_MIN=20）いるので11人を選べないことはない。
 export function autoLineup(s: State) {
-  const left = [...s.players];
+  const left = s.players.filter((p) => s.v3?.squad?.players[p.id]?.team === 'A');
   s.lineup = formationSlots(s.formation).map((slot) => {
     left.sort((a, b) => effective(s, b, slot) - effective(s, a, slot));
     return left.shift()!.id;
@@ -405,6 +415,7 @@ export function newGame(
     week: 0,
     day: 0,
     weeklyMenu: [...DEFAULT_WEEKLY_MENU],
+    weekTrainings: [],
     players: [],
     lineup: [],
     formation: '4-3-3',
@@ -425,13 +436,14 @@ export function newGame(
     seasonWins: 0,
     seasonGoals: 0,
     best: '大会未出場',
-    feed: ['新しい春。18人の部員と、全国への一歩を踏み出そう。'],
+    feed: ['新しい春。20人の部員と、全国への一歩を踏み出そう。'],
     nextId: 1,
   };
+  // S3: 新規ゲームは部員20人（各学年6〜7人、試合登録20人＝先発11＋ベンチ9をそのまま満たす）。
   const positions: Position[][] = [
-    ['GK', 'DF', 'DF', 'MF', 'MF', 'FW'],
-    ['DF', 'DF', 'MF', 'MF', 'FW', 'FW'],
-    ['GK', 'DF', 'DF', 'MF', 'MF', 'FW'],
+    ['GK', 'DF', 'DF', 'DF', 'MF', 'MF', 'FW'],
+    ['DF', 'DF', 'MF', 'MF', 'MF', 'FW', 'FW'],
+    ['GK', 'DF', 'DF', 'MF', 'FW', 'FW'],
   ];
   for (let y = 1; y <= 3; y++)
     for (const pos of positions[y - 1]) s.players.push(makePlayer(s, y, pos));
@@ -443,11 +455,17 @@ export function newGame(
 export function dateLabel(s: State) {
   return `${((Math.floor(s.week / 4) + 3) % 12) + 1}月 第${(s.week % 4) + 1}週 ${DOW_NAMES[s.day]}曜`;
 }
-// 新入生の人数。学校評判と施設で 6〜12人の目安に決まり、部員が上限30人を超えないよう
-// クランプする（下限も ROSTER_MIN を割らないように補う）。
-function intakeSize(s: State, remaining: number): number {
-  const base = 6 + Math.round(s.reputation / 17) + (s.facilities - 1);
-  const n = clamp(Math.round(base + rand(s) * 4 - 1), 6, 12);
+// S3: 新入生の人数。評判が低いと卒業人数の補充程度（部員20人前後を維持）、評判が
+// 高いと年12〜20人まで純増する。施設は高評判側の伸びを少し後押しする程度。
+// 上限50・下限20（ROSTER_MIN/MAX）でクランプする。
+function intakeSize(s: State, remaining: number, gradCount: number): number {
+  const rep = clamp(s.reputation, 0, 100) / 100;
+  const low = gradCount; // 評判0想定: 卒業人数の補充のみ
+  const high = 12 + Math.round(rep * 8) + (s.facilities - 1); // 評判1想定: 12〜20+施設分
+  const base = low + (high - low) * rep;
+  // 下限側は ROSTER_MIN の「片側だけ跳ね返す」floor（後段）にゆらぎが吸収されて
+  // 部員が漸増し続けないよう、ゆらぎは小さめ（±1）にする。
+  const n = clamp(Math.round(base + rand(s) * 2 - 1), 0, 20);
   const floor = Math.max(0, ROSTER_MIN - remaining);
   const ceil = Math.max(0, ROSTER_MAX - remaining);
   return Math.min(Math.max(n, floor), ceil);
@@ -471,7 +489,7 @@ function finishWeek(s: State) {
       p.injury = 0;
     });
     // 卒業した枠は同じポジションで補充し、評判・施設で伸びた分は幅広いポジションで純増させる。
-    const n = intakeSize(s, s.players.length);
+    const n = intakeSize(s, s.players.length, grads.length);
     const gradPos = grads.map((p) => p.pos);
     const fresh: Player[] = [];
     for (let i = 0; i < n; i++)
@@ -509,9 +527,10 @@ const DAILY_INJURY_CHANCE = 1 - Math.pow(0.87, 1 / 6);
 // 練習日=旧・週あたり疲労の1/6を加算しつつ自然回復-3、休養日は-15固定）。
 // けがの回復も旧・週あたり回復量を7日で割った量にする。
 // スキル習得(trainSquadSkills)と半年方針の進捗(developmentWeek)は週単位の
-// 仕組み（streak・8回で達成など）のままなので、週の最初の日（day===0）にのみ
-// 呼ぶ（lib/squad.ts は担当外のため、日次×6回呼ぶと同じ週内で無関係に
-// 何度も抽選が走ってしまうのを避ける）。
+// 仕組み（streak・8回で達成など）のままなので、週の練習日（月〜土）が終わる
+// 時点で週1回だけ呼ぶ（finishDay 参照）。日次×6回呼ぶと同じ週内で無関係に
+// 何度も抽選が走ってしまうのを避けるため、実施したメニューは s.weekTrainings に
+// 記録しておき、週末にまとめて集計する。
 function advanceTrainingDay(s: State, tr: Training): { injured: boolean } {
   const t = training[tr];
   const isRest = tr === 'rest';
@@ -545,23 +564,50 @@ function advanceTrainingDay(s: State, tr: Training): { injured: boolean } {
     s.cohesion + (tr === 'possession' ? 4 : isRest ? -1 : 1) / 6,
   );
   s.morale = clamp(s.morale + (isRest ? 5 : -1) / 6);
-  if (s.day === 0) {
-    s.funds += 2;
-    trainSquadSkills(s, tr);
-    developmentWeek(s, tr);
-  }
+  if (s.day === 0) s.funds += 2;
+  s.weekTrainings.push(tr);
   log(
     s,
     `${dateLabel(s)}：${t.name}。${isRest ? '選手の疲労が回復しました。' : `チーム全体で能力が計${Math.round(growth)}成長。`}`,
   );
   return { injured };
 }
+// 回帰修正: その週（月〜土）に実施したメニューのうち、休養を除いて最も多く
+// 実施したものを返す（同数なら後に実施した方）。全日休養なら 'rest'。
+function weeklyPrimaryMenu(s: State): Training {
+  const counts = new Map<Training, number>();
+  const lastIndex = new Map<Training, number>();
+  s.weekTrainings.forEach((t, i) => {
+    if (t === 'rest') return;
+    counts.set(t, (counts.get(t) ?? 0) + 1);
+    lastIndex.set(t, i);
+  });
+  let best: Training | null = null;
+  let bestCount = -1;
+  let bestLast = -1;
+  for (const [t, c] of counts) {
+    const li = lastIndex.get(t)!;
+    if (c > bestCount || (c === bestCount && li > bestLast)) {
+      best = t;
+      bestCount = c;
+      bestLast = li;
+    }
+  }
+  return best ?? 'rest';
+}
 // S1: 1日ぶんの処理の後に呼ぶ。day を進め、日曜(6)に達したら試合の有無を判定する。
 // 試合が組まれていればその日で止まり（s.pending）、無ければ即座に週を終えて
 // 翌週の月曜(day 0)へ進む（従来どおりクラブイベントは7週ごとに判定）。
+// 回帰修正: day が6（日曜）に達した時点＝週の練習日(月〜土)が終わった時点で、
+// trainSquadSkills / developmentWeek を週1回だけ呼ぶ（試合の有無に関わらず、
+// 日曜の試合／オフより前）。
 function finishDay(s: State) {
   s.day++;
   if (s.day === 6) {
+    const menu = weeklyPrimaryMenu(s);
+    trainSquadSkills(s, menu);
+    developmentWeek(s, menu);
+    s.weekTrainings = [];
     const f = competitionFixture(s, s.week);
     if (f) {
       s.pending = f;
@@ -720,13 +766,17 @@ export function act(old: State, a: Action): State {
       throw Error('選手を選び直してください。');
     const idx = s.lineup.indexOf(a.id);
     if (s.match) {
+      // S3: 交代は最大5人。ベンチ入り（Aチームの先発以外9人）の選手しか投入できない
+      // （Bチームの選手や、ベンチ外のAチームの選手は交代投入できない）。
+      const isBench = isBenchPlayer(s, a.id);
       if (
         s.match.done ||
-        s.match.subs >= 3 ||
+        s.match.subs >= MATCH_MAX_SUBS ||
         s.match.used.includes(a.id) ||
-        incoming.injury
+        incoming.injury ||
+        !isBench
       )
-        throw Error('交代は未出場の健康な選手と3人までです。');
+        throw Error(`交代はベンチの健康な選手と${MATCH_MAX_SUBS}人までです。`);
       if (s.match.details.commands.player === s.lineup[a.index]) {
         s.match.details.commands.player = null;
         s.match.details.commands.role = 'free';
@@ -736,7 +786,12 @@ export function act(old: State, a: Action): State {
       s.match.logs.unshift(
         `${s.match.minute}′ 交代：${s.players.find((p) => p.id === s.lineup[a.index])?.name} → ${incoming.name}`,
       );
-    } else if (idx >= 0) s.lineup[idx] = s.lineup[a.index];
+    } else {
+      // S3: 試合前の先発編成はAチーム（試合登録20人）の選手からのみ選べる。
+      if (s.v3.squad.players[a.id]?.team !== 'A')
+        throw Error('先発にはAチームの選手のみ指定できます。');
+      if (idx >= 0) s.lineup[idx] = s.lineup[a.index];
+    }
     s.lineup[a.index] = a.id;
     return s;
   }
@@ -978,6 +1033,9 @@ export function validateSave(x: unknown): State {
   // 日曜(6)扱いにする（pendingは day===6 の時にしか立たないため）。
   if (s.day === undefined) s.day = s.pending ? 6 : 0;
   if (s.weeklyMenu === undefined) s.weeklyMenu = [...DEFAULT_WEEKLY_MENU];
+  // 回帰修正: 週内の実施記録が無いセーブ（導入前、または pending 中で既に
+  // リセット済み）は空配列で補う。
+  if (s.weekTrainings === undefined) s.weekTrainings = [];
   const num = (v: unknown, min: number, max: number) =>
     typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
   if (
@@ -994,6 +1052,9 @@ export function validateSave(x: unknown): State {
     !Array.isArray(s.weeklyMenu) ||
     s.weeklyMenu.length !== 6 ||
     s.weeklyMenu.some((t) => !(t in training)) ||
+    !Array.isArray(s.weekTrainings) ||
+    s.weekTrainings.length > 6 ||
+    s.weekTrainings.some((t) => !(t in training)) ||
     !Array.isArray(s.players) ||
     s.players.length < ROSTER_MIN ||
     s.players.length > ROSTER_MAX ||
@@ -1096,7 +1157,7 @@ export function validateSave(x: unknown): State {
       m.minute % 15 !== 0 ||
       !num(m.home, 0, 100) ||
       !num(m.away, 0, 100) ||
-      !num(m.subs, 0, 3) ||
+      !num(m.subs, 0, MATCH_MAX_SUBS) ||
       !Array.isArray(m.logs) ||
       m.logs.length > 100 ||
       m.logs.some((t) => typeof t !== 'string' || t.length > 500) ||
@@ -1105,7 +1166,7 @@ export function validateSave(x: unknown): State {
       new Set(m.original).size !== 11 ||
       m.original.some((id) => !ids.includes(id)) ||
       !Array.isArray(m.used) ||
-      m.used.length > 14 ||
+      m.used.length > 11 + MATCH_MAX_SUBS ||
       m.used.some((id) => !ids.includes(id)) ||
       ![m.shots, m.xg].every(
         (a) =>

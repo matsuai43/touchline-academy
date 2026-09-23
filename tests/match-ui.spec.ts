@@ -40,7 +40,7 @@ test('substitution dialog: pick outgoing then incoming, cancel resets, confirm a
   page.on('pageerror', (e) => errors.push(e.message));
   await withSave(page, startedMatch('交代検証高校', 4242));
   await page.goto('/');
-  await expect(page.getByText('交代 0 / 3')).toBeVisible();
+  await expect(page.getByText('交代 0 / 5')).toBeVisible();
 
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
   const overlay = page.locator('[data-slot="dialog-overlay"]');
@@ -70,27 +70,27 @@ test('substitution dialog: pick outgoing then incoming, cancel resets, confirm a
   const incomingName = await benchPick.locator('.sub-pick-name').innerText();
   await page.getByRole('button', { name: 'この交代を確定' }).click();
   await expect(overlay).toHaveCount(0);
-  await expect(page.getByText('交代 1 / 3')).toBeVisible();
+  await expect(page.getByText('交代 1 / 5')).toBeVisible();
   // 交代した選手が、今度はピッチ側の一覧に現れる。
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
   await expect(columns.nth(0).getByText(incomingName, { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
-test('substitution cap: bench entries mark aria-disabled once used, and the trigger marks aria-disabled at 3 subs (but stays pressable and explains why)', async ({
+test('substitution cap: bench entries mark aria-disabled once used, and the trigger marks aria-disabled at 5 subs (but stays pressable and explains why)', async ({
   page,
 }) => {
   await withSave(page, startedMatch('交代上限検証高校', 777));
   await page.goto('/');
   const overlay = page.locator('[data-slot="dialog-overlay"]');
-  for (let n = 0; n < 3; n++) {
+  for (let n = 0; n < 5; n++) {
     await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
     const columns = page.locator('.sub-column');
     await columns.nth(0).locator('.sub-pick').first().click();
     await columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first().click();
     await page.getByRole('button', { name: 'この交代を確定' }).click();
     await expect(overlay).toHaveCount(0);
-    await expect(page.getByText(`交代 ${n + 1} / 3`)).toBeVisible();
+    await expect(page.getByText(`交代 ${n + 1} / 5`)).toBeVisible();
   }
   // D2a: DADSはdisabledを避ける方針のため、交代枠を使い切った後も
   // 「交代する選手を選ぶ」ボタンは押せる状態のまま（aria-disabled="true"で見た目だけ
@@ -113,11 +113,11 @@ test('substitution cap: bench entries mark aria-disabled once used, and the trig
   await expect(confirmBtn).toHaveAttribute('aria-disabled', 'true');
   // 交代枠を使い切っている間は、入れる選手を選んでいなくても理由は
   // 「枠を使い切った」が優先して出る（blockReasonの判定順）。
-  await expect(page.getByText('交代枠（3人）を使い切りました。')).toBeVisible();
+  await expect(page.getByText('交代枠（5人）を使い切りました。')).toBeVisible();
   await confirmBtn.click({ force: true });
-  // 押しても交代は成立しない（枠は3のまま、ダイアログも開いたまま）。
+  // 押しても交代は成立しない（枠は5のまま、ダイアログも開いたまま）。
   await expect(overlay).toHaveCount(1);
-  await expect(page.getByText('交代 3 / 3').first()).toBeVisible();
+  await expect(page.getByText('交代 5 / 5').first()).toBeVisible();
 });
 
 test('post-match summary: shows MOTM, timeline, stat comparison and per-player growth, then returns to the clubhouse', async ({

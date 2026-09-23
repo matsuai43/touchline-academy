@@ -14,14 +14,13 @@ import { Portrait } from './development-ui';
 import { personalities } from '@/lib/development';
 import { type State, type Action, type Player, type Position, type Stat } from '@/lib/game';
 import {
-  extraStatNames,
   squadOverall,
+  isBenchPlayer,
   type ExtraStat,
   type PlayerSquad,
 } from '@/lib/squad';
 import {
   AbilitySheet,
-  AbilityRow,
   PositionBadge,
   ArchetypeBadge,
   RankBadge,
@@ -65,30 +64,15 @@ function statValue(p: Player, ps: PlayerSquad, key: Stat | ExtraStat): number {
   return p.stats[key as Stat];
 }
 
+// ポジション・アーキタイプ・能力・特殊能力は AbilitySheet（app/ability-sheet.tsx）に
+// 一本化した。ここでは AbilitySheet に含まれない「Aチーム/Bチーム」の所属表示のみ行う
+// （A/Bは評価ではなくチーム分けなので、ギリシャ文字ランクの対象にはしない）。
 export function SquadProfile({ ps }: { ps: PlayerSquad }) {
   return (
     <div className="squad-profile">
-      <div className="squad-profile-head">
-        <PositionBadge detail={ps.detail} />
-        <ArchetypeBadge archetype={ps.archetype} />
-        <span className={`team-badge team-${ps.team}`}>
-          {ps.team}チーム{ps.teamManual ? '・指定' : ''}
-        </span>
-      </div>
-      <div className="ability-sheet-grid ability-sheet-grid-compact">
-        {(Object.keys(extraStatNames) as ExtraStat[]).map((k) => (
-          <AbilityRow key={k} label={extraStatNames[k]} value={ps[k]} />
-        ))}
-      </div>
-      <div className="squad-skills">
-        <h4>
-          特殊能力 <small className="muted">{ps.skills.length} / 5</small>
-          {ps.negatives.length > 0 && (
-            <small className="muted"> ・マイナス {ps.negatives.length} / 2</small>
-          )}
-        </h4>
-        <SkillChips ps={ps} empty="まだ特殊能力を習得していません。練習の継続や試合の経験で身につきます。" />
-      </div>
+      <span className={`team-badge team-${ps.team}`}>
+        {ps.team}チーム{ps.teamManual ? '・指定' : ''}
+      </span>
     </div>
   );
 }
@@ -303,8 +287,24 @@ export function SquadPanel({
                         <span className={`team-badge team-${ps.team}`}>{ps.team}</span>
                       </TableCell>
                       <TableCell>
-                        <span className={s.lineup.includes(p.id) ? 'lime' : 'muted'}>
-                          {s.lineup.includes(p.id) ? '先発' : '控え'}
+                        {/* S3: 試合登録20人＝先発11＋ベンチ9。Aチームは常にちょうど20人
+                            なので、先発以外のAチームの選手は自動的に全員ベンチ入りになる
+                            （手動の入れ替えは先発の起用先を変えることで行う＝既存の
+                            「選手を押して起用先を選ぶ」操作）。Bチームは常に控え。 */}
+                        <span
+                          className={
+                            s.lineup.includes(p.id)
+                              ? 'lime'
+                              : isBenchPlayer(s, p.id)
+                                ? 'squad-role-bench'
+                                : 'muted'
+                          }
+                        >
+                          {s.lineup.includes(p.id)
+                            ? '先発'
+                            : isBenchPlayer(s, p.id)
+                              ? 'ベンチ'
+                              : '控え'}
                         </span>
                       </TableCell>
                       <TableCell>

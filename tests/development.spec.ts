@@ -132,7 +132,8 @@ test('v2 reduced motion and legacy saves retain career and assign unique portrai
     page.getByRole('heading', { name: /継承テスト高校/ }),
   ).toBeVisible();
   await page.getByRole('tab', { name: '選手・編成' }).click();
-  await expect(page.locator('.player-link .portrait')).toHaveCount(18);
+  // S3: 新規ゲームの部員数は20人（旧18人から拡大）。
+  await expect(page.locator('.player-link .portrait')).toHaveCount(20);
   await page.locator('.player-link').first().click();
   await expect(page.getByText('この選手との思い出 (0)')).toBeVisible();
   await page.keyboard.press('Escape');

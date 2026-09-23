@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {newGame,act,validateSave,overall,strength,roster,autoLineup,slots,ROSTER_MIN,ROSTER_MAX,type State,type Training} from '../lib/game.ts';
-import {formationSlots,positionFitMult,basePos} from '../lib/squad.ts';
+import {formationSlots,positionFitMult,basePos,isBenchPlayer} from '../lib/squad.ts';
 import {getCurrentLifeEvent} from '../lib/school-life.ts';
 import {readCompetition,DISTRICTS} from '../lib/competition.ts';
 
@@ -35,17 +35,80 @@ function toMatchDay(s:State,t:Training='rest'){
   }
   return s;
 }
-void test('18 players, three balanced classes, unique starting eleven',()=>{const s=newGame('試験高校',42);assert.equal(s.players.length,18);assert.equal(new Set(s.lineup).size,11);for(const y of [1,2,3])assert.equal(s.players.filter(p=>p.year===y).length,6);assert.deepEqual(validateSave(JSON.parse(JSON.stringify(s))),s);});
+// S3: 新規ゲームは部員20人（試合登録20人＝先発11＋ベンチ9をAチームがそのまま満たす）。
+void test('20 players, three balanced classes, unique starting eleven',()=>{const s=newGame('試験高校',42);assert.equal(s.players.length,20);assert.equal(new Set(s.lineup).size,11);const byYear=[1,2,3].map(y=>s.players.filter(p=>p.year===y).length);assert.deepEqual(byYear,[7,7,6]);assert.deepEqual(validateSave(JSON.parse(JSON.stringify(s))),s);});
 // S1: 1回のtrain操作は「1日」になった。週0はU18リーグの試合が組まれているが、
 // 月曜1日分の練習だけでは日曜(試合日)にまだ届かないため、その場ではpendingにならない。
 void test('training grows players; focused training grows faster; original stays immutable',()=>{const s=newGame('',42),id=s.players[0].id;const focused=act(s,{type:'focus',id});const a=act(s,{type:'train',training:'attack'}),b=act(focused,{type:'train',training:'attack'});assert.equal(s.week,0);assert.equal(s.day,0);assert.equal(a.week,0);assert.equal(a.day,1,'1回のtrainは1日だけ進む');assert.equal(a.pending,null,'月曜1日だけでは日曜の試合にまだ届かない');const gain=a.players[0].stats.shoot-s.players[0].stats.shoot;assert.ok(gain>0);assert.ok(Math.abs((b.players[0].stats.shoot-s.players[0].stats.shoot)/gain-1.5)<.01);});
 void test('rest restores fatigue for one day, and training cannot skip pending fixtures',()=>{let s=newGame('',12);s.players.forEach(p=>p.fatigue=80);s=act(s,{type:'train',training:'rest'});assert.equal(s.players[0].fatigue,65,'休養1日は-15');if(s.pending)s=play(s);s.week=3;s=toMatchDay(s,'balance');assert.ok(s.pending);assert.throws(()=>act(s,{type:'train',training:'balance'}));});
-void test('match commands, substitution limit and save/resume at halftime',()=>{let s=newGame('',55);s.week=3;s=toMatchDay(s,'rest');s=act(s,{type:'start'});const original=[...s.lineup];for(let i=0;i<3;i++){const p=s.players.find(p=>!s.match!.used.includes(p.id))!;s=act(s,{type:'swap',index:i+1,id:p.id});}assert.equal(s.match!.subs,3);assert.throws(()=>act(s,{type:'swap',index:5,id:s.players.find(p=>!s.match!.used.includes(p.id))!.id}));for(let i=0;i<3;i++)s=act(s,{type:'segment'});assert.equal(s.match!.minute,45);const loaded=validateSave(JSON.parse(JSON.stringify(s)));assert.deepEqual(act(s,{type:'segment'}),act(loaded,{type:'segment'}));while(!s.match!.done)s=act(s,{type:'segment'});assert.equal(s.records.games,1);assert.throws(()=>act(s,{type:'segment'}));s=act(s,{type:'finish'});assert.deepEqual(s.lineup,original);assert.equal(s.week,4);assert.equal(s.day,0);});
+// S3: 交代は最大5人まで。交代投入できるのはベンチ入り（Aチームの先発以外9人）の選手のみ。
+void test('match commands, substitution limit (5) restricted to bench players, and save/resume at halftime',()=>{
+  let s=newGame('',55);
+  // 新規ゲームは部員ちょうど20人でAチーム=全員になりうるため、Bチームを確実に
+  // 1人用意してから試合に入る（ベンチ外の交代投入拒否を検証するため）。
+  const bId=s.players[0].id;
+  s=act(s,{type:'squadTeam',id:bId,team:'B'});
+  s.week=3;
+  s=toMatchDay(s,'rest');
+  s=act(s,{type:'start'});
+  const original=[...s.lineup];
+  const pickBench=(st:State)=>st.players.find(p=>!st.match!.used.includes(p.id)&&isBenchPlayer(st,p.id))!;
+  for(let i=0;i<5;i++){const p=pickBench(s);s=act(s,{type:'swap',index:i+1,id:p.id});}
+  assert.equal(s.match!.subs,5);
+  assert.throws(()=>act(s,{type:'swap',index:6,id:pickBench(s).id}),'6人目の交代は拒否される');
+  assert.equal(s.v3.squad.players[bId].team,'B');
+  assert.throws(()=>act(s,{type:'swap',index:0,id:bId}),'ベンチ外(Bチーム)は交代投入できない');
+  for(let i=0;i<3;i++)s=act(s,{type:'segment'});
+  assert.equal(s.match!.minute,45);
+  const loaded=validateSave(JSON.parse(JSON.stringify(s)));
+  assert.deepEqual(act(s,{type:'segment'}),act(loaded,{type:'segment'}));
+  while(!s.match!.done)s=act(s,{type:'segment'});
+  assert.equal(s.records.games,1);
+  assert.throws(()=>act(s,{type:'segment'}));
+  s=act(s,{type:'finish'});
+  assert.deepEqual(s.lineup,original);
+  assert.equal(s.week,4);
+  assert.equal(s.day,0);
+});
+// S3: 上限3人の時代の途中セーブ（subs===3、旧仕様の m.used）も読み込める。
+void test('S3: legacy mid-match save from the old 3-substitution era still loads',()=>{
+  let s=newGame('',77);
+  s.week=3;
+  s=toMatchDay(s,'rest');
+  s=act(s,{type:'start'});
+  const legacy=JSON.parse(JSON.stringify(s));
+  legacy.match.subs=3;
+  legacy.match.used=[...legacy.match.original];
+  const loaded=validateSave(legacy);
+  assert.equal(loaded.match!.subs,3);
+  // 旧セーブでも、5人までの残り2人はまだ交代できる。
+  const p=loaded.players.find(p=>!loaded.match!.used.includes(p.id)&&isBenchPlayer(loaded,p.id))!;
+  const after=act(loaded,{type:'swap',index:1,id:p.id});
+  assert.equal(after.match!.subs,4);
+});
 void test('graduation keeps the roster within bounds, advances lower classes and records history',()=>{let s=newGame('',91);const graduates=s.players.filter(p=>p.year===3).map(p=>p.id),younger=s.players.filter(p=>p.year===1).map(p=>p.id);s.week=47;s=step(s,'rest');assert.equal(s.season,2);assert.equal(s.week,0);assert.equal(s.history.length,1);assert.equal(s.history[0].graduates.length,6);assert.ok(graduates.every(id=>!s.players.some(p=>p.id===id)));assert.ok(younger.every(id=>s.players.find(p=>p.id===id)?.year===2));assert.equal(new Set(s.players.map(p=>p.id)).size,s.players.length);assert.ok(s.players.length>=ROSTER_MIN&&s.players.length<=ROSTER_MAX,`roster size ${s.players.length} out of [${ROSTER_MIN},${ROSTER_MAX}]`);const freshmen=s.players.filter(p=>p.year===1);assert.ok(freshmen.length>=6&&freshmen.length<=12,`freshman intake ${freshmen.length} out of 6..12`);for(const y of [1,2,3])assert.ok(s.players.some(p=>p.year===y),`grade ${y} is empty`);validateSave(s);});
 void test('formation fit, fatigue, and facilities affect gameplay',()=>{let s=newGame('',41);const base=strength(s);s.players.forEach(p=>p.fatigue=90);assert.ok(strength(s)<base);s=act(s,{type:'formation',formation:'3-4-3'});assert.equal(s.lineup.length,11);s.funds=100;s=act(s,{type:'upgrade'});assert.equal(s.facilities,2);assert.equal(s.funds,60);assert.throws(()=>act({...s,funds:0},{type:'upgrade'}));});
 void test('malformed and out of range save files rejected',()=>{for(const bad of [null,{}, {...newGame('',12),week:48},{...newGame('',12),players:[]},{...newGame('',12),lineup:Array(11).fill(1)},{...newGame('',12),formation:'0-0-0'},{...newGame('',12),funds:Infinity},{...newGame('',12),history:[{}]},{...newGame('',12),day:7},{...newGame('',12),weeklyMenu:['rest']}])assert.throws(()=>validateSave(bad));});
-void test('10 seasons simulate without broken states and save roundtrips',()=>{let s=newGame('試験高校',789);let actions=0;let maxRoster=s.players.length;while(s.season<=10){const f=s.players.reduce((a,p)=>a+p.fatigue,0)/s.players.length;s=step(s,f>35?'rest':s.week%3===0?'possession':'balance');if(s.funds>=s.facilities*40&&s.facilities<5)s=act(s,{type:'upgrade'});autoLineup(s);validateSave(JSON.parse(JSON.stringify(s)));assert.ok(s.players.every(p=>overall(p)<=99));assert.ok(s.players.length>=ROSTER_MIN&&s.players.length<=ROSTER_MAX);maxRoster=Math.max(maxRoster,s.players.length);actions++;assert.ok(actions<600);}assert.equal(s.history.length,10);assert.ok(s.records.games>=60);assert.ok(maxRoster>18,'roster should grow beyond the initial 18 over 10 seasons');});
-void test('10 seasons keep the roster at or below 30 with all three grades populated at every graduation',()=>{for(const seed of [3,17,54,101]){let s=newGame('',seed);let actions=0;const rosterHistory:number[]=[s.players.length];while(s.season<=10){const before=s.season;s=step(s,s.week%2===0?'balance':'rest');if(s.season!==before){assert.ok(s.players.length<=ROSTER_MAX,`seed ${seed}: roster ${s.players.length} exceeded ${ROSTER_MAX}`);assert.ok(s.players.length>=ROSTER_MIN,`seed ${seed}: roster ${s.players.length} below ${ROSTER_MIN}`);for(const y of [1,2,3])assert.ok(s.players.some(p=>p.year===y),`seed ${seed}: grade ${y} empty after graduation`);assert.equal(new Set(s.players.map(p=>p.id)).size,s.players.length,`seed ${seed}: duplicate player ids`);rosterHistory.push(s.players.length);}actions++;assert.ok(actions<600);}assert.ok(rosterHistory.every(n=>n>=ROSTER_MIN&&n<=ROSTER_MAX));}});
+void test('10 seasons simulate without broken states and save roundtrips',()=>{let s=newGame('試験高校',789);let actions=0;let maxRoster=s.players.length;while(s.season<=10){const f=s.players.reduce((a,p)=>a+p.fatigue,0)/s.players.length;s=step(s,f>35?'rest':s.week%3===0?'possession':'balance');if(s.funds>=s.facilities*40&&s.facilities<5)s=act(s,{type:'upgrade'});autoLineup(s);validateSave(JSON.parse(JSON.stringify(s)));assert.ok(s.players.every(p=>overall(p)<=99));assert.ok(s.players.length>=ROSTER_MIN&&s.players.length<=ROSTER_MAX);maxRoster=Math.max(maxRoster,s.players.length);actions++;assert.ok(actions<600);}assert.equal(s.history.length,10);assert.ok(s.records.games>=60);assert.ok(maxRoster>20,'roster should grow beyond the initial 20 over 10 seasons');});
+// S3: 新入生の人数は評判で決まる。評判を固定して10シーズン進め、評判が高いほど
+// 部員が大きく増える（低評判は20人前後を維持）ことを確認する。
+void test('S3: 10 seasons — roster stays within [ROSTER_MIN,ROSTER_MAX], and higher reputation grows the squad more than low reputation',()=>{
+  function runWithFixedReputation(repTarget:number,seed:number):number{
+    let s=newGame('',seed);
+    s.reputation=repTarget;
+    while(s.season<=10){
+      s=step(s,'balance');
+      s.reputation=repTarget;
+      assert.ok(s.players.length>=ROSTER_MIN&&s.players.length<=ROSTER_MAX,`roster ${s.players.length} out of [${ROSTER_MIN},${ROSTER_MAX}]`);
+    }
+    return s.players.length;
+  }
+  const low=runWithFixedReputation(5,201);
+  const high=runWithFixedReputation(95,201);
+  assert.ok(low<=26,`low reputation should keep the roster close to ${ROSTER_MIN} (got ${low})`);
+  assert.ok(high>low,`high-reputation roster (${high}) should exceed low-reputation roster (${low})`);
+});
+void test('10 seasons keep the roster at or below 50 with all three grades populated at every graduation',()=>{for(const seed of [3,17,54,101]){let s=newGame('',seed);let actions=0;const rosterHistory:number[]=[s.players.length];while(s.season<=10){const before=s.season;s=step(s,s.week%2===0?'balance':'rest');if(s.season!==before){assert.ok(s.players.length<=ROSTER_MAX,`seed ${seed}: roster ${s.players.length} exceeded ${ROSTER_MAX}`);assert.ok(s.players.length>=ROSTER_MIN,`seed ${seed}: roster ${s.players.length} below ${ROSTER_MIN}`);for(const y of [1,2,3])assert.ok(s.players.some(p=>p.year===y),`seed ${seed}: grade ${y} empty after graduation`);assert.equal(new Set(s.players.map(p=>p.id)).size,s.players.length,`seed ${seed}: duplicate player ids`);rosterHistory.push(s.players.length);}actions++;assert.ok(actions<600);}assert.ok(rosterHistory.every(n=>n>=ROSTER_MIN&&n<=ROSTER_MAX));}});
 void test('formation slots require detail positions with staged fit penalties (exact > same-base mismatch > cross-base mismatch)',()=>{for(const f of ['4-3-3','4-4-2','3-4-3'] as const){const ds=formationSlots(f);assert.equal(ds.length,11);assert.deepEqual(ds.map(basePos),slots(f));}
   // 純粋関数レベル: 完全一致=1.0、同じ系統内=0.92、系統またぎ=0.8、GKがからむと0.48
   assert.equal(positionFitMult('CB','CB'),1);
@@ -115,6 +178,41 @@ void test('S1: save migration backfills day and weeklyMenu for legacy saves',()=
   assert.equal(loaded.day,0);
   assert.equal(loaded.weeklyMenu.length,6);
   for(const t of loaded.weeklyMenu)assert.ok(['balance','attack','possession','defense','physical','rest'].includes(t));
+});
+
+// S1: 週間メニュー（曜日ごとに異なる練習）どおりに1週間進める。step()は毎日同じ
+// メニューを使うため、月曜が休養で他の日が別メニューという回帰の検証には使えない。
+function stepMenu(s:State){
+  const week0=s.week;let guard=0;
+  while(s.week===week0&&guard++<20){
+    if(s.event)s=act(s,{type:'event',choice:'team'});
+    s=resolveLife(s);
+    if(s.pending){s=play(s);continue;}
+    s=act(s,{type:'train',training:s.weeklyMenu[s.day]});
+  }
+  return s;
+}
+// 回帰テスト: advanceTrainingDayがtrainSquadSkills/developmentWeekを「月曜(day===0)の
+// 練習内容」だけで呼んでいた不具合（既定の週間メニューの月曜は休養のため、方針の進捗も
+// スキル習得の継続カウントも一切進まなかった）の修正確認。月曜休養＋火〜金シュート練習
+// （週間メニュー: 休養/シュート/シュート/シュート/シュート/休養）を複数週続けると、
+// (a) シュートを含む半年方針の進捗が週ごとに1増え、(b) 選手の練習継続カウント(streak)も
+// 週ごとに1増えることを確認する。
+void test('regression: half-year plan progress and skill streak advance weekly even though the default Monday menu is rest',()=>{
+  let s=newGame('回帰検証高校',21);
+  s=act(s,{type:'setMenu',menu:['rest','attack','attack','attack','attack','rest']});
+  s=act(s,{type:'plan',plan:'attack'});
+  assert.equal(s.development.plan,'attack');
+  assert.equal(s.development.progress,0);
+  const pid=s.players[0].id;
+  assert.equal(s.v3.squad.players[pid].streakCount,0);
+  for(let w=1;w<=3;w++){
+    s=stepMenu(s);
+    assert.equal(s.development.progress,w,`week ${w}: half-year plan progress should advance by exactly 1 per week`);
+    const ps=s.v3.squad.players[pid];
+    assert.equal(ps.streakMenu,'attack');
+    assert.equal(ps.streakCount,w,`week ${w}: skill training streak should advance by exactly 1 per week`);
+  }
 });
 
 // ---------------------------------------------------------------------------

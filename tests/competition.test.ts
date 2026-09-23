@@ -294,13 +294,13 @@ void test('same seed produces the same schedule, opponents and results', () => {
 // A/Bチームの階層
 // ---------------------------------------------------------------------------
 void test('team B, when it exists, is always exactly one tier below team A and never shares a tier', () => {
-  // 初期18人はAチーム上限20人に収まるため、まず部員数を増やす（自然な入部・卒業サイクルを
-  // 数シーズン回すことで、既存の入部システムだけを使って30人近くまで育てる）。
+  // 初期20人は全員がAチーム（試合登録20人）に入るため、まず部員数を増やす（自然な入部・卒業サイクルを
+  // 数シーズン回し、既存の入部システムだけで B が11人以上になるまで育てる）。
   let s = newGame('AB階層検証高校', 900);
   for (let n = 0; n < 8; n++) for (let i = 0; i < 48; i++) s = step(s);
   s.reputation = 80; // Bチーム参戦条件を満たす
   const bRoster = () => s.players.filter((p) => s.v3.squad.players[p.id]?.team === 'B').length;
-  assert.ok(bRoster() >= 8, `Bチームに十分な部員がいません（${bRoster()}人、部員合計${s.players.length}人）`);
+  assert.ok(bRoster() >= 11, `Bチームに十分な部員がいません（${bRoster()}人、部員合計${s.players.length}人）`);
   hydrateCompetition(s);
   const comp = readCompetition(s);
   for (const tierA of LEAGUE_TIERS) {

@@ -96,7 +96,7 @@ void test('half-year policy grows matching skills, locks, rewards once and reset
   s = act(s, { type: 'plan', plan: 'defense' });
   assert.equal(s.development.plan, 'defense');
 });
-void test('manager care applies once per training day-0 (weekly gate), selection never grants rewards', () => {
+void test('manager care applies once per week at week-end (day===6 gate, not the Monday-only bug), selection never grants rewards', () => {
   let s = newGame('', 51);
   s.players.forEach((p) => (p.fatigue = 50)); // 0クランプに当たらないよう余裕を持たせる
   s = act(s, { type: 'manager', manager: 0 });
@@ -104,11 +104,29 @@ void test('manager care applies once per training day-0 (weekly gate), selection
   const f = s.players[0].fatigue;
   for (let i = 0; i < 5; i++) s = act(s, { type: 'manager', manager: i % 4 });
   assert.equal(s.players[0].fatigue, f);
-  // S1: 1回のtrainは1日。マネージャーの週次サポート(care)はその週の最初の日(day===0)
-  // にのみ適用される。balance の日次疲労は 7/6-3、ケアはさらに-4。
+  // 回帰修正: developmentWeek（マネージャーの週次サポートもここで適用）は、
+  // 「月曜(day===0)の練習内容だけ」ではなく、週の練習日(月〜土)が終わる時点
+  // (day が6に達した時)に週1回だけ呼ばれる。月〜金(5日)はまだ適用されない。
   assert.equal(s.day, 0);
-  const trained = act(s, { type: 'train', training: 'balance' });
-  assert.ok(Math.abs(trained.players[0].fatigue - (f + 7 / 6 - 3 - 4)) < 1e-9);
+  let cur = s;
+  for (let i = 0; i < 5; i++) {
+    if (cur.event) cur = act(cur, { type: 'event', choice: 'team' });
+    cur = resolveLife(cur);
+    cur = act(cur, { type: 'train', training: 'balance' });
+  }
+  assert.equal(cur.day, 5);
+  assert.ok(
+    Math.abs(cur.players[0].fatigue - (f + 5 * (7 / 6 - 3))) < 1e-9,
+    '月〜金はまだケアの-4が適用されていないはず',
+  );
+  if (cur.event) cur = act(cur, { type: 'event', choice: 'team' });
+  cur = resolveLife(cur);
+  const trained = act(cur, { type: 'train', training: 'balance' });
+  assert.equal(trained.day, 6);
+  assert.ok(
+    Math.abs(trained.players[0].fatigue - (f + 6 * (7 / 6 - 3) - 4)) < 1e-9,
+    '週の練習日が終わる土曜の時点でケアの-4が1回だけ適用されるはず',
+  );
   const before = trained.morale;
   const changed = act(trained, { type: 'support', support: 'cheer' });
   assert.equal(changed.morale, before);

@@ -24,6 +24,8 @@ import { CompetitionPanel } from './competition-ui';
 import { readCompetition, competitionFixture } from '@/lib/competition';
 import { EventStills, type EventStillsChoice, type EventStillsResult } from './event-scenes';
 import { getEventScenePanels } from '@/lib/event-scenes';
+import { Progress } from '@/components/ui/progress';
+import { TrainingPolicyBanner, TrainingPolicyPanel } from './training-policy-ui';
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -46,6 +48,7 @@ import {
   Trophy,
   Upload,
   Users,
+  Wallet,
   Zap,
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -127,6 +130,7 @@ export default function Game() {
     [selected, setSelected] = useState<number | null>(null),
     [help, setHelp] = useState(false),
     [settings, setSettings] = useState(false),
+    [policyOpen, setPolicyOpen] = useState(false),
     [welcome, setWelcome] = useState(false),
     [school, setSchool] = useState('風見ヶ丘高校'),
     [reset, setReset] = useState(false),
@@ -697,6 +701,7 @@ export default function Game() {
                     run({ type: 'life', choiceId });
                   }}
                 />
+                <TrainingPolicyBanner s={s} onOpen={() => setPolicyOpen(true)} />
                 {s.pending ? (
                   <section className="fixture-banner">
                     <div className="fixture-icon">
@@ -812,6 +817,16 @@ export default function Game() {
                         </button>
                       )}
                     </div>
+                    <div>
+                      <span className="muted">今月の個人方針</span>
+                      <button
+                        type="button"
+                        className="text-link"
+                        onClick={() => setPolicyOpen(true)}
+                      >
+                        選手ごとの方針を確認・変更する <ChevronRight size={15} />
+                      </button>
+                    </div>
                     {!s.pending && (
                       <div className="training-footer">
                         <button
@@ -912,6 +927,46 @@ export default function Game() {
                       {line}
                     </p>
                   ))}
+                </section>
+                {/* T4.2: 部費の見える化。「設備強化まであと◯」のゲージと直近の収入5件。
+                    実際の設備強化ボタンは「選手・編成」タブに残したまま（経済バランスは
+                    変えず、表示だけをここに足す）。 */}
+                <section className="panel club-funds" aria-label="部費">
+                  <div className="section-head">
+                    <h2>
+                      <Wallet size={18} aria-hidden="true" /> 部費
+                    </h2>
+                    <span className="muted">
+                      現在 <b>{s.funds}</b>
+                    </span>
+                  </div>
+                  {s.facilities < 5 ? (
+                    <div className="funds-gauge">
+                      <div>
+                        <span>設備強化まで</span>
+                        <b>あと {Math.max(0, s.facilities * 40 - s.funds)}</b>
+                      </div>
+                      <Progress
+                        aria-label="設備強化までの部費"
+                        value={Math.max(0, Math.min(100, (s.funds / (s.facilities * 40)) * 100))}
+                      />
+                    </div>
+                  ) : (
+                    <p className="muted">練習設備は最高レベルです。</p>
+                  )}
+                  <h3 className="v2-subhead">直近の収入</h3>
+                  {s.fundHistory.length ? (
+                    <ul className="funds-history">
+                      {s.fundHistory.slice(0, 5).map((f, i) => (
+                        <li key={i}>
+                          <b>+{f.amount}</b>
+                          <span>{f.reason}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="muted">まだ収入の記録がありません。</p>
+                  )}
                 </section>
               </TabsContent>
               <TabsContent value="future">
@@ -1207,7 +1262,11 @@ export default function Game() {
               </div>
               {s.v3.squad.players[player.id] && (
                 <>
-                  <AbilitySheet p={player} ps={s.v3.squad.players[player.id]} />
+                  <AbilitySheet
+                    p={player}
+                    ps={s.v3.squad.players[player.id]}
+                    policy={s.v3.trainingPolicy.players[player.id]}
+                  />
                   <SquadProfile ps={s.v3.squad.players[player.id]} />
                 </>
               )}
@@ -1314,6 +1373,30 @@ export default function Game() {
               )}
             </>
           )}
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={policyOpen}
+        onOpenChange={(v) => {
+          if (!v) {
+            run({ type: 'trainingPolicyReviewed' });
+            setPolicyOpen(false);
+          } else setPolicyOpen(true);
+        }}
+      >
+        <DialogContent className="game-dialog policy-dialog">
+          <DialogTitle>今月の個人方針</DialogTitle>
+          <DialogDescription>
+            選手ごとに伸ばしたい能力を選べます。月の途中でも変更できます。
+          </DialogDescription>
+          <TrainingPolicyPanel
+            s={s}
+            run={run}
+            onClose={() => {
+              run({ type: 'trainingPolicyReviewed' });
+              setPolicyOpen(false);
+            }}
+          />
         </DialogContent>
       </Dialog>
       <Dialog open={settings} onOpenChange={setSettings}>

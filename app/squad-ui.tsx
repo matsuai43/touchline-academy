@@ -31,6 +31,7 @@ import {
   RankBadge,
   SkillChips,
   MoodBadge,
+  PolicyBadge,
 } from './ability-sheet';
 
 export { PositionBadge, ArchetypeBadge, SkillChips };
@@ -301,6 +302,7 @@ export function SquadPanel({
                 <TableHead>アーキタイプ</TableHead>
                 <TableHead>能力</TableHead>
                 <TableHead>特殊能力</TableHead>
+                <TableHead>個人方針</TableHead>
                 <TableHead>調子</TableHead>
                 <TableHead>疲労</TableHead>
                 <TableHead>チーム</TableHead>
@@ -352,6 +354,11 @@ export function SquadPanel({
                   </TableCell>
                   <TableCell>
                     <SkillChips ps={ps} empty="なし" />
+                  </TableCell>
+                  <TableCell>
+                    {s.v3.trainingPolicy.players[p.id] && (
+                      <PolicyBadge policy={s.v3.trainingPolicy.players[p.id]} />
+                    )}
                   </TableCell>
                   <TableCell>
                     <MoodBadge value={ps.mood} size="sm" />

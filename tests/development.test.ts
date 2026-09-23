@@ -88,13 +88,52 @@ void test('half-year policy grows matching skills, locks, rewards once and reset
   let s = planned;
   for (let i = 0; i < 8; i++) s = next(s, 'possession');
   assert.equal(s.development.rewarded, true);
-  assert.ok(s.development.progress >= 8);
+  // T3-1: 目標は「対象メニューで練習した日数」＝30日（plans.technique.goal）。
+  assert.ok(s.development.progress >= 30);
   while (s.week < 24) s = next(s);
   assert.equal(s.development.plan, null);
   assert.equal(s.development.progress, 0);
   assert.match(s.development.archive[0], /つないで崩す/);
   s = act(s, { type: 'plan', plan: 'defense' });
   assert.equal(s.development.plan, 'defense');
+});
+// T3-1: 半年方針の進捗は「週」ではなく「練習日数」で数える。対象メニューを24週の中で
+// 30日実施すると、その日のうちに（達成8週目を待たず）目標達成する。
+void test('T3-1: half-year progress counts practice days, not weeks, and rewards exactly once at the 30th day', () => {
+  let s = act(newGame('', 7), { type: 'plan', plan: 'attack' });
+  assert.equal(s.development.progress, 0);
+  assert.equal(s.development.rewarded, false);
+  const fundsBefore = s.funds;
+  const rewardEntry = () => s.fundHistory.find((f) => f.reason === '半年目標');
+  // 5週×6日('attack')=30日でちょうど目標に届く（'attack'は半年方針attackのmenus）。
+  for (let w = 0; w < 5; w++) s = next(s, 'attack');
+  assert.equal(s.development.progress, 30);
+  assert.equal(s.development.rewarded, true);
+  assert.ok(s.funds >= fundsBefore + 20, '半年目標の部費+20が反映されているはず');
+  assert.ok(rewardEntry(), '部費の収入履歴に「半年目標」が記録されているはず');
+  assert.equal(rewardEntry()!.amount, 20);
+  const rewardedAt = s.development.progress;
+  // さらに練習しても報酬は1回だけ（progressは伸び続けてよいが、達成報酬は増えない）。
+  s = next(s, 'attack');
+  assert.ok(s.development.progress > rewardedAt);
+  assert.equal(s.development.rewarded, true);
+  assert.equal(s.fundHistory.filter((f) => f.reason === '半年目標').length, 1);
+});
+// T3-1: 旧セーブ（schema 2、進捗が「週」単位）は、進捗を×4で日数換算して引き継ぐ（上限30）。
+void test('T3-1: legacy week-based progress migrates to day-based progress (x4, capped at 30)', () => {
+  const s = act(newGame('', 8), { type: 'plan', plan: 'defense' });
+  const legacy = structuredClone(s) as unknown as {
+    development: { schema: number; progress: number };
+  };
+  legacy.development.schema = 2;
+  legacy.development.progress = 5; // 旧仕様: 5週ぶん実施済み -> 5*4=20日
+  const migrated = validateSave(legacy as unknown as State);
+  assert.equal(migrated.development.progress, 20);
+  assert.equal(migrated.development.schema, 3);
+  // 上限30（旧8週=満了扱いでも30に丸める）。
+  legacy.development.progress = 8;
+  const migratedCapped = validateSave(legacy as unknown as State);
+  assert.equal(migratedCapped.development.progress, 30);
 });
 void test('manager care applies once per week at week-end (day===6 gate, not the Monday-only bug), selection never grants rewards', () => {
   let s = newGame('', 51);

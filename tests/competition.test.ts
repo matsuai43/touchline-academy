@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { newGame, act, strength, type State, type Training } from '../lib/game.ts';
+import { newGame, act, type State, type Training } from '../lib/game.ts';
 import { getCurrentLifeEvent } from '../lib/school-life.ts';
 import {
   DISTRICTS,
@@ -9,7 +9,6 @@ import {
   validateCompetition,
   readCompetition,
   competitionFixture,
-  resolveCompetitionMatch,
   mapLegacyFixtureKind,
   choosablePrefectures,
   canChoosePrefecture,
@@ -22,7 +21,11 @@ import {
   IH_NATIONAL_WEEKS,
   WC_QUALIFIER_WEEKS,
   WC_NATIONAL_WEEKS,
-  type CompFixture,
+  computeLeagueTable,
+  leagueRemaining,
+  leagueNextFixture,
+  promotionZoneActive,
+  relegationZoneActive,
   type CompState,
   type LeagueTier,
 } from '../lib/competition.ts';
@@ -61,52 +64,20 @@ function setDistrictNow(s: State, districtId: string): void {
   hydrateCompetition(s);
 }
 
-// s.seed（読み取りのみ、消費しない）と s.season/s.week を種にした、テスト専用の決定的な
-// 疑似乱数・試合結果シミュレータ。lib/game.ts の本物の試合エンジンは使わず（配線前のため
-// 呼べない）、strength(s) と相手の strength の差から決定的にスコアを作る。
-function localHash(...ns: number[]): number {
-  let x = 2166136261 >>> 0;
-  for (const n of ns) x = Math.imul(x ^ (n >>> 0), 16777619) >>> 0;
-  x ^= x >>> 16;
-  x = Math.imul(x, 0x85ebca6b) >>> 0;
-  x ^= x >>> 13;
-  x = Math.imul(x, 0xc2b2ae35) >>> 0;
-  x ^= x >>> 16;
-  return (x >>> 0) / 4294967296;
-}
-function simulateFixtureResult(
-  s: State,
-  f: CompFixture,
-): { home: number; away: number; won: boolean; penalties: string | null } {
-  const our = strength(s);
-  const diff = our - f.strength;
-  const u1 = localHash(s.seed, s.season, s.week, 1),
-    u2 = localHash(s.seed, s.season, s.week, 2);
-  const home = Math.max(0, Math.round(1.3 + diff / 22 + (u1 - 0.5) * 1.8));
-  const away = Math.max(0, Math.round(1.3 - diff / 24 + (u2 - 0.5) * 1.8));
-  let won = home > away,
-    penalties: string | null = null;
-  if (home === away && f.kind !== 'friendly' && f.kind !== 'league') {
-    won = localHash(s.seed, s.season, s.week, 3) < 0.5 + diff / 200;
-    penalties = won ? '5-4' : '4-5';
-  }
-  return { home, away, won, penalties };
-}
-/** 現在の週の対戦カードを取得し、結果をシミュレートして反映する。無ければ何もしない。 */
-function playCompetitionWeek(s: State): void {
-  const f = competitionFixture(s, s.week);
-  if (!f) return;
-  const r = simulateFixtureResult(s, f);
-  resolveCompetitionMatch(s, { fixture: f, ...r });
-}
-/** 本物の act()（週送り・卒業・新入生・評判の変化など）で時計を進めつつ、その裏で
- *  competition.ts 側の日程も独立にシミュレートする。1season = 48週。 */
+// 重要: lib/game.ts の 'finish' ハンドラは既に resolveCompetitionMatch(s, m) を呼ぶよう
+// 配線済み（本ファイル自体の末尾コメントが指示していた配線）。そのため step() が実際に
+// act('start'/'segment'/'finish') で試合を消化すると、そのたびに comp.teamA/ih/wc は
+// 本物の試合結果で自動的に更新される。以前はこの配線が無かったため、テスト側で
+// competitionFixture() の結果を仮に決着させて手動で resolveCompetitionMatch() を呼ぶ
+// 「裏シミュレーション」が必要だったが、今それをすると同じ週が二重に解決されてしまう
+// （team.played が週ごとに2つずつ増える等）。そのため実際の解決は必ず step() 経由の
+// 本物の試合エンジンに任せる（resolveCompetitionMatch を手動で呼ばない）。
+/** 本物の act()（週送り・卒業・新入生・評判の変化・試合の消化）だけで時計を進める。
+ *  'finish' ハンドラが resolveCompetitionMatch を呼ぶので、これだけで comp.teamA/ih/wc が
+ *  実際の試合結果で正しく更新される。1season = 48週。 */
 function playSeasons(s: State, seasons: number): State {
   for (let n = 0; n < seasons; n++) {
-    for (let i = 0; i < 48; i++) {
-      playCompetitionWeek(s);
-      s = step(s);
-    }
+    for (let i = 0; i < 48; i++) s = step(s);
   }
   return s;
 }
@@ -272,12 +243,10 @@ void test('same seed produces the same schedule, opponents and results', () => {
     const log: string[] = [];
     for (let n = 0; n < 3; n++) {
       for (let i = 0; i < 48; i++) {
+        // competitionFixture() は純粋な読み取りなので、ログを取るだけなら解決前に呼んでも
+        // 安全（step() が act() 経由で本物の試合エンジンにより実際に解決する）。
         const f = competitionFixture(s, s.week);
-        if (f) {
-          log.push(`${s.season}-${s.week}-${f.kind}-${f.round}-${f.opponent}-${f.strength}-${f.style}`);
-          const r = simulateFixtureResult(s, f);
-          resolveCompetitionMatch(s, { fixture: f, ...r });
-        }
+        if (f) log.push(`${s.season}-${s.week}-${f.kind}-${f.round}-${f.opponent}-${f.strength}-${f.style}`);
         s = step(s);
       }
     }
@@ -393,4 +362,160 @@ void test('validateCompetition accepts a freshly hydrated and a legacy-migrated 
 void test('districtById throws for unknown ids and resolves known ones', () => {
   assert.throws(() => districtById('atlantis'));
   for (const d of DISTRICTS) assert.equal(districtById(d.id).id, d.id);
+});
+
+// ---------------------------------------------------------------------------
+// T4.1: 他校同士の試合も毎節実際に消化する順位表
+// ---------------------------------------------------------------------------
+/** 自校のリーグ14試合が終わるまで進める（season をまたがない範囲で止める）。本物の
+ *  act() だけで進める（'finish' ハンドラが resolveCompetitionMatch を呼ぶので、それだけで
+ *  comp.teamA が実際の試合結果で正しく更新される）。 */
+function playUntilLeagueComplete(s: State): State {
+  for (let i = 0; i < 48; i++) {
+    s = step(s);
+    if (readCompetition(s).teamA.played >= LEAGUE_WEEKS.length) break;
+  }
+  return s;
+}
+
+void test('every league week fields all 8 schools in exactly 4 matches (no byes, no double-booking)', () => {
+  let s = newGame('全校消化検証高校', 55);
+  hydrateCompetition(s);
+  s = playUntilLeagueComplete(s);
+  const comp = readCompetition(s);
+  assert.equal(comp.teamA.played, LEAGUE_WEEKS.length, '自校は14節すべて消化しているはず');
+  const { resultsByTeam } = computeLeagueTable(s, comp);
+  const teamIds = ['self', ...comp.teamA.clubs.map((c) => c.id)];
+  assert.equal(teamIds.length, 8, '自校＋7クラブで8校のはず');
+  for (const week of LEAGUE_WEEKS) {
+    let appearances = 0;
+    for (const id of teamIds) appearances += resultsByTeam[id].filter((r) => r.week === week).length;
+    assert.equal(appearances, 8, `週${week}: 8校それぞれちょうど1試合ずつのはず（実際は${appearances}件）`);
+  }
+  // 総試合数: 8校総当たり（ホーム&アウェー）= 8*7 = 56 試合、resultsByTeam は各試合を両校ぶん記録するので合計112件。
+  const totalEntries = teamIds.reduce((a, id) => a + resultsByTeam[id].length, 0);
+  assert.equal(totalEntries, 56 * 2, '延べ試合出場数が8校総当たり56試合の2倍と一致しません');
+});
+
+void test('after 14 weeks every school (self and all 7 clubs) has played exactly 14 games', () => {
+  let s = newGame('14試合検証高校', 77);
+  hydrateCompetition(s);
+  s = playUntilLeagueComplete(s);
+  const comp = readCompetition(s);
+  const { rows } = computeLeagueTable(s, comp);
+  assert.equal(rows.length, 8);
+  for (const row of rows) assert.equal(row.played, 14, `${row.name} の試合数が14ではありません（${row.played}）`);
+});
+
+void test('points and win/draw/lose stay consistent (3/1/0) for every school in the table', () => {
+  let s = newGame('勝ち点整合検証高校', 91);
+  hydrateCompetition(s);
+  s = playUntilLeagueComplete(s);
+  const comp = readCompetition(s);
+  const { rows } = computeLeagueTable(s, comp);
+  for (const row of rows) {
+    assert.equal(row.win + row.draw + row.lose, row.played, `${row.name}: 勝分負の合計が試合数と不一致`);
+    assert.equal(row.win * 3 + row.draw * 1, row.points, `${row.name}: 勝ち点が3勝1分の計算と不一致`);
+    assert.equal(row.gd, row.gf - row.ga, `${row.name}: 得失点差の計算が不一致`);
+  }
+});
+
+void test('standings are sorted by points, then goal difference, then goals for, then team id', () => {
+  let s = newGame('並び順検証高校', 123);
+  hydrateCompetition(s);
+  s = playUntilLeagueComplete(s);
+  const comp = readCompetition(s);
+  const { rows } = computeLeagueTable(s, comp);
+  for (let i = 0; i < rows.length - 1; i++) {
+    const a = rows[i],
+      b = rows[i + 1];
+    // lib/competition.ts の並べ替え規則（勝ち点→得失点差→総得点→学校ID）をそのまま再現し、
+    // a が b より前（同順含む）であることを確認する。
+    const cmp = b.points - a.points || b.gd - a.gd || b.gf - a.gf || a.teamId.localeCompare(b.teamId);
+    assert.ok(cmp <= 0, `順位${i + 1}(${a.name})と${i + 2}(${b.name})の並びがタイブレーク規則に反しています`);
+  }
+});
+
+void test('leagueRemaining and leagueNextFixture track the schedule as weeks pass', () => {
+  let s = newGame('残り試合数検証高校', 5);
+  hydrateCompetition(s);
+  let comp = readCompetition(s);
+  assert.equal(leagueRemaining(comp), LEAGUE_WEEKS.length);
+  const first = leagueNextFixture(comp);
+  assert.ok(first);
+  assert.ok(comp.teamA.clubs.some((c) => c.name === first!.opponent));
+  s = playUntilLeagueComplete(s);
+  comp = readCompetition(s);
+  assert.equal(leagueRemaining(comp), 0);
+  assert.equal(leagueNextFixture(comp), null, '14節すべて消化した後は次節が無いはず');
+});
+
+void test('promotion/relegation zone helpers respect the top and bottom tiers', () => {
+  assert.equal(promotionZoneActive('national'), false, '全国リーグより上は無いので昇格圏は無いはず');
+  assert.equal(promotionZoneActive('pref1'), true);
+  assert.equal(relegationZoneActive('pref2'), false, '県2部より下は無いので降格圏は無いはず');
+  assert.equal(relegationZoneActive('regional'), true);
+});
+
+void test('promotion/relegation at season end matches the rank computed from the final standings table', () => {
+  let s = newGame('昇降格整合検証高校', 314);
+  hydrateCompetition(s);
+  s = playUntilLeagueComplete(s);
+  const comp = readCompetition(s);
+  const { rows } = computeLeagueTable(s, comp);
+  const expectedRank = rows.findIndex((r) => r.isSelf) + 1;
+  const tierBefore = comp.teamA.tier;
+  // 残りの週（リーグ以外）を消化してシーズンを終わらせる。
+  for (let i = 0; i < 48; i++) s = step(s);
+  const history = readCompetition(s).history[0];
+  assert.ok(history, 'シーズン終了時の履歴が記録されていません');
+  assert.equal(history.rankA, expectedRank, '昇降格判定の順位が最終順位表と一致しません');
+  if (expectedRank <= 2 && LEAGUE_TIERS.indexOf(tierBefore) < LEAGUE_TIERS.length - 1) {
+    assert.ok(
+      LEAGUE_TIERS.indexOf(readCompetition(s).teamA.tier) > LEAGUE_TIERS.indexOf(tierBefore) ||
+        LEAGUE_TIERS.indexOf(tierBefore) === LEAGUE_TIERS.length - 1,
+      '上位2位なら昇格しているはず',
+    );
+  }
+  if (expectedRank >= 7 && LEAGUE_TIERS.indexOf(tierBefore) > 0) {
+    assert.ok(
+      LEAGUE_TIERS.indexOf(readCompetition(s).teamA.tier) < LEAGUE_TIERS.indexOf(tierBefore) ||
+        LEAGUE_TIERS.indexOf(tierBefore) === 0,
+      '下位2位なら降格しているはず',
+    );
+  }
+});
+
+void test('same seed reproduces an identical league standings table (determinism)', () => {
+  function run() {
+    let s = newGame('順位表決定性検証高校', 6060);
+    hydrateCompetition(s);
+    s = playUntilLeagueComplete(s);
+    const comp = readCompetition(s);
+    return JSON.parse(JSON.stringify(computeLeagueTable(s, comp)));
+  }
+  assert.deepEqual(run(), run(), '同じシードで順位表が一致しません');
+});
+
+void test('legacy saves without a results log fall back to zero self-history but still reconstruct rival-vs-rival matches', () => {
+  let s = newGame('旧セーブ順位表検証高校', 202);
+  hydrateCompetition(s);
+  s = playUntilLeagueComplete(s);
+  const comp = readCompetition(s);
+  assert.ok(comp.teamA.results.length > 0, '前提: 通常プレイではログが残っているはず');
+  // 旧セーブ相当: results フィールドが無い状態を再現する。
+  delete (comp.teamA as unknown as { results?: unknown }).results;
+  hydrateCompetition(s); // 補完されるはず
+  assert.deepEqual(readCompetition(s).teamA.results, [], '旧セーブは results が空配列に補完されるはず');
+  validateCompetition(s);
+  const { rows } = computeLeagueTable(s, comp);
+  const self = rows.find((r) => r.isSelf)!;
+  // 自校の対戦ログは失われても、team.played などの集計値は温存されているので「自校の結果は記録が
+  // あればそれを使い、無ければ0から」の対象は自校の内訳（resultsByTeam）だけで、順位表の自校の
+  // played/points 自体は既存の集計値をそのまま使う。
+  assert.equal(self.played, comp.teamA.played);
+  assert.equal(self.points, comp.teamA.points);
+  // 他校同士の試合は常に決定的に再現できるので、クラブ側の played は 0 にならないはず。
+  const anyClub = rows.find((r) => !r.isSelf)!;
+  assert.ok(anyClub.played > 0, '他校同士の試合はログが無くても再現されるはず');
 });

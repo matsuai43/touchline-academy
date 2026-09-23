@@ -11,10 +11,11 @@
 // （CompetitionAction が Action に合流していなくても動く）。
 //
 // スタイルは Tailwind ユーティリティクラスと既存の shadcn コンポーネント
-// （Badge/Button/Table）のみで完結させており、globals.css の新規セレクタには
-// 依存しない（app/life-ui.tsx と同じ流儀）。
+// （Badge/Button/Table）を基本としつつ、T4.1（順位表）の専用装飾だけは本ファイル末尾の
+// <style> タグ（クラス名は lt- 接頭辞）で完結させている。globals.css は一切変更しない。
 
-import { MapPin, Star, Trophy, Users2, ShieldHalf } from 'lucide-react';
+import { useState } from 'react';
+import { MapPin, Star, Trophy, Users2, ShieldHalf, ArrowUpCircle, ArrowDownCircle, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
@@ -31,6 +32,11 @@ import {
   canChoosePrefecture,
   districtById,
   tierInfo,
+  computeLeagueTable,
+  leagueRemaining,
+  leagueNextFixture,
+  promotionZoneActive,
+  relegationZoneActive,
   type District,
   type LeagueTier,
   type TeamLeagueState,
@@ -131,6 +137,356 @@ function TeamStandingRow({ label, team }: { label: string; team: TeamLeagueState
   );
 }
 
+function outcomeLabel(outcome: 'win' | 'draw' | 'lose'): string {
+  return outcome === 'win' ? '勝' : outcome === 'draw' ? '分' : '負';
+}
+
+/**
+ * T4.1: Aチームの順位表（自校＋7クラブ、他校同士の試合も実際に消化した結果から算出）。
+ * 残り試合数・次節の相手・首位との勝ち点差を表示し、昇格圏・降格圏は色＋アイコン＋
+ * 凡例テキストで示す（色だけに頼らない）。自校の行は強調表示。ライバル校の行をクリックすると
+ * そのクラブの今季の戦績一覧（節・相手・スコア・勝敗）を下に展開する。
+ */
+function LeagueStandingsSection({ state }: { state: State }) {
+  const comp = readCompetition(state);
+  const { rows, resultsByTeam } = computeLeagueTable(state, comp);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const remaining = leagueRemaining(comp);
+  const next = leagueNextFixture(comp);
+  const leader = rows[0];
+  const self = rows.find((r) => r.isSelf);
+  const behind = leader && self ? Math.max(0, leader.points - self.points) : 0;
+  const isLeading = !!leader && !!self && leader.teamId === self.teamId;
+  const promoActive = promotionZoneActive(comp.teamA.tier);
+  const relActive = relegationZoneActive(comp.teamA.tier);
+  const selectedRow = selectedId ? rows.find((r) => r.teamId === selectedId) : null;
+  const selectedResults = selectedId ? (resultsByTeam[selectedId] ?? []) : [];
+
+  return (
+    <section
+      className="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-4 shadow-sm"
+      aria-label="U18リーグ順位表"
+    >
+      <div className="flex items-center gap-2">
+        <Trophy size={14} className="text-muted-foreground" />
+        <h3 className="text-sm font-semibold">{tierInfo[comp.teamA.tier].name}・順位表</h3>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <div className="lt-stat">
+          <span className="lt-stat-label">残り試合数</span>
+          <span className="lt-stat-value">{remaining}節</span>
+        </div>
+        <div className="lt-stat">
+          <span className="lt-stat-label">次節の相手</span>
+          <span className="lt-stat-value">
+            {next ? `${next.opponent}（${next.leg === 0 ? 'ホーム' : 'アウェー'}）` : 'シーズン終了'}
+          </span>
+        </div>
+        <div className="lt-stat">
+          <span className="lt-stat-label">首位との勝ち点差</span>
+          <span className="lt-stat-value">{isLeading ? '首位' : `-${behind}`}</span>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <Table aria-label="U18リーグ順位表（横にスクロールできます）">
+          <TableHeader>
+            <TableRow>
+              <TableHead>順位</TableHead>
+              <TableHead>学校名</TableHead>
+              <TableHead className="text-right">試</TableHead>
+              <TableHead className="text-right">勝</TableHead>
+              <TableHead className="text-right">分</TableHead>
+              <TableHead className="text-right">負</TableHead>
+              <TableHead className="text-right">得点</TableHead>
+              <TableHead className="text-right">失点</TableHead>
+              <TableHead className="text-right">得失差</TableHead>
+              <TableHead className="text-right">勝点</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row, i) => {
+              const rank = i + 1;
+              const zone: 'promotion' | 'relegation' | null =
+                rank <= 2 && promoActive ? 'promotion' : rank >= rows.length - 1 && relActive ? 'relegation' : null;
+              const rowClass = [
+                zone === 'promotion' ? 'lt-row-up' : '',
+                zone === 'relegation' ? 'lt-row-down' : '',
+                row.isSelf ? 'lt-row-self' : '',
+              ]
+                .filter(Boolean)
+                .join(' ');
+              return (
+                <TableRow key={row.teamId} className={rowClass || undefined}>
+                  <TableCell className="font-medium">
+                    <span className="lt-rank-cell">
+                      {rank}
+                      {zone === 'promotion' && <ArrowUpCircle size={14} className="lt-icon-up" aria-label="昇格圏" />}
+                      {zone === 'relegation' && (
+                        <ArrowDownCircle size={14} className="lt-icon-down" aria-label="降格圏" />
+                      )}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    {row.isSelf ? (
+                      <span className="font-semibold">{row.name}（自校）</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="lt-rival-btn"
+                        onClick={() => setSelectedId(selectedId === row.teamId ? null : row.teamId)}
+                        aria-expanded={selectedId === row.teamId}
+                      >
+                        {row.name}
+                        {row.youth && <span className="lt-youth-badge">ユース</span>}
+                      </button>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">{row.played}</TableCell>
+                  <TableCell className="text-right">{row.win}</TableCell>
+                  <TableCell className="text-right">{row.draw}</TableCell>
+                  <TableCell className="text-right">{row.lose}</TableCell>
+                  <TableCell className="text-right">{row.gf}</TableCell>
+                  <TableCell className="text-right">{row.ga}</TableCell>
+                  <TableCell className="text-right">{row.gd > 0 ? `+${row.gd}` : row.gd}</TableCell>
+                  <TableCell className="text-right font-semibold">{row.points}</TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+
+      {(promoActive || relActive) && (
+        <div className="lt-zone-legend">
+          {promoActive && (
+            <span className="lt-zone-mark lt-zone-up">
+              <ArrowUpCircle size={13} aria-hidden="true" />
+              昇格圏（上位2位）
+            </span>
+          )}
+          {relActive && (
+            <span className="lt-zone-mark lt-zone-down">
+              <ArrowDownCircle size={13} aria-hidden="true" />
+              降格圏（下位2位）
+            </span>
+          )}
+        </div>
+      )}
+
+      {selectedRow && (
+        <section className="lt-rival-panel" aria-label={`${selectedRow.name}の戦績`}>
+          <div className="lt-rival-panel-header">
+            <span className="text-sm font-semibold">{selectedRow.name} の戦績</span>
+            <button
+              type="button"
+              className="lt-rival-close"
+              onClick={() => setSelectedId(null)}
+              aria-label="ライバル校の戦績を閉じる"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          {selectedResults.length === 0 ? (
+            <p className="text-xs text-muted-foreground">まだ試合がありません。</p>
+          ) : (
+            <ul className="lt-rival-results">
+              {selectedResults
+                .slice()
+                .sort((a, b) => a.roundIndex - b.roundIndex)
+                .map((r) => (
+                  <li key={`${r.week}-${r.opponentId}`} className="lt-rival-result-row">
+                    <span className="lt-rival-round">第{r.roundIndex + 1}節</span>
+                    <span className="lt-rival-opp">{r.opponentName}</span>
+                    <span className="lt-rival-score">
+                      {r.gf} - {r.ga}
+                    </span>
+                    <span className={`lt-outcome lt-outcome-${r.outcome}`}>{outcomeLabel(r.outcome)}</span>
+                  </li>
+                ))}
+            </ul>
+          )}
+        </section>
+      )}
+      <style>{`
+        .lt-stat {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 8px 10px;
+          background: var(--card);
+        }
+        .lt-stat-label {
+          font-size: 12px;
+          font-weight: 400;
+          color: var(--muted-foreground);
+        }
+        .lt-stat-value {
+          font-size: 14px;
+          font-weight: 700;
+          color: var(--foreground);
+        }
+        .lt-row-self {
+          background: color-mix(in srgb, var(--primary) 14%, var(--card));
+        }
+        .lt-row-up {
+          box-shadow: inset 3px 0 0 var(--success-border);
+        }
+        .lt-row-down {
+          box-shadow: inset 3px 0 0 var(--danger-border);
+        }
+        .lt-rank-cell {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .lt-icon-up {
+          color: var(--success);
+        }
+        .lt-icon-down {
+          color: var(--danger);
+        }
+        .lt-rival-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          min-height: 44px;
+          padding: 4px 2px;
+          background: transparent;
+          border: none;
+          font-size: 13px;
+          font-weight: 400;
+          color: var(--foreground);
+          text-align: left;
+          text-decoration: underline;
+          text-decoration-color: var(--border);
+          text-underline-offset: 3px;
+          cursor: pointer;
+        }
+        .lt-rival-btn:hover,
+        .lt-rival-btn:focus-visible {
+          color: var(--primary);
+          text-decoration-color: var(--primary);
+        }
+        .lt-rival-btn:focus-visible {
+          outline: 3px solid var(--primary);
+          outline-offset: 2px;
+        }
+        .lt-youth-badge {
+          font-size: 11px;
+          font-weight: 700;
+          color: var(--muted-foreground);
+          border: 1px solid var(--border);
+          border-radius: 999px;
+          padding: 1px 6px;
+        }
+        .lt-zone-legend {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 12px;
+          font-size: 12px;
+          font-weight: 400;
+          color: var(--muted-foreground);
+        }
+        .lt-zone-mark {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .lt-zone-up {
+          color: var(--success);
+        }
+        .lt-zone-down {
+          color: var(--danger);
+        }
+        .lt-rival-panel {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          padding: 10px 12px;
+          background: var(--card);
+        }
+        .lt-rival-panel-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+        .lt-rival-close {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 44px;
+          min-height: 44px;
+          background: transparent;
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          color: var(--foreground);
+          cursor: pointer;
+        }
+        .lt-rival-close:hover,
+        .lt-rival-close:focus-visible {
+          border-color: var(--primary);
+          color: var(--primary);
+        }
+        .lt-rival-close:focus-visible {
+          outline: 3px solid var(--primary);
+          outline-offset: 2px;
+        }
+        .lt-rival-results {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          list-style: none;
+          margin: 0;
+          padding: 0;
+        }
+        .lt-rival-result-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 13px;
+          font-weight: 400;
+          padding: 6px 2px;
+          border-bottom: 1px solid var(--border);
+        }
+        .lt-rival-round {
+          min-width: 52px;
+          color: var(--muted-foreground);
+        }
+        .lt-rival-opp {
+          flex: 1;
+        }
+        .lt-rival-score {
+          min-width: 52px;
+          text-align: center;
+          font-weight: 700;
+        }
+        .lt-outcome {
+          min-width: 20px;
+          text-align: center;
+          font-size: 12px;
+          font-weight: 700;
+        }
+        .lt-outcome-win {
+          color: var(--success);
+        }
+        .lt-outcome-draw {
+          color: var(--muted-foreground);
+        }
+        .lt-outcome-lose {
+          color: var(--danger);
+        }
+      `}</style>
+    </section>
+  );
+}
+
 function CupStatus({ name, cup }: { name: string; cup: CupState }) {
   return (
     <div className="flex flex-col gap-1 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
@@ -188,43 +544,48 @@ export function CompetitionPanel({
           )}
         </div>
 
-        <div className="overflow-x-auto">
-          <Table aria-label="リーグ成績表（横にスクロールできます）">
-            <TableHeader>
-              <TableRow>
-                <TableHead>チーム</TableHead>
-                <TableHead>階層</TableHead>
-                <TableHead className="text-right">試</TableHead>
-                <TableHead className="text-right">勝</TableHead>
-                <TableHead className="text-right">分</TableHead>
-                <TableHead className="text-right">負</TableHead>
-                <TableHead className="text-right">得失</TableHead>
-                <TableHead className="text-right">点</TableHead>
-                <TableHead className="text-right">前季</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <TeamStandingRow label="Aチーム" team={comp.teamA} />
-              {comp.teamB ? (
-                <TeamStandingRow label="Bチーム" team={comp.teamB} />
-              ) : (
-                <TableRow>
-                  <TableCell className="text-muted-foreground" colSpan={9}>
-                    <span className="flex items-center gap-1.5">
-                      <Users2 size={14} />
-                      Bチームはまだリーグに参戦していません（学校評判と部員数が育つと自動参戦します）
-                    </span>
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <CupStatus name="インターハイ" cup={comp.ih} />
           <CupStatus name="選手権" cup={comp.wc} />
         </div>
+      </section>
+
+      <LeagueStandingsSection state={state} />
+
+      {/* T4.1: Bチームは他校同士の試合を実消化する順位表の対象外（時間の都合でAチームのみ）。
+          Bチームの成績はこれまでどおり即時シミュレーション結果の要約表示にとどめる。 */}
+      <section className="flex flex-col gap-2 rounded-xl border border-border/60 bg-card p-4 shadow-sm" aria-label="Bチームの成績">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <Users2 size={14} />
+          Bチーム
+        </div>
+        {comp.teamB ? (
+          <div className="overflow-x-auto">
+            <Table aria-label="Bチーム成績表（横にスクロールできます）">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>チーム</TableHead>
+                  <TableHead>階層</TableHead>
+                  <TableHead className="text-right">試</TableHead>
+                  <TableHead className="text-right">勝</TableHead>
+                  <TableHead className="text-right">分</TableHead>
+                  <TableHead className="text-right">負</TableHead>
+                  <TableHead className="text-right">得失</TableHead>
+                  <TableHead className="text-right">点</TableHead>
+                  <TableHead className="text-right">前季</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TeamStandingRow label="Bチーム" team={comp.teamB} />
+              </TableBody>
+            </Table>
+          </div>
+        ) : (
+          <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Users2 size={14} />
+            Bチームはまだリーグに参戦していません（学校評判と部員数が育つと自動参戦します）
+          </span>
+        )}
       </section>
 
       {comp.history.length > 0 && (

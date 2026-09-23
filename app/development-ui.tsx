@@ -187,7 +187,7 @@ export function DevelopmentView({
                   <div className="selected plan-card-locked">
                     <h3>{plans[d.plan].name}</h3>
                     <p>{plans[d.plan].desc}</p>
-                    <small>目標：対応する専門練習を8週実施</small>
+                    <small>目標：対象メニューで{plans[d.plan].goal}日練習</small>
                   </div>
                 </div>
               ) : (
@@ -203,7 +203,7 @@ export function DevelopmentView({
                       <div>
                         <h3>{plans[k].name}</h3>
                         <p>{plans[k].desc}</p>
-                        <small>目標：対応する専門練習を8週実施</small>
+                        <small>目標：対象メニューで{plans[k].goal}日練習</small>
                       </div>
                     </label>
                   ))}
@@ -219,11 +219,13 @@ export function DevelopmentView({
               ) : (
                 <div className="plan-progress">
                   <strong>
-                    {d.rewarded ? '半年目標達成！' : `進捗 ${d.progress} / 8週`}
+                    {d.rewarded
+                      ? '半年目標達成！'
+                      : `練習日数 ${d.progress} / ${plans[d.plan].goal}`}
                   </strong>
                   <Progress
-                    value={Math.min(100, (d.progress / 8) * 100)}
-                    aria-label="半年目標の進捗"
+                    value={Math.min(100, (d.progress / plans[d.plan].goal) * 100)}
+                    aria-label="半年目標の進捗（練習日数）"
                   />
                   <p>
                     達成時：部費＋20 / 学校の評判＋3。ボーナスは各半年に1回。
@@ -460,7 +462,7 @@ export function ManagerNote({ s }: { s: State }) {
           {tired
             ? `疲労が高い選手が${tired}人。休養も大事な練習ですよ。`
             : d.plan
-              ? `「${plans[d.plan].name}」、目標まであと${Math.max(0, 8 - d.progress)}回！ 一緒に頑張ろう。`
+              ? `「${plans[d.plan].name}」、目標まであと${Math.max(0, plans[d.plan].goal - d.progress)}日！ 一緒に頑張ろう。`
               : m.line}
         </p>
         <small>{supports[d.support].name}でサポート中</small>

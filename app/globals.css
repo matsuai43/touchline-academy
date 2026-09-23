@@ -4369,3 +4369,86 @@ footer button::after,
   align-items: flex-start;
   gap: 2px;
 }
+
+/* T3-2: 「今月の個人方針」を促すバナー（クラブハウス、月初のみ表示）。 */
+.policy-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  margin-top: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+.policy-banner-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--primary);
+  flex: 0 0 auto;
+}
+.policy-banner-body {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.policy-banner-body h3 {
+  font-size: 15px;
+  margin: 2px 0 4px;
+}
+.policy-banner-body p {
+  font-size: 12px;
+}
+/* T3-2: 能力シートの「今月の個人方針」カード。play-style-card と同じ枠組みを踏襲する。 */
+.training-policy-card {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.policy-growth-line {
+  font-size: 12px;
+}
+.policy-badge {
+  align-self: flex-start;
+}
+
+/* T4.2: クラブハウスの「部費」パネル（設備強化までのゲージ・直近の収入）。 */
+.club-funds {
+  margin-top: 20px;
+}
+.funds-gauge {
+  margin-top: 10px;
+}
+.funds-gauge > div {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.funds-history {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.funds-history li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.funds-history b {
+  color: var(--success);
+}

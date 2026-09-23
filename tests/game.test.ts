@@ -201,9 +201,9 @@ function stepMenu(s:State){
 // 練習内容」だけで呼んでいた不具合（既定の週間メニューの月曜は休養のため、方針の進捗も
 // スキル習得の継続カウントも一切進まなかった）の修正確認。月曜休養＋火〜金シュート練習
 // （週間メニュー: 休養/シュート/シュート/シュート/シュート/休養）を複数週続けると、
-// (a) シュートを含む半年方針の進捗が週ごとに1増え、(b) 選手の練習継続カウント(streak)も
-// 週ごとに1増えることを確認する。
-void test('regression: half-year plan progress and skill streak advance weekly even though the default Monday menu is rest',()=>{
+// (a) 選手の練習継続カウント(streak、週単位のまま)が週ごとに1増え、(b) シュートを含む
+// 半年方針の進捗（T3-1で「日数」化）は週4日(火〜金)ぶんずつ増えることを確認する。
+void test('regression: half-year plan progress (by day) and skill streak (weekly) advance every week even though the default Monday menu is rest',()=>{
   let s=newGame('回帰検証高校',21);
   s=act(s,{type:'setMenu',menu:['rest','attack','attack','attack','attack','rest']});
   s=act(s,{type:'plan',plan:'attack'});
@@ -213,7 +213,8 @@ void test('regression: half-year plan progress and skill streak advance weekly e
   assert.equal(s.v3.squad.players[pid].streakCount,0);
   for(let w=1;w<=3;w++){
     s=stepMenu(s);
-    assert.equal(s.development.progress,w,`week ${w}: half-year plan progress should advance by exactly 1 per week`);
+    // T3-1: 週4日(火〜金)が'attack'（半年方針attackのmenus）なので、進捗は週ごとに4増える。
+    assert.equal(s.development.progress,4*w,`week ${w}: half-year plan progress should advance by 4 (attack days) per week`);
     const ps=s.v3.squad.players[pid];
     assert.equal(ps.streakMenu,'attack');
     assert.equal(ps.streakCount,w,`week ${w}: skill training streak should advance by exactly 1 per week`);

@@ -10,7 +10,7 @@ test('v2 future: policy locks, manager motivates, scouting is limited, mobile ca
   await page.getByRole('button', { name: 'この学校で始める' }).click();
   await page.getByRole('tab', { name: '育成・スカウト', exact: true }).click();
   await page.getByRole('button', { name: 'この半年の方針を確定' }).click();
-  await expect(page.getByText('進捗 0 / 8週')).toBeVisible();
+  await expect(page.getByText('練習日数 0 / 30')).toBeVisible();
   await page.getByRole('radio', { name: 'マネージャー', exact: true }).check();
   await page.getByRole('button', { name: /小春 ひなた/ }).click();
   await page

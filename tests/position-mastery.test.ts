@@ -15,6 +15,7 @@ import {
   formationSlots,
   gainProficiency,
   stylesFor,
+  skillMatchFactors,
   PLAY_STYLES,
   MASTERY_THRESHOLD,
 } from '../lib/squad.ts';
@@ -149,33 +150,45 @@ void test('S4: full match appearance raises proficiency for the occupied slot, p
 //    プレースタイルを変えると得点数の傾向が変わる（skills と同じ検証パターン）。
 // ---------------------------------------------------------------------------
 void test('S4: play styles produce a real, measurable difference in match outcomes for the same seed', () => {
-  function playSeason(strong: boolean, seed: number): number {
-    let s = newGame('スタイル検証高校', seed);
-    const forwards = s.players.filter((p) => p.pos === 'FW');
-    for (const p of forwards) {
+  // スタイルの効果は設計上小さい（決定力 +1.5〜4.5%）。得点数は試合ごとのぶれが大きく、
+  // 25試合程度では逆転することがあるため、(1) 試合計算に入る係数を直接比べ、
+  // (2) 試合シミュレーションは得点ではなく期待得点(xG)の合計で比べる。
+  function withStyles(s: State, strong: boolean): State {
+    for (const p of s.players.filter((pl) => pl.pos === 'FW')) {
       const ps = s.v3.squad.players[p.id];
-      const options = stylesFor(ps.detail);
-      // 得点力に寄与する効果(finishMult)が最大/最小のスタイルへ寄せる。
-      const sorted = [...options].sort(
+      const sorted = [...stylesFor(ps.detail)].sort(
         (a, b) => (b.effect.finishMult ?? 1) - (a.effect.finishMult ?? 1),
       );
       ps.style = (strong ? sorted[0] : sorted[sorted.length - 1]).id;
     }
+    return s;
+  }
+  // (1) 同じ部・同じ先発で、スタイルだけを変えると決定力の係数が上がる。
+  const base = newGame('スタイル係数検証高校', 7);
+  const weakFx = skillMatchFactors(withStyles(structuredClone(base), false));
+  const strongFx = skillMatchFactors(withStyles(structuredClone(base), true));
+  assert.ok(
+    strongFx.finish > weakFx.finish,
+    `決定力を上げるスタイルで係数が上がるべき: ${strongFx.finish} vs ${weakFx.finish}`,
+  );
+  // (2) 実際の試合でも、同じシードどうしで期待得点の合計が増える。
+  function playMatchXg(strong: boolean, seed: number): number {
+    let s = withStyles(newGame('スタイル検証高校', seed), strong);
     s.week = 3;
     s = toMatchDay(s, 'rest');
     s = act(s, { type: 'start' });
     while (!s.match!.done) s = act(s, { type: 'segment' });
-    return s.match!.home;
+    return s.match!.xg[0];
   }
-  let weakGoals = 0,
-    strongGoals = 0;
-  for (let seed = 1; seed <= 25; seed++) {
-    weakGoals += playSeason(false, seed);
-    strongGoals += playSeason(true, seed);
+  let weakXg = 0,
+    strongXg = 0;
+  for (let seed = 1; seed <= 100; seed++) {
+    weakXg += playMatchXg(false, seed);
+    strongXg += playMatchXg(true, seed);
   }
   assert.ok(
-    strongGoals > weakGoals,
-    `finish-boosting styles should score more across seeds: ${strongGoals} vs ${weakGoals}`,
+    strongXg > weakXg,
+    `finish-boosting styles should create more expected goals across seeds: ${strongXg.toFixed(1)} vs ${weakXg.toFixed(1)}`,
   );
 });
 

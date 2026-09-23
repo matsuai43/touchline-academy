@@ -1,4 +1,5 @@
 import type { State, Player, Position, Stat, Training } from './game.ts';
+import { addFunds } from './game.ts';
 import { PLAY_STYLES } from './squad.ts';
 export type Personality = 'enthusiast' | 'sensitive' | 'analyst' | 'competitor';
 export type Origin = 'local' | 'academy' | 'legacy' | 'overseas' | 'exchange';
@@ -48,6 +49,8 @@ export const origins: Record<
   },
 };
 export type PlanKey = 'technique' | 'attack' | 'defense' | 'athletic';
+// T3-1: 目標は「24週の中で対象メニューを練習した日数」。旧仕様（8週＝週1回換算で
+// 8回）を日数に揃え、24週×6練習日のうち約2割にあたる30日を目標にする。
 export const plans: Record<
   PlanKey,
   { name: string; desc: string; stats: Stat[]; menus: Training[]; goal: number }
@@ -57,28 +60,28 @@ export const plans: Record<
     desc: 'パスと精神力の成長＋25%。連携を大切にする半年。',
     stats: ['pass', 'mental'],
     menus: ['possession'],
-    goal: 8,
+    goal: 30,
   },
   attack: {
     name: 'ゴールに挑む',
     desc: '決定力と走力の成長＋25%。仕掛ける選手を育てる。',
     stats: ['shoot', 'speed'],
     menus: ['attack'],
-    goal: 8,
+    goal: 30,
   },
   defense: {
     name: '粘り強く守る',
     desc: '守備とGK技術の成長＋25%。失点を減らす土台づくり。',
     stats: ['defend', 'keep'],
     menus: ['defense'],
-    goal: 8,
+    goal: 30,
   },
   athletic: {
     name: '最後まで走る',
     desc: '走力と精神力の成長＋25%。走れるチームをつくる。',
     stats: ['speed', 'mental'],
     menus: ['physical'],
-    goal: 8,
+    goal: 30,
   },
 };
 export const managers = [
@@ -128,7 +131,9 @@ export type Candidate = {
   promised: boolean;
 };
 export type Development = {
-  schema: 2;
+  // T3-1: schema 3 = 半年方針の進捗(progress)を「週数」ではなく「練習日数」で数える。
+  // 旧セーブ(schema 2)は hydrateDevelopment() が ×4換算(上限30)して schema 3 に上げる。
+  schema: 3;
   epoch: number;
   plan: PlanKey | null;
   progress: number;
@@ -254,7 +259,7 @@ export function candidatePool(s: State): Candidate[] {
 }
 export function newDevelopment(s: State): Development {
   return {
-    schema: 2,
+    schema: 3,
     epoch: epoch(s),
     plan: null,
     progress: 0,
@@ -271,7 +276,18 @@ export function newDevelopment(s: State): Development {
 }
 export function hydrateDevelopment(s: State) {
   for (const p of s.players) if (!p.identity) p.identity = identityFor(p.id);
-  if (!s.development) s.development = newDevelopment(s);
+  if (!s.development) {
+    s.development = newDevelopment(s);
+  } else {
+    // T3-1: 旧セーブ（schema 2＝進捗が「週」単位、目標8週）を「日」単位に決定的に
+    // 移行する（×4換算、上限30＝新しい目標日数）。値そのものは Development 型の
+    // schema が 3 固定なので、変換の判定だけ unknown 経由で緩めて行う。
+    const raw = s.development as unknown as { schema: number; progress: number };
+    if (raw.schema === 2) {
+      raw.progress = Math.min(30, Math.round(raw.progress * 4));
+      raw.schema = 3;
+    }
+  }
   if (s.match && !s.match.details) s.match.details = matchDetails();
   return s;
 }
@@ -289,7 +305,7 @@ export function syncHalf(s: State) {
   if (d.epoch === epoch(s)) return;
   if (d.plan) {
     d.archive.unshift(
-      `${Math.floor(d.epoch / 2) + 1}年目${d.epoch % 2 ? '後期' : '前期'}：${plans[d.plan].name} ${d.progress}/8回${d.rewarded ? '・達成' : '・次につなぐ'}`,
+      `${Math.floor(d.epoch / 2) + 1}年目${d.epoch % 2 ? '後期' : '前期'}：${plans[d.plan].name} 練習日数${d.progress}/${plans[d.plan].goal}日${d.rewarded ? '・達成' : '・次につなぐ'}`,
     );
     d.archive = d.archive.slice(0, 8);
   }
@@ -311,17 +327,26 @@ export function growthFactor(s: State, p: Player, k: Stat) {
     styleBonus
   );
 }
-export function developmentWeek(s: State, t: Training) {
+// T3-1: 半年方針の進捗を「練習した日数」で数える（週1回ではなく日ごと）。日次
+// コマンド（lib/game.ts の advanceTrainingDay）の度に、その日実施した実際の
+// メニュー tr を渡して呼ぶ（休養・対象外メニューの日は d.plan.menus に含まれず無視される）。
+export function developmentDay(s: State, t: Training) {
   const d = s.development;
   if (d.plan && plans[d.plan].menus.includes(t)) {
     d.progress++;
-    if (d.progress >= 8 && !d.rewarded) {
+    const goal = plans[d.plan].goal;
+    if (d.progress >= goal && !d.rewarded) {
       d.rewarded = true;
-      s.funds += 20;
+      addFunds(s, 20, '半年目標');
       s.reputation = cap(s.reputation + 3);
       note(s, `半年目標「${plans[d.plan].name}」達成！ 部費＋20、評判＋3。`);
     }
   }
+}
+// マネージャーの週次サポート（週1回、週の練習日が終わる時点でまとめて呼ぶ）。
+// 半年方針の進捗（T3-1）は上の developmentDay（日次）に移した。
+export function developmentWeek(s: State) {
+  const d = s.development;
   if (d.manager !== null && d.lastSupport !== stamp(s)) {
     d.lastSupport = stamp(s);
     if (d.support === 'care')
@@ -604,10 +629,11 @@ export function validateDevelopment(s: State) {
   }
   if (
     !d ||
-    d.schema !== 2 ||
+    d.schema !== 3 ||
     !number(d.epoch, 0, 200000) ||
     (d.plan !== null && !Object.hasOwn(plans, d.plan)) ||
-    !number(d.progress, 0, 48) ||
+    // T3-1: 進捗は「練習日数」。24週×6日でも十分な余裕を持って200まで許容する。
+    !number(d.progress, 0, 200) ||
     typeof d.rewarded !== 'boolean' ||
     !strings(d.archive, 8) ||
     !strings(d.intake, 6) ||

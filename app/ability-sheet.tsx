@@ -40,6 +40,7 @@ import {
   type MoodLevel,
 } from '@/lib/squad';
 import { rankOf, rankAriaLabel } from '@/lib/ability-rank';
+import { policyInfo, type PlayerPolicy } from '@/lib/training-policy';
 
 // ---------------------------------------------------------------------------
 // ランクバッジ（ランク文字のみ。色だけでなく文字自体で段階が分かる）
@@ -85,6 +86,29 @@ export function ArchetypeBadge({ archetype }: { archetype: Archetype }) {
       {a.name}
     </span>
   );
+}
+
+// ---------------------------------------------------------------------------
+// T3-2: 個人方針（月次）のバッジ。既存の archetype-badge（監査済みの色）を再利用する。
+// ---------------------------------------------------------------------------
+export function PolicyBadge({ policy }: { policy: PlayerPolicy }) {
+  const info = policyInfo[policy.key];
+  const label =
+    policy.key === 'position' && policy.target
+      ? `${info.name}（${detailInfo[policy.target].name}）`
+      : info.name;
+  return (
+    <span className="archetype-badge policy-badge" title={info.desc}>
+      {label}
+    </span>
+  );
+}
+// 「今月の伸び」表示用のラベル解決（Stat / ExtraStat / DetailPos のいずれか）。
+function growthKeyLabel(key: string): string {
+  if (Object.hasOwn(stats, key)) return stats[key as Stat];
+  if (Object.hasOwn(extraStatNames, key)) return extraStatNames[key as ExtraStat];
+  if (Object.hasOwn(detailInfo, key)) return detailInfo[key as DetailPos].name;
+  return key;
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +278,16 @@ export function PlayStyleCard({ ps }: { ps: PlayerSquad }) {
 // ---------------------------------------------------------------------------
 // 能力シート本体（選手詳細）: 9能力＋特殊能力。GKはGK技術を先頭に。
 // ---------------------------------------------------------------------------
-export function AbilitySheet({ p, ps }: { p: Player; ps: PlayerSquad }) {
+export function AbilitySheet({
+  p,
+  ps,
+  policy,
+}: {
+  p: Player;
+  ps: PlayerSquad;
+  /** T3-2: 個人方針（省略時は「方針」カードごと表示しない）。 */
+  policy?: PlayerPolicy;
+}) {
   const isGK = ps.detail === 'GK';
   const coreOrder: Stat[] = isGK
     ? ['keep', 'shoot', 'pass', 'defend', 'speed', 'mental']
@@ -284,6 +317,21 @@ export function AbilitySheet({ p, ps }: { p: Player; ps: PlayerSquad }) {
         ))}
       </div>
       <PlayStyleCard ps={ps} />
+      {policy && (
+        <div className="training-policy-card">
+          <span className="play-style-label muted">今月の個人方針</span>
+          <PolicyBadge policy={policy} />
+          {Object.keys(policy.monthlyGrowth).length > 0 && (
+            <p className="muted policy-growth-line">
+              今月の伸び：
+              {Object.entries(policy.monthlyGrowth)
+                .filter(([, v]) => v >= 0.1)
+                .map(([k, v]) => `${growthKeyLabel(k)} +${(Math.round(v * 10) / 10).toFixed(1)}`)
+                .join('・') || 'これから'}
+            </p>
+          )}
+        </div>
+      )}
       <div className="squad-skills">
         <h4>
           特殊能力 <small className="muted">{ps.skills.length} / 5</small>

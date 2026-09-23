@@ -18,7 +18,7 @@
 //
 // 配線手順は本ファイル末尾のコメントを参照。
 
-import { clamp, strength as strengthOf, type State, type Player, type Tactic } from './game.ts';
+import { addFunds, clamp, strength as strengthOf, type State, type Player, type Tactic } from './game.ts';
 import { squadOverall } from './squad.ts';
 
 // ---------------------------------------------------------------------------
@@ -217,12 +217,30 @@ export type LeagueClub = {
   strength: number;
 };
 export type LeagueScheduleEntry = { week: number; clubIndex: number; leg: 0 | 1 };
+/** 自校が実際に行った1試合の記録（他校同士の試合は結果を保存せず、必要な時に
+ *  決定的に再計算する。自校の試合は本物の試合エンジンの結果なので記録しておく必要がある）。 */
+export type LeagueMatchLogEntry = {
+  week: number;
+  opponentId: string;
+  opponentName: string;
+  gf: number;
+  ga: number;
+};
 export type TeamLeagueState = {
   tier: LeagueTier;
   /** この季の対戦相手（7クラブ、ホーム&アウェーで計14試合）。 */
   clubs: LeagueClub[];
   /** Aチームのみ使用。週→対戦相手のマッピング。Bチームは結果のみ自動進行のため空配列。 */
   schedule: LeagueScheduleEntry[];
+  /** Aチームのみ使用。この季の総当たり組み合わせ（8校の並び順・週割り当て）を決定した瞬間の
+   *  s.seed を凍結して保存したもの。s.seed は rand() が呼ばれるたびに進む「今この瞬間の乱数状態」
+   *  なので、季の途中で毎回 s.seed を直接使って他校同士の試合を再現しようとすると、季の開始時点
+   *  から時間が経つほど値がずれて自校の日程（schedule）と食い違ってしまう。そのため、季の開始時に
+   *  一度だけ固定した値をここに保存し、以後の再現計算はすべてこの値を使う。 */
+  scheduleSeed: number;
+  /** Aチームのみ使用。自校が実際にプレイした試合の週・相手・スコアのログ（順位表・ライバル
+   *  戦績表示に使う）。Bチームは結果のみ自動進行のため空配列。季をまたぐと空にリセットされる。 */
+  results: LeagueMatchLogEntry[];
   played: number;
   win: number;
   draw: number;
@@ -237,6 +255,8 @@ function emptyTeamState(tier: LeagueTier): TeamLeagueState {
     tier,
     clubs: [],
     schedule: [],
+    scheduleSeed: 0,
+    results: [],
     played: 0,
     win: 0,
     draw: 0,
@@ -313,27 +333,290 @@ function makeClubs(
   return clubs;
 }
 
-/** 14週（LEAGUE_WEEKS）へ、7クラブ×ホーム&アウェーの計14試合を決定的に割り当てる。 */
-function makeSchedule(seedNum: number, season: number, clubCount: number): LeagueScheduleEntry[] {
-  const pairs: { clubIndex: number; leg: 0 | 1 }[] = [];
-  for (let i = 0; i < clubCount; i++) {
-    pairs.push({ clubIndex: i, leg: 0 });
-    pairs.push({ clubIndex: i, leg: 1 });
+// ---------------------------------------------------------------------------
+// 8校総当たり（自校＋7クラブ）の決定的スケジューリング。
+// 「他校同士の試合も毎節実際に消化する」ための土台: 自校を含む8チームを
+// チームインデックス 0（自校）〜7（clubs[0..6]）として、標準的な円卓法
+// （circle method）で7ラウンド×4試合の1回戦総当たりを作り、後半7週は
+// 同じ組み合わせのホーム/アウェーを入れ替えて2回戦とする（計14ラウンド）。
+// どのラウンドをどの週（LEAGUE_WEEKS）に割り当てるか、チームの並び順は
+// s.seed・season だけで決まる決定的な乱数で毎季シャッフルする。
+// ---------------------------------------------------------------------------
+const TEAM_COUNT = 8; // 自校1 + クラブ7
+
+function shuffledSeq(seedNum: number, season: number, salt: number, n: number): number[] {
+  const arr = Array.from({ length: n }, (_, i) => i);
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(hf(seedNum, season, salt + i) * (i + 1));
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
   }
-  for (let i = pairs.length - 1; i > 0; i--) {
-    const j = Math.floor(hf(seedNum, season, 4001 + i) * (i + 1));
-    const tmp = pairs[i];
-    pairs[i] = pairs[j];
-    pairs[j] = tmp;
-  }
-  return LEAGUE_WEEKS.map((week, idx) => ({
-    week,
-    clubIndex: pairs[idx].clubIndex,
-    leg: pairs[idx].leg,
-  }));
+  return arr;
 }
 
-/** ピア（対戦相手7クラブ）の年間予想勝点。自チームの実際の勝点と合わせて順位を決めるための基準線。 */
+/** 円卓法: order（8チームの並び順）から、7ラウンド×4試合の1回戦総当たりを作る。
+ *  round の偶奇でペアの並びを反転させ、特定の1チームが1回戦で必ずホーム/アウェーに
+ *  偏らないようにする。返り値の各ペアは [先頭側, 後続側] の順で、leg=0の時に
+ *  そのままの順、leg=1の時は入れ替えて第2戦とする（home/away自体は既存コードに
+ *  ならい試合の強さ計算には使わない演出用の情報）。 */
+function buildRoundRobin(order: number[]): [number, number][][] {
+  const n = order.length;
+  const arr = order.slice();
+  const rounds: [number, number][][] = [];
+  for (let r = 0; r < n - 1; r++) {
+    const round: [number, number][] = [];
+    for (let i = 0; i < n / 2; i++) {
+      const a = arr[i];
+      const b = arr[n - 1 - i];
+      round.push(r % 2 === 0 ? [a, b] : [b, a]);
+    }
+    rounds.push(round);
+    const last = arr.pop()!;
+    arr.splice(1, 0, last);
+  }
+  return rounds;
+}
+
+function teamOrder(seedNum: number, season: number): number[] {
+  return shuffledSeq(seedNum, season, 5001, TEAM_COUNT);
+}
+type RoundSlot = { roundIdx: number; leg: 0 | 1 };
+/** 1回戦7ラウンド×2（leg 0/1）＝14枠を、LEAGUE_WEEKS の14週に決定的にシャッフルして割り当てる。 */
+function roundSlotSeq(seedNum: number, season: number): RoundSlot[] {
+  const base: RoundSlot[] = [];
+  for (let i = 0; i < 7; i++) {
+    base.push({ roundIdx: i, leg: 0 });
+    base.push({ roundIdx: i, leg: 1 });
+  }
+  const order = shuffledSeq(seedNum, season, 5101, base.length);
+  return order.map((idx) => base[idx]);
+}
+/** 指定週の8チーム4試合の組み合わせ（チームインデックス 0=自校 / 1〜7=clubs[0..6]）。
+ *  リーグ週でなければ null。 */
+function weekPairings(seedNum: number, season: number, week: number): [number, number][] | null {
+  const idx = LEAGUE_WEEKS.indexOf(week);
+  if (idx < 0) return null;
+  const rounds = buildRoundRobin(teamOrder(seedNum, season));
+  const slot = roundSlotSeq(seedNum, season)[idx];
+  const base = rounds[slot.roundIdx];
+  return slot.leg === 0 ? base : base.map(([a, b]) => [b, a] as [number, number]);
+}
+
+/** 14週（LEAGUE_WEEKS）へ、自校の対戦相手（クラブ番号・第何戦か）を決定的に割り当てる。
+ *  weekPairings() から自校（チームインデックス0）を含むペアだけを取り出したもの。 */
+function makeSchedule(seedNum: number, season: number): LeagueScheduleEntry[] {
+  return LEAGUE_WEEKS.map((week) => {
+    const pairs = weekPairings(seedNum, season, week)!;
+    const pair = pairs.find(([a, b]) => a === 0 || b === 0)!;
+    const opponentIdx = pair[0] === 0 ? pair[1] : pair[0];
+    const leg: 0 | 1 = pair[0] === 0 ? 0 : 1;
+    return { week, clubIndex: opponentIdx - 1, leg };
+  });
+}
+
+/** 他校同士（自校を含まないペア）の得点を、強さの差から決定的に作る。lib/squad.ts の
+ *  Bチーム即時シミュレーションと同じ quickGoals() を再利用する。 */
+function clubVsClubGoals(
+  seedNum: number,
+  season: number,
+  week: number,
+  clubA: LeagueClub,
+  clubB: LeagueClub,
+): { gA: number; gB: number } {
+  const base = [seedNum, season, week, strHash(clubA.id), strHash(clubB.id), 9001];
+  const gA = quickGoals(hf(...base, 1), clubA.strength, clubB.strength);
+  const gB = quickGoals(hf(...base, 2), clubB.strength, clubA.strength);
+  return { gA, gB };
+}
+
+// ---------------------------------------------------------------------------
+// 順位表（自校＋7クラブ、8校）。他校同士の試合は weekPairings() と
+// clubVsClubGoals() から毎回決定的に再計算し、State には保存しない。
+// 自校の試合だけは本物の試合エンジンの結果なので team.results に記録されたものを使う
+// （旧セーブでログが無い週は「無ければ0から」で0試合として扱う＝仕様どおり）。
+// ---------------------------------------------------------------------------
+export type LeagueStandingRow = {
+  teamId: string; // 自校は 'self'、他校は LeagueClub.id
+  name: string;
+  isSelf: boolean;
+  youth: boolean;
+  played: number;
+  win: number;
+  draw: number;
+  lose: number;
+  gf: number;
+  ga: number;
+  gd: number;
+  points: number;
+};
+export type LeagueRivalResult = {
+  week: number;
+  /** LEAGUE_WEEKS内の0始まりの節番号（表示は+1して「第n節」）。 */
+  roundIndex: number;
+  opponentId: string;
+  opponentName: string;
+  gf: number;
+  ga: number;
+  outcome: 'win' | 'draw' | 'lose';
+};
+export type LeagueTable = {
+  /** 勝ち点→得失点差→総得点→学校ID の順で並んだ順位表。rows[i] の順位は i+1。 */
+  rows: LeagueStandingRow[];
+  /** teamId → その校の全結果（自校戦を含む）。ライバル校クリックでの戦績表示に使う。 */
+  resultsByTeam: Record<string, LeagueRivalResult[]>;
+};
+function outcomeOf(gf: number, ga: number): 'win' | 'draw' | 'lose' {
+  return gf > ga ? 'win' : gf === ga ? 'draw' : 'lose';
+}
+/** Aチームの現時点（team.played 節消化時点）での順位表を決定的に計算する。season は
+ *  既定で s.season（進行中シーズンの表示用）。季の切り替え直後（s.season はもう進んでいるが
+ *  comp.teamA はまだ前季のデータのまま）に前季の最終順位を出す場合は、呼び出し側が
+ *  finalizeTeamA から prevSeason を明示的に渡す。 */
+export function computeLeagueTable(s: State, comp: CompState, season: number = s.season): LeagueTable {
+  const team = comp.teamA;
+  const clubs = team.clubs;
+  type Acc = { played: number; win: number; draw: number; lose: number; gf: number; ga: number; points: number };
+  const acc: Record<string, Acc> = {};
+  const results: Record<string, LeagueRivalResult[]> = { self: [] };
+  for (const c of clubs) {
+    acc[c.id] = { played: 0, win: 0, draw: 0, lose: 0, gf: 0, ga: 0, points: 0 };
+    results[c.id] = [];
+  }
+  function apply(id: string, gf: number, ga: number) {
+    const a = acc[id];
+    if (!a) return;
+    a.played++;
+    a.gf += gf;
+    a.ga += ga;
+    const o = outcomeOf(gf, ga);
+    if (o === 'win') {
+      a.win++;
+      a.points += 3;
+    } else if (o === 'draw') {
+      a.draw++;
+      a.points += 1;
+    } else a.lose++;
+  }
+  // 自校が実際にプレイした試合（記録があるものだけ。旧セーブは記録が無ければ0試合）。
+  for (const r of team.results) {
+    const roundIndex = LEAGUE_WEEKS.indexOf(r.week);
+    results.self.push({
+      week: r.week,
+      roundIndex,
+      opponentId: r.opponentId,
+      opponentName: r.opponentName,
+      gf: r.gf,
+      ga: r.ga,
+      outcome: outcomeOf(r.gf, r.ga),
+    });
+    if (acc[r.opponentId]) {
+      apply(r.opponentId, r.ga, r.gf);
+      results[r.opponentId].push({
+        week: r.week,
+        roundIndex,
+        opponentId: 'self',
+        opponentName: s.school,
+        gf: r.ga,
+        ga: r.gf,
+        outcome: outcomeOf(r.ga, r.gf),
+      });
+    }
+  }
+  // 他校同士の試合: 自校が実際に消化した節数（team.played）ぶんだけ決定的に再現する。
+  // s.seed は rand() の呼び出しで刻々と進むため、ここでは使わず、季の開始時に凍結した
+  // team.scheduleSeed（＝comp.teamA.schedule を作った時の s.seed）を使う。こうしないと
+  // 季の途中で呼び出すたびに組み合わせがずれ、自校の日程（schedule）と食い違ってしまう。
+  const rrSeed = team.scheduleSeed;
+  const rounds = buildRoundRobin(teamOrder(rrSeed, season));
+  const slots = roundSlotSeq(rrSeed, season);
+  const elapsed = Math.min(team.played, LEAGUE_WEEKS.length);
+  for (let i = 0; i < elapsed; i++) {
+    const week = LEAGUE_WEEKS[i];
+    const slot = slots[i];
+    const basePairs = rounds[slot.roundIdx];
+    const pairs = slot.leg === 0 ? basePairs : basePairs.map(([a, b]) => [b, a] as [number, number]);
+    for (const [a, b] of pairs) {
+      if (a === 0 || b === 0) continue; // 自校の試合は上で処理済み
+      const clubA = clubs[a - 1];
+      const clubB = clubs[b - 1];
+      if (!clubA || !clubB) continue;
+      const { gA, gB } = clubVsClubGoals(rrSeed, season, week, clubA, clubB);
+      apply(clubA.id, gA, gB);
+      apply(clubB.id, gB, gA);
+      results[clubA.id].push({
+        week,
+        roundIndex: i,
+        opponentId: clubB.id,
+        opponentName: clubB.name,
+        gf: gA,
+        ga: gB,
+        outcome: outcomeOf(gA, gB),
+      });
+      results[clubB.id].push({
+        week,
+        roundIndex: i,
+        opponentId: clubA.id,
+        opponentName: clubA.name,
+        gf: gB,
+        ga: gA,
+        outcome: outcomeOf(gB, gA),
+      });
+    }
+  }
+  const rows: LeagueStandingRow[] = [
+    {
+      teamId: 'self',
+      name: s.school,
+      isSelf: true,
+      youth: false,
+      played: team.played,
+      win: team.win,
+      draw: team.draw,
+      lose: team.lose,
+      gf: team.gf,
+      ga: team.ga,
+      gd: team.gf - team.ga,
+      points: team.points,
+    },
+    ...clubs.map((c) => ({
+      teamId: c.id,
+      name: c.name,
+      isSelf: false,
+      youth: c.youth,
+      ...acc[c.id],
+      gd: acc[c.id].gf - acc[c.id].ga,
+    })),
+  ];
+  rows.sort(
+    (x, y) => y.points - x.points || y.gd - x.gd || y.gf - x.gf || x.teamId.localeCompare(y.teamId),
+  );
+  return { rows, resultsByTeam: results };
+}
+/** 昇格圏（上位2位）を表示すべきか: 最上位階層（全国リーグ）では昇格が無いので false。 */
+export function promotionZoneActive(tier: LeagueTier): boolean {
+  return LEAGUE_TIERS.indexOf(tier) < LEAGUE_TIERS.length - 1;
+}
+/** 降格圏（下位2位）を表示すべきか: 最下位階層（県2部）では降格が無いので false。 */
+export function relegationZoneActive(tier: LeagueTier): boolean {
+  return LEAGUE_TIERS.indexOf(tier) > 0;
+}
+/** 自校の残り試合数（0〜14）。 */
+export function leagueRemaining(comp: CompState): number {
+  return Math.max(0, LEAGUE_WEEKS.length - comp.teamA.played);
+}
+/** 次節の自校の対戦相手（無ければ season 消化済みで null）。 */
+export function leagueNextFixture(comp: CompState): { opponent: string; leg: 0 | 1; week: number } | null {
+  const entry = comp.teamA.schedule[comp.teamA.played];
+  if (!entry) return null;
+  const club = comp.teamA.clubs[entry.clubIndex];
+  if (!club) return null;
+  return { opponent: club.name, leg: entry.leg, week: entry.week };
+}
+
+/** ピア（対戦相手7クラブ）の年間予想勝点。Bチーム専用（実際の試合を消化しない即時シミュレーション
+ *  の基準線）。Aチームは computeLeagueTable() が実際に消化した他校同士の試合から順位を出すため、
+ *  もう peerPoints は使わない。 */
 function peerPoints(seedNum: number, season: number, club: LeagueClub): number {
   const j = hf(seedNum, strHash(club.id), season, 321);
   return clamp(Math.round((club.strength / 99) * 40 + (j - 0.5) * 14), 0, 42);
@@ -395,9 +678,9 @@ function pickDefaultDistrict(s: State): DistrictId {
 
 function finalizeTeamA(s: State, comp: CompState, prevSeason: number): void {
   const team = comp.teamA;
-  const peers = team.clubs.map((c) => peerPoints(s.seed, prevSeason, c));
-  const all = [...peers, team.points].sort((a, b) => b - a);
-  const rank = all.indexOf(team.points) + 1;
+  // 昇格・降格はこの順位表（他校同士の試合も実消化した最終順位）で決める。
+  const { rows } = computeLeagueTable(s, comp, prevSeason);
+  const rank = rows.findIndex((r) => r.isSelf) + 1;
   const tierIdx = LEAGUE_TIERS.indexOf(team.tier);
   let newTier = team.tier;
   if (rank <= 2 && tierIdx < LEAGUE_TIERS.length - 1) newTier = LEAGUE_TIERS[tierIdx + 1];
@@ -406,7 +689,7 @@ function finalizeTeamA(s: State, comp: CompState, prevSeason: number): void {
   const relegated = LEAGUE_TIERS.indexOf(newTier) < tierIdx;
   if (rank === 1 && team.tier === 'national') {
     s.reputation = clamp(s.reputation + 8);
-    s.funds += 40;
+    addFunds(s, 40, '全国リーグ優勝');
     s.feed = [`${tierInfo[team.tier].name}優勝！全国区の名声を得ました。`, ...s.feed].slice(0, 30);
   } else if (promoted) {
     s.feed = [
@@ -443,7 +726,12 @@ function advanceCompetitionSeason(s: State, comp: CompState): void {
   comp.wc = freshCup();
   const district = districtById(comp.districtId);
   comp.teamA.clubs = makeClubs(s.seed, district, comp.teamA.tier, s.season, 'A');
-  comp.teamA.schedule = makeSchedule(s.seed, s.season, comp.teamA.clubs.length);
+  // この季の総当たり組み合わせを決める乱数状態をここで凍結する（s.seed はこの後も
+  // rand() 呼び出しのたびに進み続けるため、後で他校同士の試合を再現する時は必ず
+  // この値を使う。s.seed を直接使い回さない）。
+  comp.teamA.scheduleSeed = s.seed;
+  comp.teamA.schedule = makeSchedule(comp.teamA.scheduleSeed, s.season);
+  comp.teamA.results = [];
   comp.teamA.played = comp.teamA.win = comp.teamA.draw = comp.teamA.lose = 0;
   comp.teamA.gf = comp.teamA.ga = comp.teamA.points = 0;
   if (comp.teamA.tier !== 'pref2' && bTeamEligible(s)) {
@@ -507,6 +795,15 @@ export function hydrateCompetition(s: State): void {
     };
   }
   const comp = v.competition;
+  // T4.1: 旧セーブ（results フィールド導入前）の補完。「自校の結果は記録があればそれを
+  // 使い、無ければ0から」の方針どおり、無ければ空配列を補うだけでよい（他校同士の試合は
+  // weekPairings()/clubVsClubGoals() から常に決定的に再現できるため、保存する必要が無い）。
+  if (!Array.isArray(comp.teamA.results)) comp.teamA.results = [];
+  if (comp.teamB && !Array.isArray(comp.teamB.results)) comp.teamB.results = [];
+  // scheduleSeed 未導入の旧セーブ（季の途中）の補完。本来の生成時点の値は分からないため、
+  // 現在の s.seed で代用して以後固定する（ここから先は決定的に安定する）。
+  if (typeof comp.teamA.scheduleSeed !== 'number') comp.teamA.scheduleSeed = s.seed;
+  if (comp.teamB && typeof comp.teamB.scheduleSeed !== 'number') comp.teamB.scheduleSeed = s.seed;
   if (comp.seasonGenerated !== s.season) advanceCompetitionSeason(s, comp);
 }
 export function validateCompetition(s: State): void {
@@ -526,9 +823,22 @@ export function validateCompetition(s: State): void {
         throw Error(`${label}の対戦相手データが不正です。`);
     if (!Array.isArray(team.schedule) || (team.schedule.length !== 0 && team.schedule.length !== 14))
       throw Error(`${label}の日程データが不正です。`);
+    if (!num(team.scheduleSeed, 0, 4294967295)) throw Error(`${label}の日程データが不正です。`);
     if (team.win + team.draw + team.lose !== team.played) throw Error(`${label}の成績データが不正です。`);
     if (!num(team.played, 0, 14) || !num(team.points, 0, 42))
       throw Error(`${label}の成績データが不正です。`);
+    if (!Array.isArray(team.results) || team.results.length > 14)
+      throw Error(`${label}の試合結果ログが不正です。`);
+    for (const r of team.results)
+      if (
+        !r ||
+        !num(r.week, 0, 47) ||
+        typeof r.opponentId !== 'string' ||
+        typeof r.opponentName !== 'string' ||
+        !num(r.gf, 0, 30) ||
+        !num(r.ga, 0, 30)
+      )
+        throw Error(`${label}の試合結果ログが不正です。`);
   };
   checkTeam(comp.teamA, 'Aチーム');
   if (comp.teamB) {
@@ -716,6 +1026,14 @@ export function resolveCompetitionMatch(s: State, m: ResolvableMatch): void {
       team.win++;
       team.points += 3;
     } else team.lose++;
+    // T4.1: 順位表・ライバル校の戦績表示のため、自校の試合ログを残す（他校同士の試合は
+    // 保存せず、必要な時に決定的に再現する）。相手は fixture.opponent（= club.name）で
+    // 対応するクラブを引き、クラブが見つからない場合でも名前だけは残す。
+    const club = team.clubs.find((c) => c.name === f.opponent);
+    team.results = [
+      ...team.results,
+      { week: s.week, opponentId: club?.id ?? f.opponent, opponentName: f.opponent, gf: m.home, ga: m.away },
+    ].slice(-14);
     return;
   }
   if (f.kind === 'ih_qualifier' || f.kind === 'wc_qualifier') {
@@ -726,7 +1044,7 @@ export function resolveCompetitionMatch(s: State, m: ResolvableMatch): void {
     } else if (f.round === 3) {
       cup.qualified = true;
       cup.best = '全国大会出場';
-      s.funds += 35;
+      addFunds(s, 35, '大会の勝ち上がり（全国大会出場）');
     }
     return;
   }
@@ -740,7 +1058,7 @@ export function resolveCompetitionMatch(s: State, m: ResolvableMatch): void {
       if (f.round === 4) {
         s.records.trophies++;
         s.reputation = clamp(s.reputation + 12);
-        s.funds += 75;
+        addFunds(s, 75, '大会の勝ち上がり（全国優勝）');
       }
     }
   }

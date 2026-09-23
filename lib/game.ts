@@ -5,6 +5,7 @@ import {
   validateDevelopment,
   syncHalf,
   growthFactor,
+  developmentDay,
   developmentWeek,
   applyIntake,
   handleDevelopment,
@@ -17,6 +18,11 @@ import {
   type DevelopmentAction,
 } from './development.ts';
 import { hydrateV3, validateV3, type V3State } from './v3.ts';
+import {
+  handleTrainingPolicy,
+  applyIndividualGrowth,
+  type TrainingPolicyAction,
+} from './training-policy.ts';
 import {
   skillMatchFactors,
   playerFatigueMult,
@@ -48,6 +54,8 @@ import {
   readCompetition,
   type CompetitionAction,
 } from './competition.ts';
+// T4.2: 部費の収入1件分（週・日・金額・理由）。
+export type FundEntry = { week: number; day: number; amount: number; reason: string };
 export type Position = 'GK' | 'DF' | 'MF' | 'FW';
 export type Stat = 'shoot' | 'pass' | 'defend' | 'speed' | 'mental' | 'keep';
 export type Training =
@@ -188,6 +196,10 @@ export type State = {
   morale: number;
   facilities: number;
   funds: number;
+  // T4.2: 部費の収入履歴（週・日・金額・理由）。直近50件で打ち切る。新しい順。
+  // 支出（設備強化・スカウト活動）は含まない（あくまで「収入」の見える化）。
+  // 旧セーブ（このフィールドが導入される前）は validateSave() が空配列で補う。
+  fundHistory: FundEntry[];
   focus: number | null;
   pending: Fixture | null;
   match: Match | null;
@@ -329,6 +341,17 @@ const given = [
 ];
 export const clamp = (n: number, min = 0, max = 100) =>
   Math.min(max, Math.max(min, n));
+// T4.2: 部費の収入を記録付きで加算する（既存の s.funds += ... の置き換え）。
+// 経済バランスは変えない（金額はこれまでどおり）。負・0は履歴に残さない
+// （収入の見える化が目的で、支出はここでは扱わない）。
+export function addFunds(s: State, amount: number, reason: string): void {
+  s.funds += amount;
+  if (amount <= 0) return;
+  s.fundHistory = [
+    { week: s.week, day: s.day, amount, reason },
+    ...s.fundHistory,
+  ].slice(0, 50);
+}
 // S1: 曜日名（day: 0=月…6=日）。試合は必ず日曜（day 6）。
 export const DOW_NAMES = ['月', '火', '水', '木', '金', '土', '日'] as const;
 // 週間メニューの既定値（月〜土）。休養を週2日確保しつつ、パス・シュートで基礎を作る構成。
@@ -550,6 +573,7 @@ export function newGame(
     morale: 70,
     facilities: 1,
     funds: 25,
+    fundHistory: [],
     focus: null,
     pending: null,
     match: null,
@@ -632,7 +656,7 @@ function finishWeek(s: State) {
     s.best = '大会未出場';
     s.focus = null;
     s.cohesion = Math.max(35, s.cohesion - 18);
-    s.funds += 25;
+    addFunds(s, 25, '年度予算');
     s.morale = 75;
     applyIntake(s, fresh);
     hydrateV3(s);
@@ -652,13 +676,16 @@ function finishWeek(s: State) {
 // 1-(1-0.13)^(1/6) ≒ 2.27%/日に決定的に換算する（6日続けても週あたりの
 // 発生率がほぼ変わらないようにするため）。
 const DAILY_INJURY_CHANCE = 1 - Math.pow(0.87, 1 / 6);
+// T3-2: 成長の配分（チームメニュー60% ＋ 個人方針40%）。lib/training-policy.ts の
+// applyIndividualGrowth() と対で使う（個人方針側は INDIV_WEIGHT を自前で持つ）。
+const TEAM_GROWTH_WEIGHT = 0.6;
 // S1: 1日分の練習・休養を適用する（成長は旧・週あたり効果の1/6、疲労は
 // 練習日=旧・週あたり疲労の1/6を加算しつつ自然回復-3、休養日は-15固定）。
 // けがの回復も旧・週あたり回復量を7日で割った量にする。
-// スキル習得(trainSquadSkills)と半年方針の進捗(developmentWeek)は週単位の
-// 仕組み（streak・8回で達成など）のままなので、週の練習日（月〜土）が終わる
-// 時点で週1回だけ呼ぶ（finishDay 参照）。日次×6回呼ぶと同じ週内で無関係に
-// 何度も抽選が走ってしまうのを避けるため、実施したメニューは s.weekTrainings に
+// スキル習得(trainSquadSkills)は週単位の仕組み（streak）のままなので、週の練習日
+// （月〜土）が終わる時点で週1回だけ呼ぶ（finishDay 参照）。半年方針の進捗（T3）は
+// この関数の中で日ごとに数える（developmentDay）。日次×6回呼ぶと同じ週内で無関係に
+// 何度も抽選が走ってしまう trainSquadSkills 側は、実施したメニューを s.weekTrainings に
 // 記録しておき、週末にまとめて集計する。
 function advanceTrainingDay(s: State, tr: Training): { injured: boolean } {
   const t = training[tr];
@@ -668,19 +695,27 @@ function advanceTrainingDay(s: State, tr: Training): { injured: boolean } {
   for (const p of s.players) {
     p.injury = Math.max(0, p.injury - (isRest ? 2 : 1) / 7);
     if (!p.injury && !isRest) {
+      // T3-2: talent/facilities/fatigue/重点育成の共通係数。チームメニュー分・
+      // 個人方針分の両方がこの base を使い、重点育成の1.5倍が両方に一律で効くようにする。
+      const base =
+        p.talent *
+        (1 + (s.facilities - 1) * 0.14) *
+        (1 - p.fatigue / 150) *
+        (p.id === s.focus ? 1.5 : 1);
       for (const k of t.stats) {
         const gain =
           ((t.stats.length === 6 ? 0.45 : t.stats.length === 1 ? 1.65 : 1.05) *
-            p.talent *
-            (1 + (s.facilities - 1) * 0.14) *
-            (1 - p.fatigue / 150) *
-            (p.id === s.focus ? 1.5 : 1) *
+            TEAM_GROWTH_WEIGHT *
+            base *
             (p.stats[k] > 85 ? 0.35 : 1) *
             growthFactor(s, p, k)) /
           6;
         p.stats[k] = clamp(p.stats[k] + gain, 20, 99);
         growth += gain;
       }
+      // T3-2: 個人方針ぶん（40%）。チームメニューが対象にしない能力・ポジション
+      // 習熟度も、個人方針ならここで伸びる。
+      growth += applyIndividualGrowth(s, p, base);
       if (p.fatigue > 65 && rand(s) < DAILY_INJURY_CHANCE) {
         p.injury = 2;
         injured = true;
@@ -693,7 +728,9 @@ function advanceTrainingDay(s: State, tr: Training): { injured: boolean } {
     s.cohesion + (tr === 'possession' ? 4 : isRest ? -1 : 1) / 6,
   );
   s.morale = clamp(s.morale + (isRest ? 5 : -1) / 6);
-  if (s.day === 0) s.funds += 2;
+  if (s.day === 0) addFunds(s, 2, '週の部費');
+  // T3-1: 半年方針の進捗は「練習した日数」で数える（週1回ではなく日ごと）。
+  developmentDay(s, tr);
   // T2: 調子は1日ぶんずつ決定的に変動させる（普通へ戻る力＋休養で上向き・
   // 高疲労で下向き・士気が高いと上向き・小さな揺らぎ）。
   advanceSquadMood(s, isRest);
@@ -754,7 +791,9 @@ function finishDay(s: State) {
   if (s.day === 6) {
     const menu = weeklyPrimaryMenu(s);
     trainSquadSkills(s, menu);
-    developmentWeek(s, menu);
+    // T3-1: 半年方針の進捗は日次(developmentDay)に移した。developmentWeek は
+    // マネージャーの週次サポートのみを週1回適用する。
+    developmentWeek(s);
     s.weekTrainings = [];
     const f = competitionFixture(s, s.week);
     if (f) {
@@ -776,6 +815,7 @@ export type Action =
   | SquadAction
   | LifeAction
   | CompetitionAction
+  | TrainingPolicyAction
   | { type: 'train'; training: Training }
   | { type: 'autoWeek' }
   | { type: 'setMenu'; menu: Training[] }
@@ -800,6 +840,7 @@ export function act(old: State, a: Action): State {
   if (handleSquad(s, a as SquadAction)) return s;
   if (handleLife(s, a)) return s;
   if (handleCompetition(s, a)) return s;
+  if (handleTrainingPolicy(s, a as TrainingPolicyAction)) return s;
   if (a.type === 'train') {
     if (s.pending || s.match || s.event || s.v3.life.current)
       throw Error('試合または部内イベントを先に終えてください。');
@@ -1216,7 +1257,11 @@ function simulateSegment(s: State) {
         s.reputation + (m.fixture.kind === 'friendly' ? 1 : 3),
       );
       s.morale = clamp(s.morale + 7);
-      s.funds += m.fixture.kind === 'friendly' ? 5 : 12;
+      addFunds(
+        s,
+        m.fixture.kind === 'friendly' ? 5 : 12,
+        m.fixture.kind === 'friendly' ? '試合（練習試合勝利）' : '試合（公式戦勝利）',
+      );
     } else s.morale = clamp(s.morale - 4);
     resolveCompetitionMatch(s, m);
     if (
@@ -1253,6 +1298,8 @@ export function validateSave(x: unknown): State {
   // T2: おまかせ編成の方針・自動適用（導入前のセーブ）は既定値で補う。
   if (s.autoLineupPolicy === undefined) s.autoLineupPolicy = 'overall';
   if (s.autoLineupOnMatch === undefined) s.autoLineupOnMatch = false;
+  // T4.2: 部費の収入履歴（導入前のセーブ）は空配列で補う。
+  if (s.fundHistory === undefined) s.fundHistory = [];
   const num = (v: unknown, min: number, max: number) =>
     typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
   if (
@@ -1272,6 +1319,19 @@ export function validateSave(x: unknown): State {
     !Array.isArray(s.weekTrainings) ||
     s.weekTrainings.length > 6 ||
     s.weekTrainings.some((t) => !(t in training)) ||
+    !Array.isArray(s.fundHistory) ||
+    s.fundHistory.length > 50 ||
+    s.fundHistory.some(
+      (f) =>
+        !f ||
+        !num(f.week, 0, 47) ||
+        !Number.isInteger(f.week) ||
+        !num(f.day, 0, 6) ||
+        !Number.isInteger(f.day) ||
+        !num(f.amount, 0, 1000000) ||
+        typeof f.reason !== 'string' ||
+        f.reason.length > 100,
+    ) ||
     !Array.isArray(s.players) ||
     s.players.length < ROSTER_MIN ||
     s.players.length > ROSTER_MAX ||

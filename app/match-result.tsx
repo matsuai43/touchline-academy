@@ -116,10 +116,23 @@ export function MatchResult({
   s: State;
   run: (a: Action) => State | null;
   onPlayer: (p: Player) => void;
-  /** T4で配線予定。値が渡されない（undefined）間は表示枠ごと出さない。 */
+  /** T4.2: 通常は渡さず、s.fundHistory から自動で算出する（下記参照）。テストなど
+   *  値を明示したい場合だけ上書きに使える。 */
   fundsEarned?: { amount: number; reason: string }[];
 }) {
   const m = s.match!;
+  // T4.2: この試合で得た部費。試合中の収入（勝利ボーナス・大会の勝ち上がり等）は
+  // すべて試合が行われた週・その週の日曜(day===6)というただ1つの時点で記録される
+  // （resolveCompetitionMatch は simulateSegment から同期的に呼ばれるため）ので、
+  // s.fundHistory から「現在の週・曜日(=6、試合が続く間はdayは6のまま)」に一致する
+  // 記録を抽出すれば、この試合ぶんの収入だけを取り出せる（週の部費・年度予算・半年目標は
+  // 別の曜日/週に記録されるため混ざらない）。
+  const matchFunds =
+    fundsEarned ??
+    (s.fundHistory ?? [])
+      .filter((f) => f.week === s.week && f.day === 6)
+      .slice()
+      .reverse();
   const ratings = matchRatings(s);
   const top = topRated(ratings);
   const cleanSheet = m.away === 0;
@@ -221,13 +234,13 @@ export function MatchResult({
         </ol>
         {!ratings.length && <p className="muted">出場記録がないため評価点を表示できません。</p>}
       </section>
-      {fundsEarned && fundsEarned.length > 0 && (
+      {matchFunds.length > 0 && (
         <section className="panel mr-funds" aria-label="この試合で得た部費">
           <h2>
             <Wallet size={17} /> この試合で得た部費
           </h2>
           <ul>
-            {fundsEarned.map((f, i) => (
+            {matchFunds.map((f, i) => (
               <li key={i}>
                 <b>+{f.amount}</b>
                 <span>{f.reason}</span>

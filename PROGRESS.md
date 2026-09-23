@@ -213,3 +213,8 @@ Bの日程seedはAと独立（h32(s.seed, B_SCHEDULE_SALT)）で、Aの順位表
 Aが大きく昇格した場合などに、AとBが2階層以上離れることがある。厳密な「1つ下」に戻す場合は finalizeTeamB を tierBelow(newTierA) を返すだけにする。
 npm test 173件、Playwright 40件、型緑、lint 28件。**未push、本番はv2のまま。**
 
+2026-09-23 中断（5時間枠94%のため上限前に停止。23時リセット後に再開予定）。main はコミット 53359f6 でクリーン。
+未完のユーザー要望3件: (1)交代時・交代後に枠のポジション名が分かるように (2)個人方針画面から能力シートを参照 (3)能力ランクをギリシャ文字からA〜Gへ戻す（閾値は現行、チームは「Aチーム」と文字で書きランクは四角バッジで区別）。
+途中の変更は git stash@{0}「WIP v3.3修正3件（途中・未検証）」に退避済み（match-ui.tsx, training-policy-ui.tsx, globals.css, match-ui.spec.ts, 新規 training-policy-ui.spec.ts, .claude/launch.json）。
+(3)A〜G化は未着手。再開時は stash を pop して続けるか、破棄して最初からやり直す（未検証なので、popした場合も必ず全テストを回すこと）。
+

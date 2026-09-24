@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { newGame, act, type State, type Training } from '../lib/game.ts';
+import { newGame, act, validateSave, type State, type Training } from '../lib/game.ts';
 import { getCurrentLifeEvent } from '../lib/school-life.ts';
 import {
   DISTRICTS,
@@ -9,6 +9,7 @@ import {
   validateCompetition,
   readCompetition,
   competitionFixture,
+  advanceCupWeek,
   mapLegacyFixtureKind,
   choosablePrefectures,
   canChoosePrefecture,
@@ -29,6 +30,82 @@ import {
   type CompState,
   type LeagueTier,
 } from '../lib/competition.ts';
+
+void test('T-2: rival cup results advance the bracket and stronger schools survive more often', () => {
+  let entrantTotal = 0;
+  let semifinalTotal = 0;
+  let upperSeedChampions = 0;
+  for (let seed = 1; seed <= 50; seed++) {
+    const s = newGame('大会検証高校', seed * 37);
+    const cup = readCompetition(s).ih;
+    const bracket = cup.qualifier!;
+    // The player's first-round loss is recorded by the real match engine in play.
+    // Here it is supplied directly to isolate the rival-vs-rival tournament curve.
+    const selfMatch = bracket.rounds[0][0];
+    selfMatch.home = 0;
+    selfMatch.away = 1;
+    selfMatch.winnerId = selfMatch.awayId;
+    cup.alive = false;
+    for (const week of IH_QUALIFIER_WEEKS) advanceCupWeek(s, week);
+    assert.equal(bracket.completedRounds, 4);
+    const strength = (id: string | null) => bracket.teams.find((team) => team.id === id)!.strength;
+    const entrants = bracket.teams.filter((team) => team.id !== 'self').map((team) => team.strength);
+    entrantTotal += entrants.reduce((sum, value) => sum + value, 0) / entrants.length;
+    const semifinalists = bracket.rounds[2].flatMap((match) => [match.homeId, match.awayId]);
+    semifinalTotal += semifinalists.reduce((sum, id) => sum + strength(id), 0) / semifinalists.length;
+    const championStrength = strength(bracket.rounds[3][0].winnerId);
+    const topQuartile = [...entrants].sort((a, b) => b - a)[3];
+    if (championStrength >= topQuartile) upperSeedChampions++;
+    const national = cup.national!;
+    for (const week of IH_NATIONAL_WEEKS) advanceCupWeek(s, week);
+    assert.equal(national.completedRounds, 5, 'national tournament continues even after the school loses');
+  }
+  assert.ok(semifinalTotal / 50 > entrantTotal / 50 + 2);
+  assert.ok(upperSeedChampions >= 20, `strong seeds won only ${upperSeedChampions}/50 cups`);
+});
+
+void test('T-2: the next opponent is the school that won the adjacent bracket match', () => {
+  let found = false;
+  for (let seed = 1; seed <= 10 && !found; seed++) {
+    let s = newGame('勝ち上がり検証高校', seed);
+    for (const player of s.players) for (const key of Object.keys(player.stats) as (keyof typeof player.stats)[]) player.stats[key] = 95;
+    while (s.week < IH_QUALIFIER_WEEKS[1]) s = step(s, 'rest');
+    const cup = readCompetition(s).ih;
+    if (!cup.alive) continue;
+    const bracket = cup.qualifier!;
+    const otherMatch = bracket.rounds[0][1];
+    const winner = bracket.teams.find((team) => team.id === otherMatch.winnerId)!;
+    const fixture = competitionFixture(s, IH_QUALIFIER_WEEKS[1])!;
+    assert.equal(fixture.opponent, winner.name);
+    assert.equal(fixture.strength, winner.strength);
+    found = true;
+  }
+  assert.ok(found, 'at least one boosted team should win the first qualifier match');
+});
+
+void test('T-2: old saves without a bracket keep their current season fixture and get a bracket next spring', () => {
+  let s = newGame('旧セーブ大会検証高校', 52);
+  while (s.week < IH_QUALIFIER_WEEKS[0]) s = step(s, 'rest');
+  while (!s.pending) {
+    if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    s = resolveLife(s);
+    s = act(s, { type: 'train', training: 'rest' });
+  }
+  const fixture = s.pending;
+  const raw = JSON.parse(JSON.stringify(s));
+  delete raw.v3.competition.ih.qualifier;
+  delete raw.v3.competition.ih.national;
+  delete raw.v3.competition.wc.qualifier;
+  delete raw.v3.competition.wc.national;
+  s = validateSave(raw);
+  assert.deepEqual(s.pending, fixture, 'an already scheduled match stays intact');
+  s = act(s, { type: 'start' });
+  while (!s.match!.done) s = act(s, { type: 'segment' });
+  s = act(s, { type: 'finish' });
+  while (s.season === 1) s = step(s, 'rest');
+  assert.ok(readCompetition(s).ih.qualifier);
+  assert.ok(readCompetition(s).wc.national);
+});
 
 // ---------------------------------------------------------------------------
 // テスト用ヘルパー（本体は触らず、公開APIだけで週を進める。squad.test.ts と同じ流儀）

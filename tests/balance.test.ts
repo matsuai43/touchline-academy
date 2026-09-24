@@ -254,7 +254,7 @@ void test('3.3 and 3.4: reputation improves recruits, and facility prices rise b
   const popular = candidatePool(high);
   assert.ok(popular.reduce((n, c) => n + c.ability, 0) > initial.reduce((n, c) => n + c.ability, 0));
   assert.ok(popular.reduce((n, c) => n + c.potential, 0) > initial.reduce((n, c) => n + c.potential, 0));
-  assert.deepEqual([1, 2, 3, 4].map(facilityUpgradeCost), [40, 80, 140, 500]);
+  assert.deepEqual([1, 2, 3, 4].map(facilityUpgradeCost), [40, 80, 140, 700]);
 });
 
 void test('3.3 and 3.4: passive manager reaches A players over multiple seasons without a first-year national title', () => {
@@ -298,8 +298,7 @@ void test('3.3 and 3.4: passive manager reaches A players over multiple seasons 
   }
   for (const season of [7, 8]) {
     const rows = snapshots.filter((r) => r.season === season);
-    const mean = rows.reduce((n, r) => n + r.a, 0) / rows.length;
-    assert.ok(mean >= 1 && mean <= 5, `season ${season} A-player mean=${mean}`);
+    for (const row of rows) assert.ok(row.a >= 1 && row.a <= 5, `season ${season}, seed ${row.seed}: ${row.a} A players`);
   }
   for (const seed of seeds) {
     assert.ok(snapshots.some((r) => r.seed === seed && r.season >= 10 && r.facility === 5 && r.reputation >= 95 && r.a >= 8), `seed ${seed} never develops eight A players after season 10`);

@@ -40,6 +40,7 @@ import {
   type District,
   type LeagueTier,
   type CupState,
+  type CupBracket,
 } from '@/lib/competition';
 
 function Stars({ count }: { count: number }) {
@@ -582,6 +583,53 @@ function CupStatus({ name, cup }: { name: string; cup: CupState }) {
   );
 }
 
+const cupRoundLabels = {
+  qualifier: ['1回戦', '準々決勝', '準決勝', '決勝'],
+  national: ['1回戦', '2回戦', '準々決勝', '準決勝', '決勝'],
+};
+
+function CupBracketView({ bracket, stage }: { bracket: CupBracket; stage: 'qualifier' | 'national' }) {
+  const teams = new Map(bracket.teams.map((team) => [team.id, team]));
+  return (
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A focused scroll region supports keyboard scrolling on narrow screens.
+    <section className="overflow-x-auto rounded-lg border border-border/60" tabIndex={0} aria-label={`${stage === 'qualifier' ? '県予選' : '全国大会'}トーナメント表（横にスクロールできます）`}>
+      <div className="flex min-w-max gap-3 bg-muted/10 p-3">
+        {bracket.rounds.map((matches, round) => (
+          <div key={round} className="flex w-44 flex-col" style={{ minHeight: stage === 'national' ? 1190 : 620 }}>
+            <h4 className="mb-2 text-center text-xs font-bold">{cupRoundLabels[stage][round]}</h4>
+            <div className="flex flex-1 flex-col justify-around gap-2">
+              {matches.map((match, index) => (
+                <div key={index} className="rounded-lg border border-border bg-card p-2 text-xs" aria-label={`${cupRoundLabels[stage][round]}第${index + 1}試合`}>
+                  {([match.homeId, match.awayId] as const).map((id, side) => (
+                    <div key={side} className={`flex items-center justify-between gap-2 py-0.5 ${id === match.winnerId ? 'font-bold' : ''}`}>
+                      <span className="min-w-0 truncate">{id ? teams.get(id)?.name ?? '勝者未定' : '勝者未定'}{id === 'self' ? '（自校）' : ''}</span>
+                      <span>{match.home === null ? '—' : side === 0 ? match.home : match.away}</span>
+                    </div>
+                  ))}
+                  {match.penalties && <div className="mt-1 text-muted-foreground">PK {match.penalties}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CupTournament({ name, cup }: { name: string; cup: CupState }) {
+  if (!cup.qualifier || !cup.national) return null;
+  return (
+    <details className="rounded-xl border border-border/60 bg-card p-3">
+      <summary className="cursor-pointer text-sm font-semibold">{name}のトーナメント表</summary>
+      <div className="mt-3 flex flex-col gap-4">
+        <div><h3 className="mb-2 text-sm font-semibold">県予選</h3><CupBracketView bracket={cup.qualifier} stage="qualifier" /></div>
+        <div><h3 className="mb-2 text-sm font-semibold">全国大会</h3><CupBracketView bracket={cup.national} stage="national" /></div>
+      </div>
+    </details>
+  );
+}
+
 /**
  * 大会・リーグの現在状況（赴任地区、U18リーグのA/B階層と成績、インターハイ・選手権の進捗、
  * 直近の昇格・降格履歴）をまとめて表示するパネル。
@@ -620,6 +668,9 @@ export function CompetitionPanel({
           <CupStatus name="選手権" cup={comp.wc} />
         </div>
       </section>
+
+      <CupTournament name="インターハイ" cup={comp.ih} />
+      <CupTournament name="選手権" cup={comp.wc} />
 
       <LeagueSection state={state} />
 

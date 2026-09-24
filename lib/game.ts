@@ -52,6 +52,7 @@ import {
   handleCompetition,
   competitionFixture,
   resolveCompetitionMatch,
+  advanceCupWeek,
   readCompetition,
   type CompetitionAction,
 } from './competition.ts';
@@ -395,7 +396,7 @@ export const ROSTER_MIN = 20;
 export const ROSTER_MAX = 50;
 // S3: 1試合あたりの交代上限。旧仕様(3人)の途中セーブも読み込める（validateSaveが吸収）。
 export const MATCH_MAX_SUBS = 5;
-export const FACILITY_UPGRADE_COSTS = [40, 80, 140, 500] as const;
+export const FACILITY_UPGRADE_COSTS = [40, 80, 140, 700] as const;
 export function facilityUpgradeCost(level: number): number {
   return FACILITY_UPGRADE_COSTS[level - 1] ?? Infinity;
 }
@@ -475,6 +476,9 @@ function effective(s: State, p: Player, slot: DetailPos) {
 function makePlayer(s: State, year: number, pos: Position): Player {
   const id = s.nextId++,
     base = 32 + year * 5 + Math.min(12, s.reputation * 0.12);
+  // 評判が定着した学校はスカウト網も育つ。短期的に評判だけが100へ達しても
+  // 即座にA級が大量入部せず、8年目以降に素質の高い新入生が増えていく。
+  const establishedRep = Math.min(0.24, Math.max(0, s.season - 7) * 0.08) * s.reputation / 100;
   const p: Player = {
     identity: identityFor(id),
     id,
@@ -484,7 +488,7 @@ function makePlayer(s: State, year: number, pos: Position): Player {
     stats: {} as Record<Stat, number>,
     fatigue: Math.floor(rand(s) * 12),
     injury: 0,
-    talent: 1 + s.reputation * 0.0035 + rand(s) * (0.1 + s.reputation * 0.001),
+    talent: 1 + s.reputation * 0.0035 + rand(s) * (0.1 + s.reputation * 0.001) + establishedRep,
     trait: pick(s, ['努力家', '冷静', '闘志', 'ムードメーカー']),
     goals: 0,
     appearances: 0,
@@ -650,6 +654,7 @@ function intakeSize(s: State, remaining: number, gradCount: number): number {
   return Math.min(Math.max(n, floor), ceil);
 }
 function finishWeek(s: State) {
+  advanceCupWeek(s, s.week);
   s.week++;
   if (s.week === 48) {
     const grads = s.players.filter((p) => p.year === 3);

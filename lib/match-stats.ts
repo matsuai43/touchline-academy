@@ -436,6 +436,34 @@ export function growthBudget(rating: number, minutesFrac: number, talent: number
 export function profGrowthMultiplier(rating: number): number {
   return clamp(0.6 + ((rating - 3) / 7) * 0.9, 0.6, 1.5);
 }
+// DESIGN_V3_5.md 3.5: 試合の経験値は「試合の重要度」×「相手の強さ」で変わる。
+// 重要度: 練習試合0.8／リーグ1.0／県予選1.1／全国1.3。旧種別（summer/qualifier/national）は
+// 現行の生成コードではもう作られないが、旧セーブの進行中試合に残っている可能性があるため
+// national寄りの1.2を安全側のフォールバックとして当てる。
+export function matchImportanceMult(kind: Match['fixture']['kind']): number {
+  switch (kind) {
+    case 'friendly':
+      return 0.8;
+    case 'league':
+      return 1.0;
+    case 'ih_qualifier':
+    case 'wc_qualifier':
+    case 'qualifier':
+      return 1.1;
+    case 'ih_national':
+    case 'wc_national':
+      return 1.3;
+    default:
+      return 1.2;
+  }
+}
+// 相手が格上なほど経験値が増え、格下だと減る（自チーム比±の相手強さで clamp 0.7〜1.4倍）。
+export function opponentStrengthMult(ourRating: number, oppStrength: number): number {
+  return clamp(1 + (oppStrength - ourRating) * 0.02, 0.7, 1.4);
+}
+export function matchXpMultiplier(m: Match, ourRating: number): number {
+  return matchImportanceMult(m.fixture.kind) * opponentStrengthMult(ourRating, m.fixture.strength);
+}
 function categoryOf(key: Stat | ExtraStat): SkillCategory {
   if (key === 'shoot' || key === 'dribble') return '攻撃';
   if (key === 'pass') return '攻撃';
@@ -450,9 +478,12 @@ export function computeMatchGrowth(
   rating: number,
   minutes: number,
   talent: number,
+  // DESIGN_V3_5.md 3.5: 試合の重要度×相手の強さの倍率（matchXpMultiplier）。既定の1は
+  // 倍率なし（既存呼び出し・テストの前提を変えない）。
+  xpMult = 1,
 ): MatchGrowth {
   const minutesFrac = clamp(minutes / 90, 0, 1);
-  const budget = growthBudget(rating, minutesFrac, talent);
+  const budget = growthBudget(rating, minutesFrac, talent) * xpMult;
   const w: Record<Stat, number> = {
     shoot: st.shots * 0.5 + st.goals * 2.2,
     pass: st.passesCompleted * 0.035 + st.finalThirdPassCompleted * 0.05 + st.longPassCompleted * 0.06 + st.crossCompleted * 0.1 + st.keyPasses * 0.45 + st.assists * 1.1,

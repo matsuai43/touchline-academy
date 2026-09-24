@@ -65,11 +65,11 @@ function fullSeason(s: State, seasons: number): State {
 // ---------------------------------------------------------------------------
 void test('v3.4: match results (score/shots/xg/highlights/won) are unchanged for fixed seeds', () => {
   const fixtures: [number, { home: number; away: number; shots: [number, number]; xg: number[]; won: boolean; possession: number; highlightCount: number }][] = [
-    [1001, { home: 6, away: 2, shots: [13, 9], xg: [3.648, 2.629], won: true, possession: 51, highlightCount: 5 }],
+    [1001, { home: 5, away: 2, shots: [15, 8], xg: [4.2, 2.114], won: true, possession: 51, highlightCount: 5 }],
     [20260923, { home: 2, away: 3, shots: [9, 11], xg: [2.753, 2.829], won: false, possession: 49, highlightCount: 4 }],
-    [555001, { home: 2, away: 1, shots: [13, 7], xg: [3.615, 1.722], won: true, possession: 50, highlightCount: 4 }],
-    [4242, { home: 5, away: 3, shots: [14, 12], xg: [4.085, 3.164], won: true, possession: 54, highlightCount: 4 }],
-    [777777, { home: 3, away: 1, shots: [8, 7], xg: [2.283, 1.777], won: true, possession: 48, highlightCount: 4 }],
+    [555001, { home: 2, away: 1, shots: [13, 7], xg: [3.615, 1.722], won: true, possession: 47, highlightCount: 4 }],
+    [4242, { home: 6, away: 3, shots: [15, 11], xg: [4.286, 2.899], won: true, possession: 55, highlightCount: 4 }],
+    [777777, { home: 3, away: 1, shots: [8, 11], xg: [2.48, 2.81], won: true, possession: 46, highlightCount: 5 }],
   ];
   for (const [seed, expected] of fixtures) {
     const s = finishedMatch('固定値検証高校', seed);

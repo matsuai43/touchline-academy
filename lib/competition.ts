@@ -332,7 +332,10 @@ function makeClubs(
     // ユースは技術がやや高くフィジカルは同等という味付け: 総合力に軽いプラス補正。
     const youthBonus = isYouth ? 1.03 : 1;
     const raw = (bandMin + (bandMax - bandMin) * jitter) * youthBonus;
-    const strengthVal = clamp(Math.round(raw * district.strength), 20, 99);
+    // 3.2: カップ戦の全国大会と同様、リーグも全国階層には自県係数を掛けず、
+    // それ以外の階層では効きを半分に弱める。
+    const districtMult = tier === 'national' ? 1 : 1 + (district.strength - 1) * 0.5;
+    const strengthVal = clamp(Math.round(raw * districtMult), 20, 99);
     clubs.push({ id: `${district.id}-${tier}-${teamTag}-${i}`, name, youth: isYouth, strength: strengthVal });
   }
   return clubs;
@@ -658,7 +661,7 @@ function bTeamStrength(s: State): number {
   return clamp(Math.round(avg), 20, 99);
 }
 function quickGoals(u: number, our: number, opp: number): number {
-  const lambda = clamp(1.35 + (our - opp) / 20, 0.2, 3.8);
+  const lambda = clamp(1.35 + (our - opp) / 17, 0.2, 3.8);
   return Math.max(0, Math.round(lambda + (u - 0.5) * 2.6));
 }
 /** Bチームの季開始時の自動進行。Aと同じ8校総当たりの日程（team.schedule、あらかじめ
@@ -1014,7 +1017,10 @@ function cupFixture(
   const stagePrefix = isQualifier ? '県予選・' : '全国・';
   const jitter = hf(s.seed, s.season, strHash(kind), round, 8181);
   const base = band[0] + (band[1] - band[0]) * jitter;
-  const strengthVal = clamp(Math.round(base * district.strength), 20, 99);
+  // 3.2: 全国大会の相手には自県の強度係数を掛けない（全国はどの県から来ても実力が近い）。
+  // 県予選は係数を掛けるが、そのままでは効きすぎるので半分に弱める。
+  const districtMult = isQualifier ? 1 + (district.strength - 1) * 0.5 : 1;
+  const strengthVal = clamp(Math.round(base * districtMult), 20, 99);
   return {
     label: `${cupName}${stagePrefix}${label}`,
     kind,

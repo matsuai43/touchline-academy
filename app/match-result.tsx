@@ -48,13 +48,14 @@ function computeGrowth(s: State): GrowthRow[] {
     if (!p) continue;
     const statDiffs = (Object.keys(stats) as Stat[])
       .map((k) => ({ label: stats[k], diff: p.stats[k] - snap.stats[k] }))
-      .filter((d) => Math.abs(d.diff) >= 0.5);
+      // 3.5: 試合の成長は1回あたり小さいため、+0.5未満は切り捨てず+0.1から表示する。
+      .filter((d) => Math.abs(d.diff) >= 0.1);
     const ps = s.v3.squad.players[p.id];
     const extraDiffs: { label: string; diff: number }[] = [];
     if (ps && snap.extra) {
       for (const k of ['dribble', 'stamina', 'power'] as ExtraStat[]) {
         const diff = ps[k] - snap.extra[k];
-        if (Math.abs(diff) >= 0.5) extraDiffs.push({ label: extraStatNames[k], diff });
+        if (Math.abs(diff) >= 0.1) extraDiffs.push({ label: extraStatNames[k], diff });
       }
     }
     const trustDiff = p.identity.trust - snap.trust;

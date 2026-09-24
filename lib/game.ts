@@ -60,6 +60,7 @@ import {
   applyMatchSegmentStats,
   computeMatchGrowth,
   profGrowthMultiplier,
+  matchXpMultiplier,
   zeroPlayerStats,
   isValidPlayerMatchStats,
   isValidTeamMatchTotals,
@@ -699,6 +700,8 @@ function finishWeek(s: State) {
 // S1: 週の1日ぶんの疲労回復確率。旧仕様の「fatigue>65なら週13%でけが」を、
 // 1-(1-0.13)^(1/6) ≒ 2.27%/日に決定的に換算する（6日続けても週あたりの
 // 発生率がほぼ変わらないようにするため）。
+// 3.1: 勝率曲線の効きの強さ（tests/balance.test.ts の目標表に合わせて調整）。
+const STRENGTH_RATIO_K = 27;
 const DAILY_INJURY_CHANCE = 1 - Math.pow(0.87, 1 / 6);
 // T3-2: 成長の配分（チームメニュー60% ＋ 個人方針40%）。lib/training-policy.ts の
 // applyIndividualGrowth() と対で使う（個人方針側は INDIV_WEIGHT を自前で持つ）。
@@ -1136,16 +1139,20 @@ function simulateSegment(s: State) {
           : rating;
   const command = commandFactors(s);
   const skillFx = skillMatchFactors(s);
+  // 3.1: 強さの差が大会・ラウンドに関係なく一貫して勝率へ効くよう、比（割り算）ではなく
+  // 差（引き算）を指数関数で効かせる。STRENGTH_RATIO_K は tests/balance.test.ts の勝率表に
+  // 合わせて調整した定数（大きいほど強さの差の効きが弱くなる）。
+  const effRating = rating * 0.65 + tacticQuality * 0.35;
+  // 士気・連携は小さな加点として残す（旧式の「割り算」時代より効きを弱めた。指数部に入れると
+  // 差が指数的に増幅されてしまうため、ここでは skillFx と同じ桁の加点にとどめる）。
+  const conditionBonus = s.cohesion * 0.00006 + (s.morale - 50) * 0.00008;
   const ratio = clamp(
-    (rating * 0.65 +
-      tacticQuality * 0.35 +
-      s.cohesion * 0.09 +
-      (s.morale - 50) * 0.1) /
-      m.fixture.strength +
+    Math.exp((effRating - m.fixture.strength) / STRENGTH_RATIO_K) +
+      conditionBonus +
       skillFx.ratioBonus +
       (m.home < m.away ? skillFx.comebackBonus : 0),
     0.4,
-    1.9,
+    1.55,
   );
   const push =
     m.mentality === 'attack' ? 1.32 : m.mentality === 'safe' ? 0.75 : 1;
@@ -1332,13 +1339,16 @@ function applyMatchGrowth(s: State): void {
   const ratings = matchRatings(s);
   const top = topRated(ratings);
   const byId = new Map(ratings.map((r) => [r.id, r]));
+  // DESIGN_V3_5.md 3.5: 試合の重要度×相手の強さの倍率。キックオフ時点ではなく試合終了時点の
+  // 自チーム総合力（fatigueで下がった値）に対して、相手の格上げ・格下げを見る。
+  const xpMult = matchXpMultiplier(m, strength(s));
   for (const id of m.used) {
     const p = s.players.find((pp) => pp.id === id);
     const row = byId.get(id);
     if (!p || !row) continue;
     const st: PlayerMatchStats = m.playerStats?.[id] ?? zeroPlayerStats();
     const isMOM = top?.id === id;
-    const g = computeMatchGrowth(p.pos, st, row.rating, row.minutes, p.talent);
+    const g = computeMatchGrowth(p.pos, st, row.rating, row.minutes, p.talent, xpMult);
     for (const k of Object.keys(g.statGrowth) as Stat[])
       p.stats[k] = clamp(p.stats[k] + (g.statGrowth[k] ?? 0), 20, 99);
     const ps = s.v3.squad.players[id];
@@ -1354,7 +1364,7 @@ function applyMatchGrowth(s: State): void {
     grantPerformanceSkill(s, id, row.rating, isMOM, g.topCategory);
   }
   grantMatchAchievements(s);
-  const profMult = new Map(ratings.map((r) => [r.id, profGrowthMultiplier(r.rating)]));
+  const profMult = new Map(ratings.map((r) => [r.id, profGrowthMultiplier(r.rating) * xpMult]));
   grantMatchPositionExperience(s, profMult);
 }
 export function validateSave(x: unknown): State {

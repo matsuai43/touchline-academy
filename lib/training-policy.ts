@@ -8,6 +8,7 @@
 import type { State, Player, Stat } from './game.ts';
 import { clamp } from './game.ts';
 import { growthFactor } from './development.ts';
+import { applyStatGrowth } from './growth.ts';
 import {
   PLAY_STYLES,
   gainProficiency,
@@ -260,9 +261,9 @@ export function applyIndividualGrowth(s: State, p: Player, base: number): number
   if (pol.key === 'auto') {
     for (const k of favoredStatsFor(s, p)) {
       const gain = statGain(k);
-      p.stats[k] = clamp(p.stats[k] + gain, 20, 99);
-      addMonthly(pol, k, gain);
-      total += gain;
+      const applied = applyStatGrowth(s, p, k, gain);
+      addMonthly(pol, k, applied);
+      total += applied;
     }
     return total;
   }
@@ -284,9 +285,9 @@ export function applyIndividualGrowth(s: State, p: Player, base: number): number
   if (STAT_POLICY_KEYS.includes(pol.key)) {
     const k = pol.key as Stat;
     const gain = statGain(k);
-    p.stats[k] = clamp(p.stats[k] + gain, 20, 99);
-    addMonthly(pol, k, gain);
-    return gain;
+    const applied = applyStatGrowth(s, p, k, gain);
+    addMonthly(pol, k, applied);
+    return applied;
   }
   return 0;
 }

@@ -59,17 +59,15 @@ function fullSeason(s: State, seasons: number): State {
 }
 
 // ---------------------------------------------------------------------------
-// 1) 既存の試合結果を一切変えないこと（固定値での回帰確認）。
-// スタッツ生成はハッシュによる決定的な乱数のみを使い、rand(s)/s.seedを消費しない
-// ため、スコア・シュート数・xG・ハイライト数・勝敗は導入前と完全に同じになる。
+// 1) 固定シードで試合結果が決定的なこと。v3.5 の初期能力調整に合わせて値を更新。
 // ---------------------------------------------------------------------------
-void test('v3.4: match results (score/shots/xg/highlights/won) are unchanged for fixed seeds', () => {
+void test('v3.5: match results (score/shots/xg/highlights/won) are stable for fixed seeds', () => {
   const fixtures: [number, { home: number; away: number; shots: [number, number]; xg: number[]; won: boolean; possession: number; highlightCount: number }][] = [
-    [1001, { home: 5, away: 2, shots: [15, 8], xg: [4.2, 2.114], won: true, possession: 51, highlightCount: 5 }],
-    [20260923, { home: 2, away: 3, shots: [9, 11], xg: [2.753, 2.829], won: false, possession: 49, highlightCount: 4 }],
-    [555001, { home: 2, away: 1, shots: [13, 7], xg: [3.615, 1.722], won: true, possession: 47, highlightCount: 4 }],
-    [4242, { home: 6, away: 3, shots: [15, 11], xg: [4.286, 2.899], won: true, possession: 55, highlightCount: 4 }],
-    [777777, { home: 3, away: 1, shots: [8, 11], xg: [2.48, 2.81], won: true, possession: 46, highlightCount: 5 }],
+    [1001, { home: 6, away: 2, shots: [13, 9], xg: [3.715, 2.629], won: true, possession: 50, highlightCount: 5 }],
+    [20260923, { home: 2, away: 3, shots: [8, 10], xg: [2.243, 2.561], won: false, possession: 48, highlightCount: 2 }],
+    [555001, { home: 1, away: 4, shots: [8, 10], xg: [2.001, 2.666], won: false, possession: 46, highlightCount: 4 }],
+    [4242, { home: 5, away: 4, shots: [13, 13], xg: [3.673, 3.532], won: true, possession: 53, highlightCount: 4 }],
+    [777777, { home: 2, away: 1, shots: [7, 10], xg: [2.089, 2.533], won: true, possession: 45, highlightCount: 3 }],
   ];
   for (const [seed, expected] of fixtures) {
     const s = finishedMatch('固定値検証高校', seed);
@@ -311,10 +309,10 @@ void test('v3.4: computeMatchGrowth gives higher-rated performances more total g
 });
 
 // ---------------------------------------------------------------------------
-// 8) バランス検証: 10シーズンで試合による能力の伸びの平均が従来（一律+0.5）の
-// 0.8〜1.3倍、かつ高評価の選手ほど伸びる差が付く。
+// 8) バランス検証: v3.5 の上限・鈍化を含め、10シーズンの試合成長が
+// 正のまま従来（一律+0.5）より抑えられる。
 // ---------------------------------------------------------------------------
-void test('v3.4: over roughly 10 seasons, average match growth per appearance is 0.8x-1.3x the old flat +0.5', () => {
+void test('v3.5: over roughly 10 seasons, match growth stays positive while the potential ceiling slows it', () => {
   let s = newGame('バランス検証高校', 555999);
   s = fullSeason(s, 10);
   // fullSeasonの間に集めた成長量を再計測するため、同じ設定でもう一度短く走らせて
@@ -356,7 +354,7 @@ void test('v3.4: over roughly 10 seasons, average match growth per appearance is
   const avgGrowth = totalGrowth / appearances;
   const ratio = avgGrowth / 0.5;
   assert.ok(appearances > 500, `should have collected plenty of appearances (${appearances})`);
-  assert.ok(ratio >= 0.8 && ratio <= 1.3, `growth ratio ${ratio} (avg ${avgGrowth}) should be within [0.8, 1.3]`);
+  assert.ok(ratio >= 0.2 && ratio <= 0.8, `growth ratio ${ratio} (avg ${avgGrowth}) should be within [0.2, 0.8]`);
   // s は使い回しのための到達確認のみ（10シーズン到達すること自体が壊れていないことの確認）。
   assert.ok(s.season >= 10);
 });

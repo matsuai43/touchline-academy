@@ -13,6 +13,7 @@
 import { clamp, type State, type Player, type Stat } from './game.ts';
 import type { Personality } from './development.ts';
 import { grantSkill, type Archetype } from './squad.ts';
+import { applyStatGrowth } from './growth.ts';
 
 // ---------------------------------------------------------------------------
 // 決定的な擬似乱数（lib/squad.ts の h32/hf と同じ考え方。s.seed を消費せず、
@@ -1113,7 +1114,8 @@ function applyChoice(s: State, event: LifeEvent, choice: LifeChoice, player: Pla
     for (const key of Object.keys(eff.growth) as Stat[]) {
       const amount = eff.growth[key];
       if (!amount) continue;
-      player.stats[key] = clamp(player.stats[key] + amount * mult, 20, 99);
+      if (amount > 0) applyStatGrowth(s, player, key, amount * mult);
+      else player.stats[key] = clamp(player.stats[key] + amount * mult, 20, 99);
     }
   }
   if (eff.skillId && eff.skillChance) {

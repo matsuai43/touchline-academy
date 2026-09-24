@@ -1,6 +1,7 @@
 import type { State, Player, Position, Stat, Training } from './game.ts';
 import { addFunds } from './game.ts';
 import { PLAY_STYLES } from './squad.ts';
+import { applyStatGrowth } from './growth.ts';
 export type Personality = 'enthusiast' | 'sensitive' | 'analyst' | 'competitor';
 export type Origin = 'local' | 'academy' | 'legacy' | 'overseas' | 'exchange';
 export type Identity = {
@@ -247,9 +248,8 @@ export function candidatePool(s: State): Candidate[] {
       origin,
       portrait: origin === 'exchange' ? 8 + (i % 4) : i % 12,
       personality: ps[(z >>> 5) % 4],
-      ability: cap(39 + Math.floor(origins[origin].min / 4) + (z % 12), 30, 80),
-      potential:
-        origin === 'local' ? 1.45 + (z % 40) / 100 : 1.35 + (z % 60) / 100,
+      ability: cap(39 + Math.floor(origins[origin].min / 8) + Math.floor(s.reputation * 0.2) + (z % 12), 30, 80),
+      potential: cap(1 + s.reputation * 0.005 + (z % 24) / 100 + (origin === 'local' ? 0 : 0.05), 1, 2),
       required: origins[origin].min,
       interest: 20 + (z % 16),
       scouted: false,
@@ -413,7 +413,7 @@ export function handleDevelopment(s: State, a: DevelopmentAction): boolean {
             : ev.kind === 'challenge'
               ? 'shoot'
               : 'mental';
-        p.stats[stat] = cap(p.stats[stat] + 1.2, 20, 99);
+        applyStatGrowth(s, p, stat, 1.2);
         p.identity.trust = cap(p.identity.trust + 3);
         if (ev.kind === 'tracking')
           p.identity.workRate = cap(p.identity.workRate + 4);

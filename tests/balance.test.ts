@@ -1,9 +1,9 @@
-// DESIGN_V3_5.md 3.1・3.2・3.5 の受け入れ条件（長期・多数試行シミュレーション）。
-// B1（バランス調整の前半）の担当範囲のみ検証する。3.3（成長上限・入部の質）と
-// 3.4（経済・評判）は次の担当のテストで確認する。
+// DESIGN_V3_5.md 3.1〜3.5 の受け入れ条件（長期・多数試行シミュレーション）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { newGame, act, strength, type State, type Match } from '../lib/game.ts';
+import { newGame, act, strength, overall, facilityUpgradeCost, validateSave, type State, type Match } from '../lib/game.ts';
+import { statCeiling, applyStatGrowth } from '../lib/growth.ts';
+import { candidatePool } from '../lib/development.ts';
 import { getCurrentLifeEvent } from '../lib/school-life.ts';
 import {
   hydrateCompetition,
@@ -222,4 +222,86 @@ void test('3.5: playing a stronger, more important match grants more actual play
   const sum = (g: Partial<Record<string, number>>) =>
     Object.values(g).reduce((a: number, b) => a + (b ?? 0), 0);
   assert.ok(sum(boosted.statGrowth) > sum(base.statGrowth) * 1.5);
+});
+
+void test('3.3: potential and facilities raise the ability ceiling, with growth tapering near it', () => {
+  const s = newGame('成長上限検証高校', 31);
+  const p = s.players[0];
+  p.talent = 1.1;
+  const low = statCeiling(s, p);
+  p.talent = 1.8;
+  const gifted = statCeiling(s, p);
+  s.facilities = 5;
+  const high = statCeiling(s, p);
+  assert.ok(low < gifted && gifted < high && high >= 90 && high <= 99);
+  p.stats.shoot = high - 20;
+  const far = applyStatGrowth(s, p, 'shoot', 1);
+  p.stats.shoot = high - 1;
+  const near = applyStatGrowth(s, p, 'shoot', 1);
+  assert.ok(far > near && near > 0);
+  p.stats.shoot = 95;
+  s.facilities = 1;
+  applyStatGrowth(s, p, 'shoot', 10);
+  assert.equal(p.stats.shoot, 95, 'legacy abilities above the new ceiling stay intact');
+  validateSave(JSON.parse(JSON.stringify(s)));
+});
+
+void test('3.3 and 3.4: reputation improves recruits, and facility prices rise by stage', () => {
+  const low = newGame('勧誘検証高校', 91);
+  const high = newGame('勧誘検証高校', 91);
+  high.reputation = 100;
+  const initial = candidatePool(low);
+  const popular = candidatePool(high);
+  assert.ok(popular.reduce((n, c) => n + c.ability, 0) > initial.reduce((n, c) => n + c.ability, 0));
+  assert.ok(popular.reduce((n, c) => n + c.potential, 0) > initial.reduce((n, c) => n + c.potential, 0));
+  assert.deepEqual([1, 2, 3, 4].map(facilityUpgradeCost), [40, 80, 140, 500]);
+});
+
+void test('3.3 and 3.4: passive manager reaches A players over multiple seasons without a first-year national title', () => {
+  const seeds = [17, 42, 789];
+  const snapshots: { seed: number; season: number; top11: number; a: number; facility: number; reputation: number; trophies: number }[] = [];
+  for (const seed of seeds) {
+    let s = newGame('長期バランス検証高校', seed);
+    let guard = 0;
+    while (s.season <= 12 && guard++ < 50000) {
+      if (s.event) s = act(s, { type: 'event', choice: 'team' });
+      s = resolveLife(s);
+      s = act(s, { type: 'train', training: s.weeklyMenu[s.day] });
+      if (s.pending) {
+        s = act(s, { type: 'start' });
+        while (!s.match!.done) s = act(s, { type: 'segment' });
+        s = act(s, { type: 'finish' });
+      }
+      if (s.facilities < 5 && s.funds >= facilityUpgradeCost(s.facilities))
+        s = act(s, { type: 'upgrade' });
+      if (s.week === 0 && s.day === 0 && s.season > 1) {
+        const ranked = [...s.players].sort((a, b) => overall(b) - overall(a));
+        snapshots.push({
+          seed,
+          season: s.season - 1,
+          top11: ranked.slice(0, 11).reduce((n, p) => n + overall(p), 0) / 11,
+          a: ranked.filter((p) => overall(p) >= 80).length,
+          facility: s.facilities,
+          reputation: s.reputation,
+          trophies: s.records.trophies,
+        });
+      }
+    }
+    assert.ok(guard < 50000, `seed ${seed} stopped progressing`);
+    validateSave(JSON.parse(JSON.stringify(s)));
+  }
+  for (const row of snapshots.filter((r) => r.season === 1)) {
+    assert.ok(row.top11 <= 68 && row.a === 0 && row.trophies === 0, `first season, seed ${row.seed}: ${JSON.stringify(row)}`);
+  }
+  for (const row of snapshots.filter((r) => r.season < 4)) {
+    assert.ok(row.facility < 5 && row.reputation < 100, `progress too fast: ${JSON.stringify(row)}`);
+  }
+  for (const season of [7, 8]) {
+    const rows = snapshots.filter((r) => r.season === season);
+    const mean = rows.reduce((n, r) => n + r.a, 0) / rows.length;
+    assert.ok(mean >= 1 && mean <= 5, `season ${season} A-player mean=${mean}`);
+  }
+  for (const seed of seeds) {
+    assert.ok(snapshots.some((r) => r.seed === seed && r.season >= 10 && r.facility === 5 && r.reputation >= 95 && r.a >= 8), `seed ${seed} never develops eight A players after season 10`);
+  }
 });

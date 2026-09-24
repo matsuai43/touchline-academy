@@ -78,6 +78,7 @@ import {
   tactics,
   DOW_NAMES,
   MATCH_MAX_SUBS,
+  facilityUpgradeCost,
   LINEUP_POLICIES,
   lineupPolicyInfo,
   type State,
@@ -944,11 +945,11 @@ export default function Game() {
                     <div className="funds-gauge">
                       <div>
                         <span>設備強化まで</span>
-                        <b>あと {Math.max(0, s.facilities * 40 - s.funds)}</b>
+                        <b>あと {Math.max(0, facilityUpgradeCost(s.facilities) - s.funds)}</b>
                       </div>
                       <Progress
                         aria-label="設備強化までの部費"
-                        value={Math.max(0, Math.min(100, (s.funds / (s.facilities * 40)) * 100))}
+                        value={Math.max(0, Math.min(100, (s.funds / facilityUpgradeCost(s.facilities)) * 100))}
                       />
                     </div>
                   ) : (
@@ -1036,13 +1037,13 @@ export default function Game() {
                       <button
                         className="secondary"
                         aria-disabled={
-                          s.funds < s.facilities * 40 || s.facilities >= 5
+                          s.funds < facilityUpgradeCost(s.facilities) || s.facilities >= 5
                         }
                         onClick={() => run({ type: 'upgrade' })}
                       >
                         {s.facilities === 5
                           ? '最高レベル'
-                          : `強化する / ${s.facilities * 40}`}
+                          : `強化する / ${facilityUpgradeCost(s.facilities)}`}
                       </button>
                     </div>
                   </section>

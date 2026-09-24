@@ -1,5 +1,5 @@
 // T4.2: 部費の見える化（収入履歴）。
-import { newGame, act, addFunds, validateSave, type State, type Training } from '../lib/game.ts';
+import { newGame, act, addFunds, validateSave, facilityUpgradeCost, type State, type Training } from '../lib/game.ts';
 import { getCurrentLifeEvent } from '../lib/school-life.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -46,8 +46,8 @@ void test('T4.2: over several seasons, every s.funds increase (net of spending) 
     const before = s.funds;
     const beforeHistLen = s.fundHistory.length;
     s = step(s);
-    if (s.funds >= s.facilities * 40 && s.facilities < 5) {
-      const spend = s.facilities * 40;
+    if (s.funds >= facilityUpgradeCost(s.facilities) && s.facilities < 5) {
+      const spend = facilityUpgradeCost(s.facilities);
       s = act(s, { type: 'upgrade' });
       // 支出は履歴に残らない前提で、収支を手動で追跡する。
       trackedFunds -= spend;
@@ -79,7 +79,7 @@ void test('T4.2: a match win is recorded with the correct reason (friendly vs of
   s = act(s, { type: 'start' });
   while (!s.match!.done) s = act(s, { type: 'segment' });
   if (s.match!.won) {
-    const expectedAmount = kind === 'friendly' ? 5 : 12;
+    const expectedAmount = kind === 'friendly' ? 2 : 4;
     const entry = s.fundHistory.find((f) => f.week === week && f.day === 6 && f.amount === expectedAmount);
     assert.ok(entry, '勝利ぶんの部費が収入履歴に記録されているはず');
     assert.match(entry!.reason, /試合/);

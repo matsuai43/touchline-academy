@@ -711,8 +711,8 @@ function finalizeTeamA(s: State, comp: CompState, prevSeason: number): void {
   const promoted = LEAGUE_TIERS.indexOf(newTier) > tierIdx;
   const relegated = LEAGUE_TIERS.indexOf(newTier) < tierIdx;
   if (rank === 1 && team.tier === 'national') {
-    s.reputation = clamp(s.reputation + 8);
-    addFunds(s, 40, '全国リーグ優勝');
+    s.reputation = clamp(s.reputation + 4);
+    addFunds(s, 20, '全国リーグ優勝');
     s.feed = [`${tierInfo[team.tier].name}優勝！全国区の名声を得ました。`, ...s.feed].slice(0, 30);
   } else if (promoted) {
     s.feed = [
@@ -1128,7 +1128,7 @@ export function resolveCompetitionMatch(s: State, m: ResolvableMatch): void {
     } else if (f.round === 3) {
       cup.qualified = true;
       cup.best = '全国大会出場';
-      addFunds(s, 35, '大会の勝ち上がり（全国大会出場）');
+      addFunds(s, 15, '大会の勝ち上がり（全国大会出場）');
     }
     return;
   }
@@ -1141,8 +1141,8 @@ export function resolveCompetitionMatch(s: State, m: ResolvableMatch): void {
       cup.best = f.round === 4 ? '全国優勝' : `${f.label}突破`;
       if (f.round === 4) {
         s.records.trophies++;
-        s.reputation = clamp(s.reputation + 12);
-        addFunds(s, 75, '大会の勝ち上がり（全国優勝）');
+        s.reputation = clamp(s.reputation + 6);
+        addFunds(s, 30, '大会の勝ち上がり（全国優勝）');
       }
     }
   }

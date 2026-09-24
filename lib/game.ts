@@ -69,6 +69,7 @@ import {
 } from './match-stats.ts';
 // v3.4 M1: 評価点（ポジション別のスタッツ採点）と MOM 判定。
 import { matchRatings, topRated } from './match-rating.ts';
+import { applyStatGrowth } from './growth.ts';
 // T4.2: 部費の収入1件分（週・日・金額・理由）。
 export type FundEntry = { week: number; day: number; amount: number; reason: string };
 export type Position = 'GK' | 'DF' | 'MF' | 'FW';
@@ -394,6 +395,10 @@ export const ROSTER_MIN = 20;
 export const ROSTER_MAX = 50;
 // S3: 1試合あたりの交代上限。旧仕様(3人)の途中セーブも読み込める（validateSaveが吸収）。
 export const MATCH_MAX_SUBS = 5;
+export const FACILITY_UPGRADE_COSTS = [40, 80, 140, 500] as const;
+export function facilityUpgradeCost(level: number): number {
+  return FACILITY_UPGRADE_COSTS[level - 1] ?? Infinity;
+}
 // 新入生の学年内ポジション構成（初期3学年20人と概ね同じ比率: GK2:DF6:MF6:FW4）。
 // 卒業で空いた枠を超えて部員を増やすときの「純増分」はここから重み付きで選ぶ。
 const INTAKE_POS_POOL: Position[] = [
@@ -469,7 +474,7 @@ function effective(s: State, p: Player, slot: DetailPos) {
 }
 function makePlayer(s: State, year: number, pos: Position): Player {
   const id = s.nextId++,
-    base = 32 + year * 5 + Math.min(18, s.reputation * 0.2);
+    base = 32 + year * 5 + Math.min(12, s.reputation * 0.12);
   const p: Player = {
     identity: identityFor(id),
     id,
@@ -479,13 +484,13 @@ function makePlayer(s: State, year: number, pos: Position): Player {
     stats: {} as Record<Stat, number>,
     fatigue: Math.floor(rand(s) * 12),
     injury: 0,
-    talent: 1 + rand(s) * 0.55,
+    talent: 1 + s.reputation * 0.0035 + rand(s) * (0.1 + s.reputation * 0.001),
     trait: pick(s, ['努力家', '冷静', '闘志', 'ムードメーカー']),
     goals: 0,
     appearances: 0,
   };
   for (const k of Object.keys(stats) as Stat[])
-    p.stats[k] = Math.round(base + rand(s) * 20);
+    p.stats[k] = Math.round(base + rand(s) * 16);
   p.stats[
     pos === 'GK'
       ? 'keep'
@@ -725,6 +730,7 @@ function advanceTrainingDay(s: State, tr: Training): { injured: boolean } {
       // T3-2: talent/facilities/fatigue/重点育成の共通係数。チームメニュー分・
       // 個人方針分の両方がこの base を使い、重点育成の1.5倍が両方に一律で効くようにする。
       const base =
+        0.4 *
         p.talent *
         (1 + (s.facilities - 1) * 0.14) *
         (1 - p.fatigue / 150) *
@@ -737,8 +743,7 @@ function advanceTrainingDay(s: State, tr: Training): { injured: boolean } {
             (p.stats[k] > 85 ? 0.35 : 1) *
             growthFactor(s, p, k)) /
           6;
-        p.stats[k] = clamp(p.stats[k] + gain, 20, 99);
-        growth += gain;
+        growth += applyStatGrowth(s, p, k, gain);
       }
       // T3-2: 個人方針ぶん（40%）。チームメニューが対象にしない能力・ポジション
       // 習熟度も、個人方針ならここで伸びる。
@@ -755,7 +760,7 @@ function advanceTrainingDay(s: State, tr: Training): { injured: boolean } {
     s.cohesion + (tr === 'possession' ? 4 : isRest ? -1 : 1) / 6,
   );
   s.morale = clamp(s.morale + (isRest ? 5 : -1) / 6);
-  if (s.day === 0) addFunds(s, 2, '週の部費');
+  if (s.day === 0) addFunds(s, 1, '週の部費');
   // T3-1: 半年方針の進捗は「練習した日数」で数える（週1回ではなく日ごと）。
   developmentDay(s, tr);
   // T2: 調子は1日ぶんずつ決定的に変動させる（普通へ戻る力＋休養で上向き・
@@ -927,8 +932,8 @@ export function act(old: State, a: Action): State {
     } else {
       const p = s.players.find((p) => p.id === s.focus) || pick(s, s.players);
       for (const k of Object.keys(stats) as Stat[])
-        p.stats[k] = clamp(p.stats[k] + 2, 20, 99);
-      log(s, `${p.name}の自主練習を指導。全能力が2上がりました。`);
+        applyStatGrowth(s, p, k, 2);
+      log(s, `${p.name}の自主練習を指導。成長の上限に応じて能力が伸びました。`);
     }
     s.event = null;
     return s;
@@ -1072,7 +1077,7 @@ export function act(old: State, a: Action): State {
     }
   }
   if (a.type === 'upgrade') {
-    const cost = s.facilities * 40;
+    const cost = facilityUpgradeCost(s.facilities);
     if (s.funds < cost || s.facilities >= 5)
       throw Error('部費が足りないか、設備が最高レベルです。');
     s.funds -= cost;
@@ -1300,13 +1305,11 @@ function simulateSegment(s: State) {
     if (m.won) {
       s.records.wins++;
       s.seasonWins++;
-      s.reputation = clamp(
-        s.reputation + (m.fixture.kind === 'friendly' ? 1 : 3),
-      );
+      s.reputation = clamp(s.reputation + (m.fixture.kind === 'friendly' ? 0.25 : 1));
       s.morale = clamp(s.morale + 7);
       addFunds(
         s,
-        m.fixture.kind === 'friendly' ? 5 : 12,
+        m.fixture.kind === 'friendly' ? 2 : 4,
         m.fixture.kind === 'friendly' ? '試合（練習試合勝利）' : '試合（公式戦勝利）',
       );
     } else s.morale = clamp(s.morale - 4);
@@ -1350,7 +1353,7 @@ function applyMatchGrowth(s: State): void {
     const isMOM = top?.id === id;
     const g = computeMatchGrowth(p.pos, st, row.rating, row.minutes, p.talent, xpMult);
     for (const k of Object.keys(g.statGrowth) as Stat[])
-      p.stats[k] = clamp(p.stats[k] + (g.statGrowth[k] ?? 0), 20, 99);
+      applyStatGrowth(s, p, k, g.statGrowth[k] ?? 0);
     const ps = s.v3.squad.players[id];
     if (ps) {
       for (const k of Object.keys(g.extraGrowth) as (keyof typeof g.extraGrowth)[])

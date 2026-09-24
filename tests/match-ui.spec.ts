@@ -277,6 +277,10 @@ test('match result screen: shows ratings for every player who appeared, MOTM mat
   expect(topName.replace(/\s+/g, ' ').trim().startsWith(motmName)).toBe(true);
   await expect(page.locator('.motm-card p').first()).not.toBeEmpty();
 
+  // M2: 評価点の行にも「この試合で伸びた能力」が添えられ、評価点順のままなので
+  // 活躍した（評価点の高い）選手ほど伸びていることが一目で分かる。
+  await expect(page.locator('.mr-rating-growth').first()).toBeVisible();
+
   // タイムライン。
   await expect(page.getByRole('heading', { name: 'タイムライン' })).toBeVisible();
   // 成長差分：全員が出場したので、少なくとも精神力+0.5などの変化が1人以上に出る。
@@ -334,4 +338,115 @@ test('mobile 390px: substitution dialog and match result fit the viewport', asyn
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
   ).toBe(true);
   await page.screenshot({ path: 'test-results/match-result-mobile.png', fullPage: true });
+});
+
+// ---------------------------------------------------------------------------
+// M2: 交代画面の「習熟度」ラベルと凡例。
+// ---------------------------------------------------------------------------
+test('substitution dialog: shows a "習熟度" label next to the rank badges and a legend explaining it is not ability', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await withSave(page, startedMatch('習熟度ラベル検証高校', 777));
+  await page.goto('/');
+  await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
+
+  // 画面上部の凡例: ランクの意味（能力の高さではないこと）とピッチ/ベンチでの意味の違い。
+  const legend = page.locator('.sub-rank-legend');
+  await expect(legend).toBeVisible();
+  await expect(legend).toContainText('能力の高さではありません');
+  await expect(legend).toContainText('今いる枠への慣れ');
+  await expect(legend).toContainText('入った場合の慣れ');
+
+  // バッジの横（上）に「習熟度」の文字ラベルが付き、能力ランクと見分けられる。
+  await expect(page.locator('.sub-pick-rank-label').first()).toHaveText('習熟度');
+  const labelCount = await page.locator('.sub-pick-rank-label').count();
+  expect(labelCount).toBeGreaterThan(1);
+  expect(errors).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
+// M2: 試合結果画面のスタッツ表。
+// ---------------------------------------------------------------------------
+test('match result screen: stats table switches columns per category and totals match the team record', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await withSave(page, finishedMatch('スタッツ表検証高校', 31415));
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: '選手ごとのスタッツ' })).toBeVisible();
+
+  // 部門別の最多の見出し。
+  await expect(page.getByRole('heading', { name: '部門別の最多' })).toBeVisible();
+
+  // 既定は「攻撃」区分: 得点列がある。
+  await expect(page.getByRole('columnheader', { name: /得点/ })).toBeVisible();
+  const scoreText = await page.locator('.mr-scoreline strong').innerText();
+  const ownScore = Number(scoreText.split('-')[0].trim());
+  const goalCells = page.locator('.mr-stats table tbody tr td:nth-child(4)');
+  const goalTexts = await goalCells.allTextContents();
+  const goalSum = goalTexts.reduce((a, t) => a + Number(t), 0);
+  // 選手の得点列の合計はスコア（自チーム視点）と一致する（DESIGN_V3_4.md 2.1）。
+  expect(goalSum).toBe(ownScore);
+
+  // 区分を「パス」に切り替えると列が変わる（得点列は消え、パス成功率などが出る）。
+  await page.getByRole('radio', { name: 'パス', exact: true }).check();
+  await expect(page.getByRole('columnheader', { name: /得点/ })).toHaveCount(0);
+  await expect(page.getByRole('columnheader', { name: 'パス成功率', exact: true })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: /キーパス/ })).toBeVisible();
+
+  // 「守備」「GK」「フィジカル」でも列が切り替わる。
+  await page.getByRole('radio', { name: '守備', exact: true }).check();
+  await expect(page.getByRole('columnheader', { name: /デュエル/ })).toBeVisible();
+  await page.getByRole('radio', { name: 'GK', exact: true }).check();
+  await expect(page.getByRole('columnheader', { name: /セーブ/ })).toBeVisible();
+  await page.getByRole('radio', { name: 'フィジカル', exact: true }).check();
+  await expect(page.getByRole('columnheader', { name: /走行距離/ })).toBeVisible();
+
+  // チームスタッツ比較にパス数・パス成功率・デュエル勝率が追加されている。
+  const matchStats = page.locator('.mr-head .match-stats');
+  await expect(matchStats.getByText('パス数', { exact: false })).toBeVisible();
+  await expect(matchStats.getByText('パス成功率', { exact: false })).toBeVisible();
+  await expect(matchStats.getByText('デュエル勝率', { exact: false })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('match result screen: shows an explanatory message instead of the stats table when a legacy save has no player stats', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  // v3.4より前に始まった試合途中のセーブを模す（m.playerStats／opponentTotalsが無い）。
+  const s = finishedMatch('旧セーブ互換検証高校', 2024);
+  const legacy = JSON.parse(JSON.stringify(s));
+  delete legacy.match.playerStats;
+  delete legacy.match.opponentTotals;
+  await withSave(page, legacy);
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: '選手ごとのスタッツ' })).toBeVisible();
+  await expect(page.getByText('この試合は選手別の記録がありません。')).toBeVisible();
+  await expect(page.locator('.mr-stats table')).toHaveCount(0);
+  // 評価点自体は旧式の簡易計算にフォールバックして表示され続ける。
+  await expect(page.locator('.mr-rating-row').first()).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('mobile 375px: match result stats table scrolls within itself without widening the page', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.setViewportSize({ width: 375, height: 812 });
+  await withSave(page, finishedMatch('375px結果検証高校', 88));
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: '選手ごとのスタッツ' })).toBeVisible();
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+  ).toBe(true);
+  // 表自体は横スクロールできるコンテナに入っている（DADS: 表内スクロール）。
+  const tableContainer = page.locator('.mr-stats [data-slot="table-container"]');
+  await expect(tableContainer).toHaveCount(1);
+  expect(errors).toEqual([]);
 });

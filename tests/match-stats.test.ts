@@ -402,3 +402,36 @@ void test('v3.4: MOM never has a strictly lower skill-acquisition chance than a 
     }
   }
 });
+
+// 試合結果画面の「習熟度の伸び」は、キックオフ時点の習熟度（snapshot.prof）との実差分で出す。
+// 以前は画面側で式から推定していたため、すでに100の主ポジションでも「+8」と表示されていた。
+void test('the kick-off snapshot keeps proficiency so the result screen can show the real gain; old snapshots without it still load', () => {
+  let s = newGame('習熟度スナップショット検証高校', 404);
+  s.week = 3;
+  for (let i = 0; i < 20 && !s.pending; i++) {
+    if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    const life = getCurrentLifeEvent(s);
+    if (life) s = act(s, { type: 'life', choiceId: life.event.choices[0].id } as never);
+    s = act(s, { type: 'train', training: 'rest' });
+  }
+  s = act(s, { type: 'start' });
+  const gk = s.match!.snapshot!.find((e) => e.id === s.lineup[0])!;
+  assert.ok(gk.prof, 'snapshot should carry proficiency');
+  assert.equal(gk.prof!.GK, s.v3.squad.players[s.lineup[0]].prof.GK);
+  while (!s.match!.done) s = act(s, { type: 'segment' });
+  // 主ポジションが100の選手は、試合後も100のまま（伸びとして表示される差分は0）。
+  const mainAt100 = s.lineup.find((id) => {
+    const ps = s.v3.squad.players[id];
+    return ps.prof[ps.detail] === 100;
+  });
+  if (mainAt100 !== undefined) {
+    const ps = s.v3.squad.players[mainAt100];
+    const before = s.match!.snapshot!.find((e) => e.id === mainAt100)!.prof!;
+    assert.equal((ps.prof[ps.detail] ?? 0) - (before[ps.detail] ?? 0), 0);
+  }
+  // 往復保存と、prof の無い旧スナップショットの読み込み。
+  validateSave(JSON.parse(JSON.stringify(s)));
+  const legacy = JSON.parse(JSON.stringify(s));
+  for (const e of legacy.match.snapshot) delete e.prof;
+  validateSave(legacy);
+});

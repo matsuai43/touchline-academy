@@ -342,6 +342,15 @@ function SubstitutionDialog({
           下げる選手を選ぶと、ベンチの各選手にそのポジションでの習熟度ランクが適性の高い順に表示されます。
           組ができたら「予約に追加」、続けて次の組も選べます。最後に「まとめて確定」でまとめて交代します。
         </DialogDescription>
+        {/* M2: 習熟度ランク（A〜G）が能力ランクと同じ見た目のため区別できないというユーザー
+            要望への対応。バッジには常に「習熟度」の文字ラベルを添え、画面上部にランクの
+            意味（能力の高さではないこと）とピッチ側・ベンチ側で意味が違うことを明記する。 */}
+        <p className="sub-rank-legend">
+          <b>A〜G＝そのポジションへの慣れ（習熟度）</b>
+          です。A=80以上・B=70以上・C=60以上・D=50以上・E=40以上・F=20以上・G=19以下。<b>能力の高さではありません。</b>
+          <br />
+          ピッチ上の選手は「今いる枠への慣れ」、ベンチの選手は「下げる選手の枠に入った場合の慣れ」を表示します。
+        </p>
         {/* 交代時に下げる選手のポジションが分からなくなる不具合の修正: 下げる選手を
             選んだ時点で、ダイアログ上部にそのポジションつきで明示する。 */}
         {outPlayer && (
@@ -414,6 +423,7 @@ function SubstitutionDialog({
                   >
                     <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
                     <span className="sub-pick-rank">
+                      <span className="sub-pick-rank-label">習熟度</span>
                       <RankBadge value={profFor(s, p.id, slot)} label={detailInfo[slot].name} size="lg" />
                     </span>
                     <span className="sub-pick-body">
@@ -464,6 +474,7 @@ function SubstitutionDialog({
                       <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
                       {prof != null && (
                         <span className="sub-pick-rank">
+                          <span className="sub-pick-rank-label">習熟度</span>
                           <RankBadge
                             value={prof}
                             label={outSlot ? detailInfo[outSlot].name : undefined}
@@ -548,7 +559,13 @@ function SubstitutionDialog({
         </div>
         <style>{`
           .sub-pick { flex-wrap: wrap; }
-          .sub-pick-rank { flex-shrink: 0; }
+          .sub-pick-rank { flex-shrink: 0; display: flex; flex-direction: column;
+            align-items: center; gap: 2px; }
+          .sub-pick-rank-label { font-size: 12px; font-weight: 700; color: var(--muted-foreground); }
+          .sub-rank-legend { margin: 10px 0 0; padding: 10px 12px; font-size: 12px; line-height: 1.5;
+            color: var(--muted-foreground); background: var(--accent); border: 1px solid var(--border);
+            border-radius: 8px; }
+          .sub-rank-legend b { color: var(--foreground); }
           .sub-outgoing-banner { margin: 2px 0 0; font-size: 14px; }
           .sub-pick-toprow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
           .sub-in-tag { font-size: 12px; font-weight: 700; padding: 2px 6px; border-radius: 999px;

@@ -4,16 +4,28 @@
 // MatchView がこのコンポーネントだけを描く（試合ビューの置き換え）。スコアボード・タイム
 // ライン・MOTM・成長差分（旧 MatchSummary から移設）に加えて、選手ごとの評価点
 // （lib/match-rating.ts、10点満点・決定的）と、この試合で得た部費の表示枠を持つ。
+import { useState, type ReactNode } from 'react';
 import { Portrait } from './development-ui';
 import { PositionBadge } from './ability-sheet';
 import {
   extraStatNames,
+  detailInfo,
   SKILLS,
   type ExtraStat,
 } from '@/lib/squad';
 import { stats, type State, type Action, type Player, type Stat } from '@/lib/game';
 import { matchRatings, topRated, type PlayerRating } from '@/lib/match-rating';
-import { Award, ArrowRight, Wallet } from 'lucide-react';
+import { ownTeamTotals, zeroPlayerStats, type PlayerMatchStats } from '@/lib/match-stats';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '@/components/ui/table';
+import { Award, ArrowRight, ArrowDown, ArrowUp, Wallet, Trophy } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // 選手ごとの成長差分（旧 MatchSummary から移設。ロジックは変更していない）。
@@ -90,6 +102,186 @@ function fmtDiff(n: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// M2: 評価点の行に「この試合で伸びた能力」を添える。能力・特殊能力・信頼・習熟度の変化は
+// いずれもキックオフ時点のスナップショット（m.snapshot）との実際の差分で出す。
+// ---------------------------------------------------------------------------
+function actualProfGrowth(s: State, id: number): { name: string; amount: number }[] {
+  // すでに100の主ポジションは伸びないので表示されない。snapshot.prof が無い旧セーブの
+  // 試合では何も出さない（推定値は出さない）。
+  const before = s.match?.snapshot?.find((e) => e.id === id)?.prof;
+  const now = s.v3.squad.players[id]?.prof;
+  if (!before || !now) return [];
+  return (Object.keys(now) as (keyof typeof now)[])
+    .map((k) => ({ k, diff: (now[k] ?? 0) - (before[k] ?? 0) }))
+    .filter((d) => d.diff >= 0.5)
+    .sort((a, b) => b.diff - a.diff)
+    .map((d) => ({ name: detailInfo[d.k].name, amount: Math.round(d.diff) }))
+    .filter((d) => d.amount >= 1);
+}
+type GrowthChip = { key: string; label: string; cls: 'up' | 'down' | 'skill-new' };
+function growthChipsFor(s: State, row: PlayerRating, g: GrowthRowLike | undefined): GrowthChip[] {
+  const chips: GrowthChip[] = [];
+  if (g) {
+    for (const d of g.statDiffs)
+      chips.push({ key: `s-${d.label}`, label: `${d.label} ${fmtDiff(d.diff)}`, cls: d.diff > 0 ? 'up' : 'down' });
+    for (const d of g.extraDiffs)
+      chips.push({ key: `e-${d.label}`, label: `${d.label} ${fmtDiff(d.diff)}`, cls: d.diff > 0 ? 'up' : 'down' });
+    if (Math.abs(g.trustDiff) >= 1)
+      chips.push({ key: 'trust', label: `信頼 ${fmtDiff(g.trustDiff)}`, cls: g.trustDiff > 0 ? 'up' : 'down' });
+    for (const id of g.newSkills)
+      chips.push({ key: `skill-${id}`, label: `習得：${SKILLS[id]?.name ?? id}`, cls: 'skill-new' });
+  }
+  for (const prof of actualProfGrowth(s, row.id))
+    chips.push({ key: `prof-${prof.name}`, label: `習熟度 ${prof.name} +${prof.amount}`, cls: 'up' });
+  return chips;
+}
+
+// ---------------------------------------------------------------------------
+// M2: 選手ごとのスタッツ表（DESIGN_V3_4.md 4章）。区分（攻撃／パス／守備／GK／
+// フィジカル）を切り替えると列が変わる。旧セーブの試合途中（m.playerStats が無い）
+// では呼び出し側がそもそもこのテーブルを描かない。
+// ---------------------------------------------------------------------------
+type StatCategory = 'attack' | 'pass' | 'defense' | 'gk' | 'physical';
+const CATEGORY_ORDER: StatCategory[] = ['attack', 'pass', 'defense', 'gk', 'physical'];
+const CATEGORY_LABEL: Record<StatCategory, string> = {
+  attack: '攻撃',
+  pass: 'パス',
+  defense: '守備',
+  gk: 'GK',
+  physical: 'フィジカル',
+};
+type StatColumn = {
+  key: string;
+  label: string;
+  value: (row: PlayerRating, st: PlayerMatchStats, cleanSheet: boolean) => number;
+  render: (row: PlayerRating, st: PlayerMatchStats, cleanSheet: boolean) => ReactNode;
+};
+function pct(a: number, b: number): string {
+  return b > 0 ? `${Math.round((a / b) * 100)}%` : '−';
+}
+const FIXED_COLUMNS: StatColumn[] = [
+  { key: 'minutes', label: '出場時間', value: (r) => r.minutes, render: (r) => `${r.minutes}分` },
+  { key: 'rating', label: '評価点', value: (r) => r.rating, render: (r) => r.rating.toFixed(1) },
+];
+const CATEGORY_COLUMNS: Record<StatCategory, StatColumn[]> = {
+  attack: [
+    { key: 'goals', label: '得点', value: (r, st) => st.goals, render: (r, st) => st.goals },
+    { key: 'assists', label: 'アシスト', value: (r, st) => st.assists, render: (r, st) => st.assists },
+    {
+      key: 'shots',
+      label: 'シュート（枠内）',
+      value: (r, st) => st.shots,
+      render: (r, st) => `${st.shots}（${st.shotsOnTarget}）`,
+    },
+    {
+      key: 'dribbles',
+      label: 'ドリブル（成功/試行）',
+      value: (r, st) => st.dribblesCompleted,
+      render: (r, st) => `${st.dribblesCompleted}/${st.dribblesAttempted}`,
+    },
+    {
+      key: 'crosses',
+      label: 'クロス（成功/試行）',
+      value: (r, st) => st.crossCompleted,
+      render: (r, st) => `${st.crossCompleted}/${st.crossAttempted}`,
+    },
+  ],
+  pass: [
+    {
+      key: 'passes',
+      label: 'パス（成功/試行）',
+      value: (r, st) => st.passesCompleted,
+      render: (r, st) => `${st.passesCompleted}/${st.passesAttempted}`,
+    },
+    {
+      key: 'passRate',
+      label: 'パス成功率',
+      value: (r, st) => (st.passesAttempted > 0 ? st.passesCompleted / st.passesAttempted : 0),
+      render: (r, st) => pct(st.passesCompleted, st.passesAttempted),
+    },
+    {
+      key: 'finalThird',
+      label: '敵陣パス成功率',
+      value: (r, st) => (st.finalThirdPassAttempted > 0 ? st.finalThirdPassCompleted / st.finalThirdPassAttempted : 0),
+      render: (r, st) => pct(st.finalThirdPassCompleted, st.finalThirdPassAttempted),
+    },
+    {
+      key: 'longPass',
+      label: 'ロングパス成功率',
+      value: (r, st) => (st.longPassAttempted > 0 ? st.longPassCompleted / st.longPassAttempted : 0),
+      render: (r, st) => pct(st.longPassCompleted, st.longPassAttempted),
+    },
+    { key: 'keyPasses', label: 'キーパス', value: (r, st) => st.keyPasses, render: (r, st) => st.keyPasses },
+  ],
+  defense: [
+    {
+      key: 'duels',
+      label: 'デュエル（勝利/試行）',
+      value: (r, st) => st.duelsWon,
+      render: (r, st) => `${st.duelsWon}/${st.duelsAttempted}`,
+    },
+    {
+      key: 'aerials',
+      label: '空中戦（勝利/試行）',
+      value: (r, st) => st.aerialsWon,
+      render: (r, st) => `${st.aerialsWon}/${st.aerialsAttempted}`,
+    },
+    { key: 'tackles', label: 'タックル', value: (r, st) => st.tackles, render: (r, st) => st.tackles },
+    { key: 'interceptions', label: 'インターセプト', value: (r, st) => st.interceptions, render: (r, st) => st.interceptions },
+    { key: 'clearances', label: 'クリア', value: (r, st) => st.clearances, render: (r, st) => st.clearances },
+    { key: 'turnovers', label: 'ボールロスト', value: (r, st) => st.turnovers, render: (r, st) => st.turnovers },
+  ],
+  gk: [
+    { key: 'saves', label: 'セーブ', value: (r, st) => st.saves, render: (r, st) => st.saves },
+    { key: 'shotsFaced', label: '被枠内シュート', value: (r, st) => st.shotsFaced, render: (r, st) => st.shotsFaced },
+    { key: 'goalsConceded', label: '失点', value: (r, st) => st.goalsConceded, render: (r, st) => st.goalsConceded },
+    { key: 'highClaims', label: 'ハイボール処理', value: (r, st) => st.highClaims, render: (r, st) => st.highClaims },
+    {
+      key: 'cleanSheet',
+      label: 'クリーンシート',
+      value: (r, st, cs) => (r.pos === 'GK' && cs ? 1 : 0),
+      render: (r, st, cs) => (r.pos === 'GK' && cs ? '○' : '−'),
+    },
+  ],
+  physical: [
+    {
+      key: 'distanceKm',
+      label: '走行距離（km）',
+      value: (r, st) => st.distanceKm,
+      render: (r, st) => st.distanceKm.toFixed(1),
+    },
+    { key: 'sprints', label: 'スプリント', value: (r, st) => st.sprints, render: (r, st) => st.sprints },
+    {
+      key: 'topSpeed',
+      label: 'トップスピード（km/h）',
+      value: (r, st) => st.topSpeedKmh,
+      render: (r, st) => st.topSpeedKmh.toFixed(1),
+    },
+  ],
+};
+type LeaderDef = { key: string; label: string; value: (st: PlayerMatchStats) => number; format?: (n: number) => string };
+const LEADER_DEFS: LeaderDef[] = [
+  { key: 'duelsWon', label: '最多デュエル勝利', value: (st) => st.duelsWon },
+  { key: 'passesCompleted', label: '最多パス成功', value: (st) => st.passesCompleted },
+  { key: 'distanceKm', label: '最多走行距離', value: (st) => st.distanceKm, format: (n) => `${n.toFixed(1)}km` },
+  { key: 'saves', label: '最多セーブ', value: (st) => st.saves },
+];
+function computeLeaders(ratings: PlayerRating[], playerStats: Record<number, PlayerMatchStats>) {
+  return LEADER_DEFS.map((def) => {
+    let best: { name: string; val: number } | null = null;
+    for (const row of ratings) {
+      const st = playerStats[row.id];
+      if (!st) continue;
+      const val = def.value(st);
+      if (val <= 0) continue;
+      if (!best || val > best.val) best = { name: row.name, val };
+    }
+    if (!best) return null;
+    return { key: def.key, label: def.label, name: best.name, display: def.format ? def.format(best.val) : `${Math.round(best.val)}` };
+  }).filter((x): x is { key: string; label: string; name: string; display: string } => !!x);
+}
+
+// ---------------------------------------------------------------------------
 // MOTM の選出理由。評価点1位の選手（lib/match-rating.ts の topRated）と必ず一致させる。
 // ---------------------------------------------------------------------------
 function motmReason(row: PlayerRating, cleanSheet: boolean): string {
@@ -138,9 +330,36 @@ export function MatchResult({
   const cleanSheet = m.away === 0;
   const motmPlayer = top ? s.players.find((p) => p.id === top.id) : null;
   const growth = computeGrowth(s);
-  const notableGrowth = growth.filter(isNotableGrowth);
+  const growthById = new Map(growth.map((g) => [g.id, g]));
+  // M2: 活躍と見返りの関係が一目で分かるよう、成長差分は評価点の高い順に並べる。
+  const ratingRank = new Map(ratings.map((r, i) => [r.id, i]));
+  const notableGrowth = growth
+    .filter(isNotableGrowth)
+    .slice()
+    .sort((a, b) => (ratingRank.get(a.id) ?? 999) - (ratingRank.get(b.id) ?? 999));
   const minorGrowth = groupMinorGrowth(growth);
   const timeline = buildTimeline(s);
+  // M2: 選手ごとのスタッツ表。旧セーブの途中試合（m.playerStats が無い）では表を出さない。
+  const hasStats = !!m.playerStats;
+  const ownTotals = hasStats ? ownTeamTotals(m) : null;
+  const leaders = hasStats ? computeLeaders(ratings, m.playerStats!) : [];
+  const [statCategory, setStatCategory] = useState<StatCategory>('attack');
+  const [statSort, setStatSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({
+    key: 'rating',
+    dir: 'desc',
+  });
+  const statColumns = [...FIXED_COLUMNS, ...CATEGORY_COLUMNS[statCategory]];
+  const activeStatCol = statColumns.find((c) => c.key === statSort.key) ?? FIXED_COLUMNS[1];
+  const statFor = (id: number) => m.playerStats?.[id] ?? zeroPlayerStats();
+  const sortedStatRows = hasStats
+    ? ratings.slice().sort((a, b) => {
+        const av = activeStatCol.value(a, statFor(a.id), cleanSheet);
+        const bv = activeStatCol.value(b, statFor(b.id), cleanSheet);
+        return statSort.dir === 'desc' ? bv - av : av - bv;
+      })
+    : [];
+  const toggleStatSort = (key: string) =>
+    setStatSort((prev) => (prev.key === key ? { key, dir: prev.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }));
   const resultKind: 'win' | 'draw' | 'lose' = m.won
     ? 'win'
     : m.home === m.away && !m.penalties
@@ -183,6 +402,30 @@ export function MatchResult({
               {m.possession}% — {100 - m.possession}%
             </b>
           </span>
+          {hasStats && ownTotals && (
+            <>
+              <span>
+                パス数{' '}
+                <b>
+                  {ownTotals.passesAttempted} — {m.opponentTotals?.passesAttempted ?? 0}
+                </b>
+              </span>
+              <span>
+                パス成功率{' '}
+                <b>
+                  {pct(ownTotals.passesCompleted, ownTotals.passesAttempted)} —{' '}
+                  {pct(m.opponentTotals?.passesCompleted ?? 0, m.opponentTotals?.passesAttempted ?? 0)}
+                </b>
+              </span>
+              <span>
+                デュエル勝率{' '}
+                <b>
+                  {pct(ownTotals.duelsWon, ownTotals.duelsAttempted)} —{' '}
+                  {pct(m.opponentTotals?.duelsWon ?? 0, m.opponentTotals?.duelsAttempted ?? 0)}
+                </b>
+              </span>
+            </>
+          )}
         </div>
       </div>
       {motmPlayer && top && (
@@ -224,6 +467,21 @@ export function MatchResult({
                     {r.started ? '先発' : '途中出場'} ・ {r.minutes}分
                     {r.goals > 0 ? ` ・ 得点 ${r.goals}` : ''}
                   </span>
+                  {/* M2: 評価点の高い選手ほど伸びていることが一目で分かるよう、評価点順の
+                      この行にそのまま「この試合で伸びた能力」を添える。 */}
+                  {(() => {
+                    const chips = growthChipsFor(s, r, growthById.get(r.id));
+                    if (!chips.length) return null;
+                    return (
+                      <span className="mr-rating-growth" aria-label="この試合で伸びた能力">
+                        {chips.map((c) => (
+                          <span key={c.key} className={`growth-chip ${c.cls}`}>
+                            {c.label}
+                          </span>
+                        ))}
+                      </span>
+                    );
+                  })()}
                 </span>
                 <span className="mr-rating-value" aria-label={`評価点 ${r.rating.toFixed(1)}`}>
                   {r.rating.toFixed(1)}
@@ -233,6 +491,97 @@ export function MatchResult({
           ))}
         </ol>
         {!ratings.length && <p className="muted">出場記録がないため評価点を表示できません。</p>}
+      </section>
+      <section className="panel mr-stats" aria-label="選手ごとのスタッツ">
+        <h2>選手ごとのスタッツ</h2>
+        {hasStats ? (
+          <>
+            <p className="muted">
+              区分を切り替えると列が変わります。見出しをクリックすると並べ替えられます。
+            </p>
+            {leaders.length > 0 && (
+              <div className="mr-stat-leaders">
+                <h3>
+                  <Trophy size={15} aria-hidden="true" /> 部門別の最多
+                </h3>
+                <ul>
+                  {leaders.map((l) => (
+                    <li key={l.key}>
+                      <span className="mr-stat-leader-label">{l.label}</span>
+                      <b>{l.name}</b>
+                      <span className="mr-stat-leader-value">{l.display}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <RadioGroup
+              className="mr-stat-tabs"
+              aria-label="スタッツの区分"
+              value={statCategory}
+              onValueChange={(v) => {
+                setStatCategory(v as StatCategory);
+                setStatSort({ key: 'rating', dir: 'desc' });
+              }}
+            >
+              {CATEGORY_ORDER.map((c) => (
+                <label key={c} className={statCategory === c ? 'active' : ''}>
+                  <RadioGroupItem value={c} />
+                  {CATEGORY_LABEL[c]}
+                </label>
+              ))}
+            </RadioGroup>
+            <Table aria-label={`選手ごとのスタッツ（${CATEGORY_LABEL[statCategory]}）`}>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="mr-stat-name-col">選手</TableHead>
+                  {statColumns.map((col) => (
+                    <TableHead key={col.key} aria-sort={
+                      statSort.key === col.key ? (statSort.dir === 'desc' ? 'descending' : 'ascending') : 'none'
+                    }>
+                      <button type="button" className="mr-stat-sort-btn" onClick={() => toggleStatSort(col.key)}>
+                        {col.label}
+                        {statSort.key === col.key &&
+                          (statSort.dir === 'desc' ? (
+                            <ArrowDown size={14} aria-hidden="true" />
+                          ) : (
+                            <ArrowUp size={14} aria-hidden="true" />
+                          ))}
+                      </button>
+                    </TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sortedStatRows.map((row) => {
+                  const st = statFor(row.id);
+                  return (
+                    <TableRow key={row.id}>
+                      <TableCell className="mr-stat-name-col">
+                        <button
+                          type="button"
+                          className="mr-stat-name-btn"
+                          onClick={() => {
+                            const p = s.players.find((pp) => pp.id === row.id);
+                            if (p) onPlayer(p);
+                          }}
+                        >
+                          {row.name}
+                        </button>
+                        <PositionBadge detail={row.detail} />
+                      </TableCell>
+                      {statColumns.map((col) => (
+                        <TableCell key={col.key}>{col.render(row, st, cleanSheet)}</TableCell>
+                      ))}
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </>
+        ) : (
+          <p className="muted">この試合は選手別の記録がありません。</p>
+        )}
       </section>
       {matchFunds.length > 0 && (
         <section className="panel mr-funds" aria-label="この試合で得た部費">
@@ -342,12 +691,36 @@ export function MatchResult({
         .mr-rating-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
           font-size: 12px; color: var(--muted-foreground); }
         .mr-rating-value { font-size: 22px; font-weight: 700; min-width: 2.4em; text-align: right; }
+        .mr-rating-growth { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
         .mr-funds ul { list-style: none; margin: 8px 0 0; padding: 0; display: flex;
           flex-direction: column; gap: 6px; }
         .mr-funds li { display: flex; align-items: center; gap: 8px; font-size: 14px; }
         .mr-funds b { color: var(--success); }
         .mr-close { width: 100%; justify-content: center; display: flex; align-items: center;
           gap: 8px; min-height: 48px; }
+        /* M2: 選手ごとのスタッツ表 */
+        .mr-stat-leaders { margin: 12px 0 0; padding: 10px 12px; border: 1px solid var(--border);
+          border-radius: 10px; background: var(--accent); }
+        .mr-stat-leaders h3 { display: flex; align-items: center; gap: 6px; font-size: 13px;
+          margin: 0 0 8px; color: var(--muted-foreground); }
+        .mr-stat-leaders ul { list-style: none; margin: 0; padding: 0; display: flex;
+          flex-direction: column; gap: 5px; }
+        .mr-stat-leaders li { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+          font-size: 13px; }
+        .mr-stat-leader-label { color: var(--muted-foreground); min-width: 8.5em; }
+        .mr-stat-leader-value { color: var(--muted-foreground); font-size: 12px; }
+        .mr-stat-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 10px; }
+        .mr-stat-tabs > label { display: flex; align-items: center; gap: 6px; min-height: 44px;
+          padding: 4px 14px; border: 1px solid var(--border); border-radius: 999px;
+          background: var(--card); color: var(--muted-foreground); font-size: 13px; cursor: pointer; }
+        .mr-stat-tabs > label.active { border-color: var(--primary); color: var(--primary);
+          background: var(--accent); }
+        .mr-stat-name-col { position: sticky; left: 0; background: var(--card); z-index: 1; }
+        .mr-stat-name-btn { display: block; background: none; border: none; padding: 0;
+          font: inherit; color: var(--primary); text-align: left; cursor: pointer; min-height: 22px; }
+        .mr-stat-sort-btn { display: inline-flex; align-items: center; background: none; border: none;
+          padding: 6px 2px; font: inherit; font-weight: 700; color: inherit; cursor: pointer;
+          white-space: nowrap; min-height: 32px; }
       `}</style>
     </section>
   );

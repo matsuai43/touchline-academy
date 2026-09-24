@@ -150,6 +150,9 @@ export type MatchSnapshotEntry = {
   negatives: string[];
   goals: number;
   appearances: number;
+  /** キックオフ時点のポジション習熟度。試合後の「習熟度の伸び」を実差分で出すための表示専用。
+   *  これを追加する前に始まった試合のセーブには無い。 */
+  prof?: Partial<Record<DetailPos, number>>;
 };
 export type Match = {
   details: MatchDetails;
@@ -999,6 +1002,7 @@ export function act(old: State, a: Action): State {
           negatives: ps ? [...ps.negatives] : [],
           goals: p.goals,
           appearances: p.appearances,
+          prof: ps ? { ...ps.prof } : undefined,
         };
       }),
     };
@@ -1566,7 +1570,11 @@ export function validateSave(x: unknown): State {
             e.negatives.length <= 10 &&
             e.negatives.every((id) => typeof id === 'string' && id.length <= 40) &&
             num(e.goals, 0, 1000000) &&
-            num(e.appearances, 0, 1000000),
+            num(e.appearances, 0, 1000000) &&
+            (e.prof === undefined ||
+              (typeof e.prof === 'object' &&
+                e.prof !== null &&
+                Object.values(e.prof).every((v) => num(v, 0, 100)))),
         )
       )
         throw Error('試合開始時スナップショットが不正です。');

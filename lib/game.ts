@@ -27,6 +27,7 @@ import {
   skillMatchFactors,
   playerFatigueMult,
   grantMatchAchievements,
+  grantPerformanceSkill,
   trainSquadSkills,
   handleSquad,
   formationSlots,
@@ -54,6 +55,19 @@ import {
   readCompetition,
   type CompetitionAction,
 } from './competition.ts';
+// v3.4 M1: 選手ごとの試合スタッツ・活躍連動の成長（lib/match-stats.ts）。
+import {
+  applyMatchSegmentStats,
+  computeMatchGrowth,
+  profGrowthMultiplier,
+  zeroPlayerStats,
+  isValidPlayerMatchStats,
+  isValidTeamMatchTotals,
+  type PlayerMatchStats,
+  type TeamMatchTotals,
+} from './match-stats.ts';
+// v3.4 M1: 評価点（ポジション別のスタッツ採点）と MOM 判定。
+import { matchRatings, topRated } from './match-rating.ts';
 // T4.2: 部費の収入1件分（週・日・金額・理由）。
 export type FundEntry = { week: number; day: number; amount: number; reason: string };
 export type Position = 'GK' | 'DF' | 'MF' | 'FW';
@@ -161,6 +175,13 @@ export type Match = {
   // ポジション経験値（フル出場+8・途中出場は出場時間に比例）の算出にのみ使う表示専用に
   // 近いデータで、これが導入される前に開始した試合のセーブには存在しない。
   subEntries?: { id: number; index: number; minute: number }[];
+  // v3.4 M1: 選手ごとの試合スタッツ（15分区間ごとに lib/match-stats.ts が積み上げる）。
+  // 表示・評価点・活躍連動の成長にのみ使う付随データで、試合結果（スコア・シュート数・
+  // xG・ハイライト・勝敗）には一切影響しない。これが導入される前に開始した試合の
+  // セーブには存在しない（validateSave が許容し、無ければ空として扱う）。
+  playerStats?: Record<number, PlayerMatchStats>;
+  // 相手チームの合計スタッツ（選手別は生成しない。表示専用）。
+  opponentTotals?: TeamMatchTotals;
 };
 export type State = {
   development: Development;
@@ -908,7 +929,11 @@ export function act(old: State, a: Action): State {
   }
   if (a.type === 'segment') {
     if (!s.match || s.match.done) throw Error('進行できる試合がありません。');
+    const startMinute = s.match.minute;
     simulateSegment(s);
+    // v3.4 M1: 区間処理の「後」に選手ごとのスタッツを積み上げる（s.seedは消費しない）。
+    applyMatchSegmentStats(s, startMinute);
+    if (s.match.done) applyMatchGrowth(s);
     return s;
   }
   if (a.type === 'finish') {
@@ -953,6 +978,16 @@ export function act(old: State, a: Action): State {
       possession: 50,
       lastSide: 0,
       subEntries: [],
+      playerStats: {},
+      opponentTotals: {
+        shots: 0,
+        shotsOnTarget: 0,
+        goals: 0,
+        passesAttempted: 0,
+        passesCompleted: 0,
+        duelsAttempted: 0,
+        duelsWon: 0,
+      },
       snapshot: s.players.map((p) => {
         const ps = s.v3.squad.players[p.id];
         return {
@@ -1045,7 +1080,9 @@ export function act(old: State, a: Action): State {
 // が無い試合）は「途中交代の記録なし」として、original(先発)がそのまま90分
 // 出場したものとして扱う（実際には交代済みかもしれないが、記録が無い以上の
 // 精度は出せないため安全側に倒す）。
-function grantMatchPositionExperience(s: State): void {
+// v3.4 M1: profMult は選手ごとの習熟度の伸び係数（0.6〜1.5倍、matchRatings の評価点から
+// 決定的に決める）。旧仕様の固定+8を置き換える（出場時間×評価点の係数）。
+function grantMatchPositionExperience(s: State, profMult: Map<number, number>): void {
   const m = s.match;
   if (!m) return;
   const dslots = formationSlots(s.formation);
@@ -1062,12 +1099,12 @@ function grantMatchPositionExperience(s: State): void {
     let from = 0;
     for (const e of entries) {
       const minutes = e.minute - from;
-      if (minutes > 0) gainProficiency(s, cur, slot, 8 * (minutes / 90));
+      if (minutes > 0) gainProficiency(s, cur, slot, 8 * (minutes / 90) * (profMult.get(cur) ?? 1));
       cur = e.id;
       from = e.minute;
     }
     const minutes = 90 - from;
-    if (minutes > 0) gainProficiency(s, cur, slot, 8 * (minutes / 90));
+    if (minutes > 0) gainProficiency(s, cur, slot, 8 * (minutes / 90) * (profMult.get(cur) ?? 1));
   }
 }
 function simulateSegment(s: State) {
@@ -1248,7 +1285,6 @@ function simulateSegment(s: State) {
     for (const id of m.used) {
       const p = s.players.find((p) => p.id === id)!;
       p.appearances++;
-      p.stats.mental = clamp(p.stats.mental + 0.5, 20, 99);
     }
     if (m.won) {
       s.records.wins++;
@@ -1277,9 +1313,45 @@ function simulateSegment(s: State) {
       s,
       `${m.fixture.label}：${s.school} ${m.home} - ${m.away} ${m.fixture.opponent}${m.penalties ? '（PK ' + m.penalties + '）' : ''}`,
     );
-    grantMatchAchievements(s);
-    grantMatchPositionExperience(s);
+    // v3.4 M1: 活躍連動の成長・特殊能力・信頼・ポジション経験値は、この区間ぶんの
+    // スタッツが積み上がった後（act()の'segment'ハンドラでapplyMatchSegmentStatsを
+    // 呼んだ後）にまとめて適用する（applyMatchGrowth参照）。ここでは呼ばない。
   }
+}
+// v3.4 M1: 試合終了時、活躍（評価点・記録したスタッツ）に応じて能力・習熟度・
+// 特殊能力・信頼を成長させる。旧仕様の「出場者一律 精神力+0.5」を置き換える。
+// s.match.playerStats／matchRatings（決定的・s.seedを消費しない）だけを使うため、
+// 既存の試合結果（スコア・シュート数・xG・ハイライト・勝敗）には一切影響しない。
+function applyMatchGrowth(s: State): void {
+  const m = s.match;
+  if (!m || !m.done) return;
+  const ratings = matchRatings(s);
+  const top = topRated(ratings);
+  const byId = new Map(ratings.map((r) => [r.id, r]));
+  for (const id of m.used) {
+    const p = s.players.find((pp) => pp.id === id);
+    const row = byId.get(id);
+    if (!p || !row) continue;
+    const st: PlayerMatchStats = m.playerStats?.[id] ?? zeroPlayerStats();
+    const isMOM = top?.id === id;
+    const g = computeMatchGrowth(p.pos, st, row.rating, row.minutes, p.talent);
+    for (const k of Object.keys(g.statGrowth) as Stat[])
+      p.stats[k] = clamp(p.stats[k] + (g.statGrowth[k] ?? 0), 20, 99);
+    const ps = s.v3.squad.players[id];
+    if (ps) {
+      for (const k of Object.keys(g.extraGrowth) as (keyof typeof g.extraGrowth)[])
+        ps[k] = clamp(ps[k] + (g.extraGrowth[k] ?? 0), 20, 99);
+    }
+    // 信頼: MOMと高評価の選手は少し上がる（下がる方向は付けない）。
+    if (isMOM) p.identity.trust = clamp(p.identity.trust + 3, 0, 100);
+    else if (row.rating >= 7.5) p.identity.trust = clamp(p.identity.trust + 1, 0, 100);
+    // 特殊能力: 評価点7.5以上で、最も記録した分野に対応するスキルの習得機会
+    // （MOMは確率アップ）。既存3経路（練習継続・ハットトリック等）とは独立に抽選する。
+    grantPerformanceSkill(s, id, row.rating, isMOM, g.topCategory);
+  }
+  grantMatchAchievements(s);
+  const profMult = new Map(ratings.map((r) => [r.id, profGrowthMultiplier(r.rating)]));
+  grantMatchPositionExperience(s, profMult);
 }
 export function validateSave(x: unknown): State {
   if (!x || typeof x !== 'object') throw Error('セーブ形式が違います。');
@@ -1517,6 +1589,24 @@ export function validateSave(x: unknown): State {
       )
         throw Error('試合の交代記録が不正です。');
     }
+    // v3.4 M1: playerStats / opponentTotals は評価点・成長・表示にのみ使う付随データで、
+    // これが導入される前に開始した試合のセーブには存在しない。無ければ許容する。
+    if (s.match.playerStats !== undefined) {
+      if (
+        !s.match.playerStats ||
+        typeof s.match.playerStats !== 'object' ||
+        Object.keys(s.match.playerStats).length > ROSTER_MAX ||
+        !Object.entries(s.match.playerStats).every(
+          ([key, v]) => ids.includes(+key) && isValidPlayerMatchStats(v),
+        )
+      )
+        throw Error('試合の選手スタッツが不正です。');
+    }
+    if (
+      s.match.opponentTotals !== undefined &&
+      !isValidTeamMatchTotals(s.match.opponentTotals)
+    )
+      throw Error('試合の相手チームスタッツが不正です。');
   }
   const hydrated = hydrateDevelopment(structuredClone(s));
   hydrateV3(hydrated);

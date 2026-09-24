@@ -1258,6 +1258,39 @@ export function grantMatchAchievements(s: State): void {
 }
 
 // ---------------------------------------------------------------------------
+// 習得経路4（v3.4）: 評価点7.5以上での特殊能力習得（試合で最も記録した分野に対応、
+// MOMは確率アップ）。既存の3経路（練習継続・試合の経験）とは独立に抽選する。
+// ---------------------------------------------------------------------------
+export function grantPerformanceSkill(
+  s: State,
+  playerId: number,
+  rating: number,
+  isMOM: boolean,
+  topCategory: SkillCategory,
+): boolean {
+  if (rating < 7.5) return false;
+  const sq = s.v3?.squad;
+  if (!sq) return false;
+  const ps = sq.players[playerId];
+  if (!ps || ps.skills.length >= 5) return false;
+  const isGK = basePos(ps.detail) === 'GK';
+  const inCategory = (cat: SkillCategory) =>
+    catalogByCategory(cat).filter(
+      (id) =>
+        !ps.skills.includes(id) &&
+        !ps.negatives.includes(id) &&
+        (SKILLS[id].category !== 'GK' || isGK),
+    );
+  const pool = inCategory(topCategory).length ? inCategory(topCategory) : inCategory('精神');
+  if (!pool.length) return false;
+  const chance = clamp(0.08 + (rating - 7.5) * 0.12 + (isMOM ? 0.15 : 0), 0, 0.6);
+  const roll = hf(s.seed, playerId, s.week, s.season, 8642);
+  if (roll >= chance) return false;
+  const idx = Math.floor(hf(s.seed, playerId, s.week, 9753) * pool.length);
+  return grantSkill(s, playerId, pool[Math.min(idx, pool.length - 1)]);
+}
+
+// ---------------------------------------------------------------------------
 // 試合シミュレーションへの実効フック
 // ---------------------------------------------------------------------------
 export type SkillMatchFactors = {

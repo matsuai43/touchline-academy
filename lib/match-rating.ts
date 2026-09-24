@@ -4,6 +4,7 @@
 // 高レベルの `matchRatings` が実際の State/Match からその入力を組み立てる。
 import { clamp, type State, type Position } from './game.ts';
 import { formationSlots, basePos, type DetailPos } from './squad.ts';
+import { WIDE_POS, type PlayerMatchStats } from './match-stats.ts';
 
 export const RATING_MIN = 3.0;
 export const RATING_MAX = 10.0;
@@ -61,6 +62,86 @@ export function ratingFor(input: RatingInput): number {
   if (input.cleanSheet) r += 0.5;
   const noise = (ratingHash(input.seed, input.id, Math.round(input.minutes) * 13 + input.goals * 31 + 1) - 0.5) * 0.5;
   r += noise * minutesFactor;
+  return clamp(round1(r), RATING_MIN, RATING_MAX);
+}
+
+// ---------------------------------------------------------------------------
+// v3.4 M1: DESIGN_V3_4.md 2.2 のポジション別・スタッツ基準の採点。ユーザー要望に
+// 沿い、Jリーグ公式サイトが選手ごとに公開しているスタッツ項目（得点・アシスト・
+// デュエル・空中戦・クリーンシート・走行距離・スプリント・パス総数・ロングパス・
+// 敵陣パス・クロス・ドリブル・タックル・インターセプト・セーブ・トップスピード・
+// シュート）を材料にする（採点式自体はJリーグ非公開のため独自）。
+// matchRatings() はスタッツが無い試合（旧セーブの途中データ）のみ ratingFor() の
+// 簡易式にフォールバックする。
+// ---------------------------------------------------------------------------
+export type PositionRatingInput = {
+  seed: number;
+  id: number;
+  pos: Position;
+  detail: DetailPos;
+  outcome: MatchOutcome;
+  margin: number;
+  minutes: number;
+  fitProf: number;
+  cleanSheet: boolean;
+  stats: PlayerMatchStats;
+};
+// ポジションごとの「活躍度」の生スコアを、平均的な出場が概ね0（=6.0のまま）になる
+// 大きさへ縮小する係数。試合を大量に回した実測（1試合平均のスタッツ量）から、
+// 平均的な出場のポジション別加点がだいたい揃うよう校正した値。この係数のおかげで、
+// 活躍した選手ほど評価点が上がる形はそのままに、6.0が本当に「平均的な出場」を表す。
+const POS_ACTIVITY_SCALE: Record<Position, number> = { GK: 0.27, DF: 0.09, MF: 0.055, FW: 0.081 };
+export function statRatingFor(input: PositionRatingInput): number {
+  const st = input.stats;
+  const minutesFactor = clamp(input.minutes / 90, 0.15, 1);
+  const wide = (WIDE_POS as readonly DetailPos[]).includes(input.detail);
+  let delta = 0;
+  delta += input.outcome === 'win' ? 0.22 : input.outcome === 'loss' ? -0.22 : 0;
+  delta += clamp(input.margin, -3, 3) * 0.05;
+  delta += ((input.fitProf - 60) / 100) * 0.4;
+  delta -= st.turnovers * 0.05;
+  // 走行距離・スプリント・トップスピードは全員に小さく効く（運動量の多い選手が報われる）。
+  delta += clamp(st.distanceKm - 9.5, -3, 3) * 0.05 + Math.min(st.sprints, 30) * 0.006 + clamp(st.topSpeedKmh - 27, -6, 8) * 0.01;
+  const finalThirdRate = st.finalThirdPassAttempted > 0 ? st.finalThirdPassCompleted / st.finalThirdPassAttempted : 0.75;
+  let posRaw = 0;
+  if (input.pos === 'FW') {
+    posRaw +=
+      st.goals * 0.9 +
+      st.assists * 0.5 +
+      st.shotsOnTarget * 0.15 +
+      st.shots * 0.03 +
+      st.dribblesCompleted * 0.08 +
+      st.aerialsWon * 0.05; // CFのポストプレイ等
+  } else if (input.pos === 'MF') {
+    posRaw +=
+      st.passesCompleted * 0.02 +
+      (finalThirdRate - 0.75) * 1.1 +
+      st.longPassCompleted * 0.05 +
+      st.dribblesCompleted * 0.07 +
+      st.duelsWon * 0.06 +
+      st.keyPasses * 0.15 +
+      st.assists * 0.5 +
+      st.interceptions * 0.05;
+    if (wide) posRaw += st.crossCompleted * 0.12;
+  } else if (input.pos === 'DF') {
+    posRaw +=
+      st.duelsWon * 0.08 +
+      st.aerialsWon * 0.07 +
+      st.tackles * 0.09 +
+      st.interceptions * 0.08 +
+      st.clearances * 0.05;
+    if (wide) posRaw += st.crossCompleted * 0.06;
+    if (input.cleanSheet) delta += 0.5;
+  } else {
+    // GK
+    const saveRate = st.shotsFaced > 0 ? st.saves / st.shotsFaced : 1;
+    posRaw += st.saves * 0.22 + (saveRate - 0.65) * 1.5 + st.highClaims * 0.05 - st.goalsConceded * 0.3;
+    if (input.cleanSheet) delta += 0.6;
+  }
+  delta += posRaw * POS_ACTIVITY_SCALE[input.pos];
+  const noise = (ratingHash(input.seed, input.id, Math.round(input.minutes) * 7 + st.goals * 17 + 3) - 0.5) * 0.3;
+  delta += noise;
+  const r = RATING_AVERAGE + delta * minutesFactor;
   return clamp(round1(r), RATING_MIN, RATING_MAX);
 }
 
@@ -145,19 +226,36 @@ export function matchRatings(s: State): PlayerRating[] {
     const snap = snapMap.get(id);
     const goals = snap ? Math.max(0, p.goals - snap.goals) : 0;
     const cleanSheet = cleanSheetTeam && (p.pos === 'GK' || p.pos === 'DF');
-    const rating = ratingFor({
-      seed: s.seed,
-      id,
-      outcome,
-      margin,
-      goals,
-      minutes,
-      fitProf,
-      fatigueAfter: p.fatigue,
-      cleanSheet,
-    });
     // 表示用の起用先詳細ポジションは、出場時間が最長だったスロットを採用する。
     const detail = occ.slice().sort((a, b) => b.minutes - a.minutes)[0].slot;
+    // v3.4 M1: 選手ごとの試合スタッツ（lib/match-stats.ts）があればポジション別の
+    // スタッツ採点（statRatingFor）を使う。旧セーブの試合途中データ（スタッツ無し）は
+    // 従来の簡易式（ratingFor）にフォールバックする。
+    const stStats = m.playerStats?.[id];
+    const rating = stStats
+      ? statRatingFor({
+          seed: s.seed,
+          id,
+          pos: p.pos,
+          detail,
+          outcome,
+          margin,
+          minutes,
+          fitProf,
+          cleanSheet,
+          stats: stStats,
+        })
+      : ratingFor({
+          seed: s.seed,
+          id,
+          outcome,
+          margin,
+          goals,
+          minutes,
+          fitProf,
+          fatigueAfter: p.fatigue,
+          cleanSheet,
+        });
     rows.push({
       id,
       name: p.name,

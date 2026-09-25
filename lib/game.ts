@@ -1123,6 +1123,11 @@ function grantMatchPositionExperience(s: State, profMult: Map<number, number>): 
     if (minutes > 0) gainProficiency(s, cur, slot, 8 * (minutes / 90) * (profMult.get(cur) ?? 1));
   }
 }
+function matchStaminaCost(s: State, p: Player, tactic: Tactic): number {
+  if (tactic !== 'press') return 1;
+  const stamina = s.v3.squad.players[p.id]?.stamina ?? 45;
+  return clamp(1 + (45 - stamina) / 100, 0.7, 1.4);
+}
 function simulateSegment(s: State) {
   const m = s.match!,
     team = roster(s),
@@ -1155,13 +1160,33 @@ function simulateSegment(s: State) {
   // 士気・連携は小さな加点として残す（旧式の「割り算」時代より効きを弱めた。指数部に入れると
   // 差が指数的に増幅されてしまうため、ここでは skillFx と同じ桁の加点にとどめる）。
   const conditionBonus = s.cohesion * 0.00006 + (s.morale - 50) * 0.00008;
-  const ratio = clamp(
+  const baseRatio = clamp(
     strengthRatio(effRating - m.fixture.strength) +
       conditionBonus +
       skillFx.ratioBonus +
       (m.home < m.away ? skillFx.comebackBonus : 0),
     0.4,
     1.55,
+  );
+  // A fresh substitute avoids the late-match fade of the player they replaced.
+  // Apply the saved fatigue after the normal strength cap so the benefit still
+  // matters for underdogs whose base ratio has reached the lower bound.
+  let savedFatigueRating = 0;
+  for (const entry of m.subEntries ?? []) {
+    if (s.lineup[entry.index] !== entry.id) continue;
+    const outgoing = s.players.find((p) => p.id === m.original[entry.index]);
+    const incoming = team[entry.index];
+    if (outgoing && incoming) {
+      const elapsed = Math.max(0, (m.minute - entry.minute) / 15);
+      const projectedFatigue = clamp(outgoing.fatigue + elapsed *
+        (m.tactic === 'press' ? 8 : 5) * matchStaminaCost(s, outgoing, m.tactic) * playerFatigueMult(s, outgoing.id));
+      savedFatigueRating += overall(incoming) * (projectedFatigue - incoming.fatigue) * 0.012 / 11;
+    }
+  }
+  const ratio = clamp(
+    baseRatio * strengthRatio(savedFatigueRating * Math.min(1, m.minute / 60)),
+    0.4,
+    1.65,
   );
   const push =
     m.mentality === 'attack' ? 1.32 : m.mentality === 'safe' ? 0.75 : 1;
@@ -1265,10 +1290,13 @@ function simulateSegment(s: State) {
     m.logs.unshift(
       `${m.minute}′ ${pick(s, ['中盤で激しいボールの奪い合い。', 'サイドから好機をうかがう。', '最後のパスがわずかに合わない。', '集中した守備でシュートを防いだ。'])}`,
     );
-  for (const p of team)
+  for (const p of team) {
+    // High pressing exposes stamina differences; ordinary pace keeps the
+    // established training and match balance.
+    const staminaCost = matchStaminaCost(s, p, m.tactic);
     p.fatigue = clamp(
       p.fatigue +
-        (m.tactic === 'press' ? 8 : 5) *
+        (m.tactic === 'press' ? 8 : 5) * staminaCost *
           playerFatigueMult(s, p.id) +
         (m.mentality === 'attack' ? 1 : 0) +
         command.fatigue +
@@ -1277,6 +1305,7 @@ function simulateSegment(s: State) {
           ? 2
           : 0),
     );
+  }
   createMoment(s);
   if (m.minute === 45)
     m.logs.unshift('HALF TIME：疲労を確認して、交代と後半の戦術を決めよう。');

@@ -143,6 +143,109 @@ void test('T-2: rival cup matches follow the same strength-to-win curve as playe
   }
 });
 
+void test('T-3: low stamina and high pressing increase match fatigue, which hurts late strength', () => {
+  const setup = () => {
+    const s = newGame('疲労検証高校', 24680);
+    s.players.forEach((p) => { p.fatigue = 0; });
+    s.pending = { label: '練習試合', kind: 'friendly', round: 0, strength: 55, opponent: '架空高校', style: 'balanced' };
+    return act(s, { type: 'start' });
+  };
+  const press = setup();
+  const lowId = press.lineup[1];
+  const highId = press.lineup[2];
+  const low = press.v3.squad.players[lowId];
+  const high = press.v3.squad.players[highId];
+  high.style = low.style;
+  high.skills = [...low.skills];
+  high.negatives = [...low.negatives];
+  low.stamina = 30;
+  high.stamina = 90;
+  const pressed = act(act(press, { type: 'tactic', tactic: 'press' }), { type: 'segment' });
+  const lowFatigue = pressed.players.find((p) => p.id === lowId)!.fatigue;
+  const highFatigue = pressed.players.find((p) => p.id === highId)!.fatigue;
+  assert.ok(lowFatigue > highFatigue + 3, `low=${lowFatigue}, high=${highFatigue}`);
+  const balanced = act(press, { type: 'segment' });
+  assert.ok(lowFatigue > balanced.players.find((p) => p.id === lowId)!.fatigue + 3);
+
+  let late = pressed;
+  for (let segment = 0; segment < 3; segment++) late = act(late, { type: 'segment' });
+  assert.ok(strength(late) < strength(press) - 5, `kickoff=${strength(press)}, late=${strength(late)}`);
+  const lateLow = late.players.find((p) => p.id === lowId)!.fatigue;
+  const lateHigh = late.players.find((p) => p.id === highId)!.fatigue;
+  assert.ok(lateLow - lateHigh > lowFatigue - highFatigue);
+});
+
+void test('T-3: three equal-strength fresh substitutes at 60 minutes improve late defense and win rate', () => {
+  const N = 350;
+  let keepWins = 0;
+  let subWins = 0;
+  let keepConcededXg = 0;
+  let subConcededXg = 0;
+  for (let i = 0; i < N; i++) {
+    let s = newGame('交代検証高校', 1_500_000 + i);
+    s.players.forEach((p) => { p.fatigue = 0; });
+    s.pending = { label: '練習試合', kind: 'friendly', round: 0, strength: 55, opponent: '架空高校', style: 'press' };
+    s = act(s, { type: 'start' });
+    s.match!.fixture.strength = Math.min(99, strength(s) + 8);
+    s = act(s, { type: 'tactic', tactic: 'press' });
+    for (let segment = 0; segment < 4; segment++) s = act(s, { type: 'segment' });
+    const at60AwayXg = s.match!.xg[1];
+    const indices = Array.from({ length: 10 }, (_, index) => index + 1).sort((a, b) =>
+      s.players.find((p) => p.id === s.lineup[b])!.fatigue -
+      s.players.find((p) => p.id === s.lineup[a])!.fatigue).slice(0, 3);
+    const reserves = s.players.filter((p) => !s.lineup.includes(p.id) && s.v3.squad.players[p.id]?.team === 'A').slice(0, 3);
+    assert.equal(reserves.length, 3);
+    for (let j = 0; j < 3; j++) {
+      const starter = s.players.find((p) => p.id === s.lineup[indices[j]])!;
+      const reserve = reserves[j];
+      reserve.stats = { ...starter.stats };
+      reserve.pos = starter.pos;
+      reserve.injury = 0;
+      reserve.fatigue = 0;
+      s.v3.squad.players[reserve.id] = { ...structuredClone(s.v3.squad.players[starter.id]), team: 'A' };
+    }
+    let keep = s;
+    let withSubs = s;
+    for (let j = 0; j < 3; j++) withSubs = act(withSubs, { type: 'swap', index: indices[j], id: reserves[j].id });
+    for (let segment = 0; segment < 2; segment++) {
+      keep = act(keep, { type: 'segment' });
+      withSubs = act(withSubs, { type: 'segment' });
+    }
+    keepWins += Number(keep.match!.home > keep.match!.away);
+    subWins += Number(withSubs.match!.home > withSubs.match!.away);
+    keepConcededXg += keep.match!.xg[1] - at60AwayXg;
+    subConcededXg += withSubs.match!.xg[1] - at60AwayXg;
+  }
+  assert.ok(subConcededXg < keepConcededXg * 0.93,
+    `late conceded xG: subs=${subConcededXg / N}, keep=${keepConcededXg / N}`);
+  assert.ok(subWins >= keepWins + N * 0.025,
+    `wins: subs=${subWins / N}, keep=${keepWins / N}`);
+});
+
+void test('T-3: an equal and equally rested kickoff substitute does not create a fitness bonus', () => {
+  let s = newGame('交代検証高校', 1_600_000);
+  s.players.forEach((p) => { p.fatigue = 0; });
+  s.pending = { label: '練習試合', kind: 'friendly', round: 0, strength: 55, opponent: '架空高校', style: 'press' };
+  s = act(s, { type: 'start' });
+  s = act(s, { type: 'tactic', tactic: 'press' });
+  const index = 7;
+  const starter = s.players.find((p) => p.id === s.lineup[index])!;
+  const reserve = s.players.find((p) => !s.lineup.includes(p.id) && s.v3.squad.players[p.id]?.team === 'A')!;
+  reserve.stats = { ...starter.stats };
+  reserve.pos = starter.pos;
+  reserve.fatigue = starter.fatigue;
+  reserve.injury = starter.injury;
+  s.v3.squad.players[reserve.id] = { ...structuredClone(s.v3.squad.players[starter.id]), team: 'A' };
+  let keep = s;
+  let withSub = act(s, { type: 'swap', index, id: reserve.id });
+  while (!keep.match!.done) {
+    keep = act(keep, { type: 'segment' });
+    withSub = act(withSub, { type: 'segment' });
+  }
+  assert.deepEqual([withSub.match!.home, withSub.match!.away, withSub.match!.shots, withSub.match!.xg],
+    [keep.match!.home, keep.match!.away, keep.match!.shots, keep.match!.xg]);
+});
+
 // ---------------------------------------------------------------------------
 // 3.2: 大会の相手 — 全国大会には自県係数を掛けず、県予選は半分に弱める。
 // ---------------------------------------------------------------------------

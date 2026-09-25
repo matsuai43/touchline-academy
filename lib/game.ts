@@ -1298,16 +1298,22 @@ function simulateSegment(s: State) {
   const push =
     m.mentality === 'attack' ? 1.32 : m.mentality === 'safe' ? 0.75 : 1;
   m.details.highlights = [];
+  // T-5: lowered from 0.29/0.28 so an even match draws more often (target 20-30%,
+  // was 17-20%) and matches stop over-scoring (target ~2.2-3.2 goals/match total).
+  // ratio is raised to the 1.4 power here (score-only) so the win-rate table in
+  // tests/balance.test.ts still holds despite the lower base rate reducing the
+  // raw discriminating power of `ratio` at low scoring volume.
+  const scoreRatio = Math.pow(ratio, 1.4);
   const homeRate =
-      0.29 *
-      ratio *
+      0.15 *
+      scoreRatio *
       advantage *
       push *
       (m.tactic === 'press' ? 1.15 : 1) *
       command.attack *
       skillFx.attack,
     awayRate =
-      (0.28 / ratio / advantage) *
+      (0.145 / scoreRatio / advantage) *
       (m.mentality === 'attack' ? 1.3 : m.mentality === 'safe' ? 0.73 : 1) *
       command.defense *
       skillFx.defense;

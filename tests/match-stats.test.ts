@@ -63,11 +63,12 @@ function fullSeason(s: State, seasons: number): State {
 // ---------------------------------------------------------------------------
 void test('v3.5: match results (score/shots/xg/highlights/won) are stable for fixed seeds', () => {
   const fixtures: [number, { home: number; away: number; shots: [number, number]; xg: number[]; won: boolean; possession: number; highlightCount: number }][] = [
-    [1001, { home: 6, away: 2, shots: [13, 9], xg: [3.715, 2.629], won: true, possession: 50, highlightCount: 5 }],
-    [20260923, { home: 2, away: 3, shots: [8, 10], xg: [2.243, 2.561], won: false, possession: 48, highlightCount: 2 }],
-    [555001, { home: 1, away: 4, shots: [8, 10], xg: [2.001, 2.666], won: false, possession: 46, highlightCount: 4 }],
-    [4242, { home: 5, away: 4, shots: [13, 13], xg: [3.673, 3.532], won: true, possession: 53, highlightCount: 4 }],
-    [777777, { home: 2, away: 1, shots: [7, 10], xg: [2.089, 2.533], won: true, possession: 45, highlightCount: 3 }],
+    // T-5: 引き分けを増やすため得点期待値の基準を下げた（0.29/0.28→0.15/0.145、比の効きを ratio^1.4 に強化）。
+    [1001, { home: 1, away: 0, shots: [4, 8], xg: [0.902, 2.175], won: true, possession: 50, highlightCount: 0 }],
+    [20260923, { home: 2, away: 2, shots: [5, 6], xg: [1.266, 1.443], won: false, possession: 48, highlightCount: 1 }],
+    [555001, { home: 2, away: 3, shots: [4, 6], xg: [0.941, 1.705], won: false, possession: 46, highlightCount: 0 }],
+    [4242, { home: 1, away: 2, shots: [5, 4], xg: [1.533, 1.25], won: false, possession: 53, highlightCount: 2 }],
+    [777777, { home: 1, away: 0, shots: [3, 3], xg: [1.095, 0.735], won: true, possession: 45, highlightCount: 1 }],
   ];
   for (const [seed, expected] of fixtures) {
     const s = finishedMatch('固定値検証高校', seed);

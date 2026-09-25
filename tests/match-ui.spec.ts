@@ -310,7 +310,8 @@ test('match cinema: only one .cinema section renders while the match is live', a
   const advance = page.getByRole('button', { name: /次の15分を進める|後半の15分を進める/ });
   await advance.click();
   await expect(page.locator('.cinema')).toHaveCount(1);
-  await expect(page.locator('.cinema .fm-empty')).toHaveCount(0);
+  // 古いキックオフ前の空表示が残っていないこと（シュートの無い15分に出る正しい空表示は許容）。
+  await expect(page.locator('.cinema')).not.toContainText('キックオフの笛を待つ');
 
   await advance.click();
   await expect(page.locator('.cinema')).toHaveCount(1);
@@ -366,7 +367,9 @@ test('T-10: mobile shootout lets the manager choose a kicker, saves each kick an
 });
 
 test('T-10: extra time remains playable with tactics until 120 minutes', async ({ page }) => {
-  let s = newGame('延長画面検証高校', 3);
+  // シード4: 90分で同点→延長後半で決着（PKにならない）。T-5で得点率が変わり乱数の進み方が変わったため
+  // シード3から差し替え（検索条件は「6区間で未決着、8区間で決着かつPKなし」）。
+  let s = newGame('延長画面検証高校', 4);
   s.day = 6;
   s.pending = { label: '県予選', kind: 'summer', round: 0, strength: 50, opponent: '架空高校', style: 'balanced' };
   s = act(s, { type: 'start' });

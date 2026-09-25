@@ -28,7 +28,7 @@ function toShootout(seed: number): State {
 }
 
 void test('T-10: tied cup match plays two extra-time halves and can be decided at 120 minutes', () => {
-  let s = to90(3);
+  let s = to90(4);
   const fatigueAt90 = s.players.find((p) => p.id === s.lineup[1])!.fatigue;
   s = act(s, { type: 'tactic', tactic: 'press' });
   s = act(s, { type: 'segment' });
@@ -73,10 +73,10 @@ void test('T-10: chosen kickers, one-kick progress and resume from a saved shoot
 });
 
 void test('T-10: sudden death waits for both teams and legacy 90-minute PK saves still load', () => {
-  const selected = toShootout(38);
+  const selected = toShootout(5);
   const fullOrder = [...selected.lineup].reverse();
   assert.deepEqual(act(selected, { type: 'pkOrder', ids: fullOrder }).match!.pk!.order, fullOrder);
-  let s = toShootout(38);
+  let s = toShootout(5);
   while (!s.match!.done) s = act(s, { type: 'segment' });
   assert.ok(s.match!.pk!.kicks.length > 10);
   assert.equal(s.match!.pk!.kicks.length % 2, 0, 'both sides must take a sudden-death kick');
@@ -92,7 +92,7 @@ void test('T-10: sudden death waits for both teams and legacy 90-minute PK saves
 });
 
 void test('T-10: scored and saved penalties affect ratings and specialist learning', () => {
-  let s = toShootout(5);
+  let s = toShootout(1);
   const keeperId = s.lineup[0];
   const oldKeeperSkills = [...s.v3.squad.players[keeperId].skills];
   while (!s.match!.done) s = act(s, { type: 'segment' });

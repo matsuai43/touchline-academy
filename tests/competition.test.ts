@@ -342,7 +342,9 @@ void test('same seed produces the same schedule, opponents and results', () => {
 void test('team B, when it exists, is always exactly one tier below team A and never shares a tier', () => {
   // 初期20人は全員がAチーム（試合登録20人）に入るため、まず部員数を増やす（自然な入部・卒業サイクルを
   // 数シーズン回し、既存の入部システムだけで B が11人以上になるまで育てる）。
-  let s = newGame('AB階層検証高校', 900);
+  // T-5: lowering the scoring rate to raise the draw rate reshuffled the RNG sequence,
+  // so seed 900 no longer grows the roster past 11 within 8 seasons; seed 1 does.
+  let s = newGame('AB階層検証高校', 1);
   for (let n = 0; n < 8; n++) for (let i = 0; i < 48; i++) s = step(s);
   s.reputation = 80; // Bチーム参戦条件を満たす
   const bRoster = () => s.players.filter((p) => s.v3.squad.players[p.id]?.team === 'B').length;
@@ -617,7 +619,9 @@ function growBRoster(name: string, seed: number): State {
 }
 
 void test('every league week fields all 8 schools of team B in exactly 4 matches (no byes, no double-booking)', () => {
-  const s = growBRoster('B全校消化検証高校', 61);
+  // T-5: the new lower scoring rate reshuffles the RNG sequence a season consumes;
+  // seed 61 no longer grows the B roster past 11 within 8 seasons, so use seed 65.
+  const s = growBRoster('B全校消化検証高校', 65);
   const comp = readCompetition(s);
   assert.ok(comp.teamB, '前提: Bチームが参戦しているはず');
   assert.equal(comp.teamB!.played, LEAGUE_WEEKS.length, 'Bは自動進行で全14節が即座に消化されているはず');

@@ -468,8 +468,9 @@ function makeSchedule(seedNum: number, season: number): LeagueScheduleEntry[] {
   });
 }
 
-/** 他校同士（自校を含まないペア）の得点を、強さの差から決定的に作る。lib/squad.ts の
- *  Bチーム即時シミュレーションと同じ quickGoals() を再利用する。 */
+/** 他校同士（自校を含まないペア）の得点を、強さの差から決定的に作る。T-6: カップ戦の他校同士
+ *  （simulateCupRegulation）と同じ simulateGoalsBySegment() を共有し、自校の試合と同じ
+ *  強さ→勝率の指数曲線（lib/game.ts simulateSegment）に揃える。 */
 function clubVsClubGoals(
   seedNum: number,
   season: number,
@@ -478,9 +479,8 @@ function clubVsClubGoals(
   clubB: LeagueClub,
 ): { gA: number; gB: number } {
   const base = [seedNum, season, week, strHash(clubA.id), strHash(clubB.id), 9001];
-  const gA = quickGoals(hf(...base, 1), clubA.strength, clubB.strength);
-  const gB = quickGoals(hf(...base, 2), clubB.strength, clubA.strength);
-  return { gA, gB };
+  const { home, away } = simulateGoalsBySegment(base, clubA.strength, clubB.strength, 0, 6);
+  return { gA: home, gB: away };
 }
 
 // ---------------------------------------------------------------------------
@@ -1150,35 +1150,47 @@ function prepareNationalRepresentative(s: State, cup: CupState, cupKey: 'ih' | '
   national.rounds[0][0].homeId = national.teams[0].id;
 }
 
-export function simulateCupRegulation(s: State, cupKey: 'ih' | 'wc', national: boolean, round: number, index: number, a: CupTeam, b: CupTeam): { home: number; away: number } {
-  const tag = strHash(cupKey) + (national ? 5000 : 3000);
-  // The same exponential curve drives played matches. The cap is slightly higher
-  // because this quick simulation has no player tactics or skill bonuses.
-  const ratio = clamp(strengthRatio(a.strength - b.strength), 0.4, 1.75);
+// T-2/T-6: quick (non-engine) simulations of matches between two teams whose stats we
+// don't have a full lineup for (cup rivals, league other-school matches). Shares the same
+// strength->goal curve everywhere so these matches follow the same distribution as a
+// player-controlled match (see lib/game.ts simulateSegment's homeRate/awayRate, which use
+// the same 0.15/0.145 base rate and ratio^1.4 amplification tuned in T-5). The cap here is
+// slightly wider because this quick simulation has no player tactics or skill bonuses.
+// Exported so tests can confirm the league's other-school matches (clubVsClubGoals)
+// and the cup's rival matches (simulateCupRegulation) truly share one curve (T-6).
+export function simulateGoalsBySegment(
+  keyBase: number[],
+  aStrength: number,
+  bStrength: number,
+  segStart: number,
+  segEnd: number,
+): { home: number; away: number } {
+  const ratio = clamp(strengthRatio(aStrength - bStrength), 0.4, 1.75);
+  const scoreRatio = Math.pow(ratio, 1.4);
   let home = 0;
   let away = 0;
-  for (let segment = 0; segment < 6; segment++) {
+  for (let segment = segStart; segment < segEnd; segment++) {
     for (let chance = 0; chance < 3; chance++) {
-      const key = [s.seed, s.season, tag, round, index, segment, chance];
-      if (hf(...key, 1) < 0.29 * ratio * 1.9 * 0.25) home++;
-      if (hf(...key, 2) < (0.28 / ratio) * 1.9 * 0.25) away++;
+      const key = [...keyBase, segment, chance];
+      if (hf(...key, 1) < 0.15 * scoreRatio * 1.9 * 0.25) home++;
+      if (hf(...key, 2) < (0.145 / scoreRatio) * 1.9 * 0.25) away++;
     }
   }
   return { home, away };
 }
 
+export function simulateCupRegulation(s: State, cupKey: 'ih' | 'wc', national: boolean, round: number, index: number, a: CupTeam, b: CupTeam): { home: number; away: number } {
+  const tag = strHash(cupKey) + (national ? 5000 : 3000);
+  return simulateGoalsBySegment([s.seed, s.season, tag, round, index], a.strength, b.strength, 0, 6);
+}
+
 export function simulateCupMatch(s: State, cupKey: 'ih' | 'wc', national: boolean, round: number, index: number, a: CupTeam, b: CupTeam): { home: number; away: number; winnerId: string; penalties: string | null } {
   const tag = strHash(cupKey) + (national ? 5000 : 3000);
-  const ratio = clamp(strengthRatio(a.strength - b.strength), 0.4, 1.75);
   let { home, away } = simulateCupRegulation(s, cupKey, national, round, index, a, b);
   if (home === away) {
-    for (let segment = 6; segment < 8; segment++) {
-      for (let chance = 0; chance < 3; chance++) {
-        const key = [s.seed, s.season, tag, round, index, segment, chance];
-        if (hf(...key, 1) < 0.29 * ratio * 1.9 * 0.25) home++;
-        if (hf(...key, 2) < (0.28 / ratio) * 1.9 * 0.25) away++;
-      }
-    }
+    const extra = simulateGoalsBySegment([s.seed, s.season, tag, round, index], a.strength, b.strength, 6, 8);
+    home += extra.home;
+    away += extra.away;
   }
   let penalties: string | null = null;
   let winnerId = home > away ? a.id : b.id;

@@ -20,6 +20,7 @@
 
 import { addFunds, clamp, overall, strength as strengthOf, type State, type Player, type Tactic } from './game.ts';
 import { squadOverall } from './squad.ts';
+import { strengthRatio } from './match-balance.ts';
 
 // ---------------------------------------------------------------------------
 // 決定的な擬似乱数（lib/squad.ts・lib/school-life.ts の h32/hf と同じ考え方。
@@ -1112,9 +1113,11 @@ function prepareNationalRepresentative(s: State, cup: CupState, cupKey: 'ih' | '
   national.rounds[0][0].homeId = national.teams[0].id;
 }
 
-function simulateCupMatch(s: State, cupKey: 'ih' | 'wc', national: boolean, round: number, index: number, a: CupTeam, b: CupTeam): { home: number; away: number; winnerId: string; penalties: string | null } {
+export function simulateCupMatch(s: State, cupKey: 'ih' | 'wc', national: boolean, round: number, index: number, a: CupTeam, b: CupTeam): { home: number; away: number; winnerId: string; penalties: string | null } {
   const tag = strHash(cupKey) + (national ? 5000 : 3000);
-  const ratio = clamp(Math.exp((a.strength - b.strength) / 27), 0.4, 1.55);
+  // The same exponential curve drives played matches. The cap is slightly higher
+  // because this quick simulation has no player tactics or skill bonuses.
+  const ratio = clamp(strengthRatio(a.strength - b.strength), 0.4, 1.75);
   let home = 0;
   let away = 0;
   for (let segment = 0; segment < 6; segment++) {

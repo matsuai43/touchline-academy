@@ -10,6 +10,7 @@ import {
   readCompetition,
   computeLeagueTable,
   competitionFixture,
+  simulateCupMatch,
   DISTRICTS,
   WC_NATIONAL_WEEKS,
 } from '../lib/competition.ts';
@@ -112,6 +113,33 @@ void test('3.1: the win-rate curve does not change between round 1 and a final (
       Math.abs(r1 - r4) <= 0.15,
       `diff=${diff}: round1 win=${(r1 * 100).toFixed(1)}% vs final win=${(r4 * 100).toFixed(1)}% differ too much`,
     );
+  }
+});
+
+void test('T-2: rival cup matches follow the same strength-to-win curve as player matches', () => {
+  const N = 300;
+  const results: { diff: number; selfWin: number; rivalWin: number; selfDraw: number; rivalDraw: number }[] = [];
+  for (const diff of [15, 8, 0, -8, -15]) {
+    const self = winDrawLose(diff, N, 1_200_000 + diff * 1000);
+    let win = 0;
+    let draw = 0;
+    for (let i = 0; i < N; i++) {
+      const s = newGame('カップ曲線検証高校', 1_200_000 + diff * 1000 + i);
+      const a = { id: 'a', name: '架空A高校', strength: 65, style: 'balanced' as const, districtId: 'yamagata' };
+      const b = { id: 'b', name: '架空B高校', strength: 65 - diff, style: 'balanced' as const, districtId: 'yamagata' };
+      const result = simulateCupMatch(s, 'ih', false, 0, 1, a, b);
+      if (result.home > result.away) win++;
+      if (result.home === result.away) draw++;
+    }
+    const rivalWin = win / N;
+    const rivalDraw = draw / N;
+    results.push({ diff, selfWin: self.win, rivalWin, selfDraw: self.draw, rivalDraw });
+  }
+  for (const row of results) {
+    assert.ok(Math.abs(row.rivalWin - row.selfWin) <= 0.08,
+      `cup rival curve differs: ${JSON.stringify(results)}`);
+    assert.ok(Math.abs(row.rivalDraw - row.selfDraw) <= 0.08,
+      `cup rival draws differ: ${JSON.stringify(results)}`);
   }
 });
 

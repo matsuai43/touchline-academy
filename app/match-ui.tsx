@@ -32,6 +32,7 @@ import {
   clamp,
   tactics,
   MATCH_MAX_SUBS,
+  fixtureFormation,
   type State,
   type Action,
   type Player,
@@ -716,7 +717,7 @@ export function MatchView({
               <Shield size={30} />
             </span>
             <h2>{m.fixture.opponent}</h2>
-            <small>{tactics[m.fixture.style].name}</small>
+            <small>{tactics[m.fixture.style].name} ・ {fixtureFormation(m.fixture)}</small>
           </div>
         </div>
         <div className="match-stats">
@@ -786,7 +787,7 @@ export function MatchView({
               <span className="eyebrow">MANAGER&apos;S DECISION</span>
               <h2>{m.minute === 45 ? '後半のプランを。' : '次の15分を、どう戦う？'}</h2>
               <p className="muted">
-                相手：{tactics[m.fixture.style].name} / 総合力 {m.fixture.strength}
+                相手：{tactics[m.fixture.style].name}（{fixtureFormation(m.fixture)}） / 総合力 {m.fixture.strength}
               </p>
               {/* この一帯は m.done の間はそもそも描画されない（上の早期returnで
                   MatchResult に置き換わる）ため、disabled={m.done} のような

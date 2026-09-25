@@ -1,5 +1,10 @@
 import type { State, Player, Position, Stat, Training } from './game.ts';
-import { addFunds } from './game.ts';
+import {
+  addFunds,
+  fixtureFormation,
+  FORMATION_WEAK_LANE,
+  FORMATION_STRONG_LANE,
+} from './game.ts';
 import { PLAY_STYLES } from './squad.ts';
 import { applyStatGrowth } from './growth.ts';
 export type Personality = 'enthusiast' | 'sensitive' | 'analyst' | 'competitor';
@@ -576,6 +581,17 @@ export function commandFactors(s: State) {
     attack *= 0.96;
     defense *= 0.9;
   }
+  // T-4: フォーメーションの相性（小さく効かせる。戦術の相性1.17/0.87より小さい幅にとどめる）。
+  // 選んだ攻撃の経路（c.lane＝サイド/中央）が、自分の得意・相手の弱点と噛み合う時だけ
+  // 攻撃力にわずかな倍率が乗る（噛み合わなければ効果なし＝旧来の挙動のまま）。
+  if (c.lane === 'wide' || c.lane === 'middle') {
+    const oppFormation = fixtureFormation(m.fixture);
+    if (FORMATION_STRONG_LANE[s.formation] === c.lane) attack *= 1.05;
+    if (FORMATION_WEAK_LANE[oppFormation] === c.lane) attack *= 1.06;
+    if (FORMATION_STRONG_LANE[oppFormation] === c.lane) attack *= 0.94;
+  }
+  // 3バックはサイドの人数が足りず、相手の指示に関わらず恒常的に崩されやすい。
+  if (FORMATION_WEAK_LANE[s.formation] === 'wide') defense *= 0.97;
   const work = team.reduce((a, p) => a + p.identity.workRate, 0) / 11;
   defense *= 1 - (work - 55) / 500;
   return { attack, defense, fatigue };

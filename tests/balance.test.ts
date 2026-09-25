@@ -1,7 +1,7 @@
 // DESIGN_V3_5.md 3.1〜3.5 の受け入れ条件（長期・多数試行シミュレーション）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { newGame, act, strength, overall, facilityUpgradeCost, validateSave, type State, type Match } from '../lib/game.ts';
+import { newGame, act, strength, overall, facilityUpgradeCost, validateSave, type State, type Match, type Formation } from '../lib/game.ts';
 import { statCeiling, applyStatGrowth } from '../lib/growth.ts';
 import { candidatePool } from '../lib/development.ts';
 import { getCurrentLifeEvent } from '../lib/school-life.ts';
@@ -537,4 +537,94 @@ void test('T-11: the A-player count grows smoothly across seasons, without a yea
     const maxElsewhere = Math.max(0, ...deltas.filter((_, i) => i < 5 || i > 7));
     for (const d of aroundOldGate) assert.ok(d <= maxElsewhere + 3, `seed ${seed}: cliff-sized jump (${d}) right at the old season gate`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// T-4: フォーメーションの相性。相手の布陣の弱点（サイド/中央）に合わせた布陣・攻撃の指示を
+// 選ぶと、格上の相手（+8）に対する勝率が数ポイント〜10ポイント程度上がること。相性を
+// 中立にした場合（バランス型4-4-2どうし、または指示が噛み合わない）は差が出ないこと。
+// ---------------------------------------------------------------------------
+function playFormationMatchup(
+  seed: number,
+  diff: number,
+  myFormation: Formation,
+  oppFormation: Formation,
+  lane: 'mixed' | 'wide' | 'middle',
+): Match {
+  let s = newGame('布陣相性検証高校', seed);
+  s = toMatchDay(s);
+  s = act(s, { type: 'formation', formation: myFormation });
+  s = act(s, { type: 'start' });
+  const rating = strength(s);
+  s.match!.fixture.strength = Math.max(1, Math.min(99, Math.round(rating - diff)));
+  s.match!.fixture.kind = 'friendly';
+  s.match!.fixture.style = 'balanced';
+  s.match!.fixture.formation = oppFormation;
+  if (lane !== 'mixed') s = act(s, { type: 'command', field: 'lane', value: lane });
+  while (!s.match!.done) s = act(s, { type: 'segment' });
+  return s.match!;
+}
+function winRate(
+  n: number,
+  seedBase: number,
+  diff: number,
+  myFormation: Formation,
+  oppFormation: Formation,
+  lane: 'mixed' | 'wide' | 'middle',
+): number {
+  let win = 0;
+  for (let i = 0; i < n; i++) {
+    const m = playFormationMatchup(seedBase + i, diff, myFormation, oppFormation, lane);
+    if (m.home > m.away) win++;
+  }
+  return win / n;
+}
+
+void test('T-4: a formation/lane matchup exploiting the opponent\'s weak side beats a bad matchup against a stronger opponent', () => {
+  const N = 300;
+  // 良い相性: 4-3-3（サイドで数的優位）でサイド攻撃 vs 3バック（サイドが弱点）。
+  const good = winRate(N, 2_100_000, 8, '4-3-3', '3-4-3', 'wide');
+  // 悪い相性: 同じ4-3-3で中央攻撃 vs 4-2-3-1（中央が強み）。
+  const bad = winRate(N, 2_200_000, 8, '4-3-3', '4-2-3-1', 'middle');
+  const diffPts = (good - bad) * 100;
+  assert.ok(
+    diffPts >= 2 && diffPts <= 12,
+    `good=${(good * 100).toFixed(1)}% bad=${(bad * 100).toFixed(1)}% diff=${diffPts.toFixed(1)}pt (expected 2〜12pt)`,
+  );
+});
+
+void test('T-4: the formation compatibility bonus is small — at most as large as the tactic compatibility swing', () => {
+  const N = 300;
+  // 戦術の相性は+8で20%→33%(参考表)、幅にして約13pt。布陣の相性はそれ以下に収める。
+  const good = winRate(N, 2_300_000, 8, '4-3-3', '3-4-3', 'wide');
+  const bad = winRate(N, 2_400_000, 8, '4-3-3', '4-2-3-1', 'middle');
+  assert.ok((good - bad) * 100 <= 13, `formation swing too large: ${((good - bad) * 100).toFixed(1)}pt`);
+});
+
+void test('T-4: with no formation trait engaged (own formation neutral, chosen lane does not match the opponent weakness), win rate does not react to the opponent formation', () => {
+  const N = 300;
+  // 自分は4-4-2（得意レーンなし）で中央攻撃。相手の3-4-3の弱点はサイドなので、中央攻撃には
+  // 何のボーナスも乗らないはず（相手が4-4-2＝完全に中立でも同じ勝率になるはず）。
+  // 同じ組（seedBase・レーン・自陣の布陣）を保ったまま相手の布陣だけを変えることで、
+  // 「布陣の相性」を切り離して比較する（レーン自体の攻撃力補正は同一のまま）。
+  const vsWeakSideButWrongLane = winRate(N, 2_500_000, 8, '4-4-2', '3-4-3', 'middle');
+  const vsNeutral = winRate(N, 2_500_000, 8, '4-4-2', '4-4-2', 'middle');
+  assert.ok(
+    Math.abs(vsWeakSideButWrongLane - vsNeutral) <= 0.06,
+    `no trait engaged should not react to opponent formation: vsWeakSideButWrongLane=${(vsWeakSideButWrongLane * 100).toFixed(1)}%, vsNeutral=${(vsNeutral * 100).toFixed(1)}%`,
+  );
+});
+
+void test('T-4: exploiting the opponent weak lane (same own formation, same lane order) still raises the win rate over a neutral opponent', () => {
+  const N = 300;
+  // 上のテストと同じ自陣布陣・レーン（サイド攻撃）のまま、相手の布陣だけを弱点直撃(3-4-3)か
+  // 中立(4-4-2)かで比較する。レーンの基礎補正は共通なので、差が出るのは布陣の相性だけ。
+  // 勝率が天井付近(diff=+8はベース約75%)だと倍率の効きが見えにくいため、感度の高い互角
+  // 勝負(diff=0)で比較する。
+  const vsWeakSide = winRate(N, 2_600_000, 0, '4-4-2', '3-4-3', 'wide');
+  const vsNeutral = winRate(N, 2_600_000, 0, '4-4-2', '4-4-2', 'wide');
+  assert.ok(
+    vsWeakSide - vsNeutral >= 0.02,
+    `exploiting the opponent weak lane should raise the win rate: vsWeakSide=${(vsWeakSide * 100).toFixed(1)}%, vsNeutral=${(vsNeutral * 100).toFixed(1)}%`,
+  );
 });

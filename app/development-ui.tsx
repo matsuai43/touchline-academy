@@ -13,6 +13,7 @@ import {
   type Commands,
 } from '@/lib/development';
 import type { State, Player, Action } from '@/lib/game';
+import { fixtureFormation, formationHint } from '@/lib/game';
 import { RANK_BY_ID, type RankId } from '@/lib/ability-rank';
 
 // 成長の素質は「潜在力の高さ」を3段階で示す評価であり、能力値（1〜99）のランクとは
@@ -567,6 +568,11 @@ export function MatchCommands({
           非推奨とするので、そもそも付けない（押しても常に有効。lib/development.ts
           側のtype:'command'ガードは試合終了後の防御として引き続き効く）。 */}
       <h3>攻撃の経路</h3>
+      {/* T-4: 相手の布陣に対する相性のヒント（例:「相手は3-4-3。サイド攻撃が有効です。」）。
+          自陣・バランス型(4-4-2)など特筆すべき弱点が無い相手では出さない。 */}
+      {formationHint(fixtureFormation(m.fixture)) && (
+        <p className="muted">{formationHint(fixtureFormation(m.fixture))}</p>
+      )}
       <Options
         label="攻撃の経路"
         value={c.lane}

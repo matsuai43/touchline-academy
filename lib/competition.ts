@@ -18,7 +18,18 @@
 //
 // 配線手順は本ファイル末尾のコメントを参照。
 
-import { addFunds, clamp, overall, strength as strengthOf, type State, type Player, type Tactic } from './game.ts';
+import {
+  addFunds,
+  clamp,
+  overall,
+  strength as strengthOf,
+  STYLE_FORMATIONS,
+  FORMATIONS,
+  type State,
+  type Player,
+  type Tactic,
+  type Formation,
+} from './game.ts';
 import { squadOverall } from './squad.ts';
 import { strengthRatio } from './match-balance.ts';
 
@@ -274,7 +285,23 @@ function emptyTeamState(tier: LeagueTier): TeamLeagueState {
   };
 }
 
-export type CupTeam = { id: string; name: string; strength: number; style: Tactic; districtId: DistrictId };
+export type CupTeam = {
+  id: string;
+  name: string;
+  strength: number;
+  style: Tactic;
+  // T-4: 布陣。旧セーブのブラケット（導入前に生成された CupTeam）には無いことがあるため任意。
+  // 無ければ teamFormation() が id・strength・style から決定的に補う。
+  formation?: Formation;
+  districtId: DistrictId;
+};
+/** CupTeam.formation が未設定でも常に布陣を返す（旧セーブのブラケット用フォールバック）。
+ *  team.id・strength・style は対戦を通じて変わらないため、毎回呼んでも同じ値になる
+ *  （＝保存し直さなくても決定的）。 */
+function teamFormation(team: { id: string; strength: number; style: Tactic; formation?: Formation }): Formation {
+  if (team.formation) return team.formation;
+  return pickFormation(hf(strHash(team.id), team.strength, 9292), team.style);
+}
 export type CupMatch = {
   homeId: string | null;
   awayId: string | null;
@@ -969,6 +996,7 @@ export function validateCompetition(s: State): void {
         if (!team || typeof team.id !== 'string' || !team.id || ids.has(team.id) ||
             typeof team.name !== 'string' || team.name.length > 60 ||
             !num(team.strength, 1, 99) || !TACTIC_LIST.includes(team.style) ||
+            (team.formation !== undefined && !FORMATIONS.includes(team.formation)) ||
             !DISTRICTS.some((d) => d.id === team.districtId))
           throw Error(`${label}${stage}の出場校データが不正です。`);
         ids.add(team.id);
@@ -1029,11 +1057,18 @@ export type CompFixture = {
   strength: number;
   opponent: string;
   style: Tactic;
+  // T-4: 相手の布陣。style と整合する候補（STYLE_FORMATIONS）から決定的に選ぶ。
+  formation: Formation;
 };
 
 const TACTIC_LIST: Tactic[] = ['balanced', 'possession', 'counter', 'press'];
 function pickTactic(u: number): Tactic {
   return TACTIC_LIST[Math.min(3, Math.floor(u * 4))];
+}
+// T-4: 相手の戦術スタイルと整合する布陣を決定的に選ぶ（STYLE_FORMATIONS は lib/game.ts）。
+function pickFormation(u: number, style: Tactic): Formation {
+  const list = STYLE_FORMATIONS[style];
+  return list[Math.min(list.length - 1, Math.floor(u * list.length))];
 }
 
 const QUALIFIER_LABEL_PREFIX = ['1回戦', '準々決勝', '準決勝', '決勝'];
@@ -1071,11 +1106,13 @@ function createCupBracket(s: State, district: District, cupKey: 'ih' | 'wc', nat
     const raw = national
       ? 68 + hf(...base, 1) * 19 + (d.strength - 1) * 12
       : (45 + hf(...base, 1) * 20) * (1 + (district.strength - 1) * 0.5);
+    const style = pickTactic(hf(...base, 2));
     return {
       id: `${cupKey}-${national ? 'n' : 'q'}-${i}`,
       name: districtSchoolName(d.id, salt + s.season * 101 + i),
       strength: clamp(Math.round(raw), 20, 99),
-      style: pickTactic(hf(...base, 2)),
+      style,
+      formation: pickFormation(hf(...base, 3), style),
       districtId: d.id,
     };
   });
@@ -1109,7 +1146,7 @@ function prepareNationalRepresentative(s: State, cup: CupState, cupKey: 'ih' | '
   if (!winner) return;
   national.teams[0] = winnerId === 'self'
     ? { ...placeholder, id: 'self', name: s.school, strength: strengthOf(s) }
-    : { ...placeholder, name: winner.name, strength: winner.strength, style: winner.style };
+    : { ...placeholder, name: winner.name, strength: winner.strength, style: winner.style, formation: teamFormation(winner) };
   national.rounds[0][0].homeId = national.teams[0].id;
 }
 
@@ -1228,6 +1265,7 @@ function bracketFixture(s: State, bracket: CupBracket, kind: CompFixtureKind, ro
     strength: opponent?.strength ?? 75,
     opponent: opponent?.name ?? '勝者未定',
     style: opponent?.style ?? 'balanced',
+    formation: opponent ? teamFormation(opponent) : '4-4-2',
   };
 }
 
@@ -1251,13 +1289,15 @@ function cupFixture(
   // 県予選は係数を掛けるが、そのままでは効きすぎるので半分に弱める。
   const districtMult = isQualifier ? 1 + (district.strength - 1) * 0.5 : 1;
   const strengthVal = clamp(Math.round(base * districtMult), 20, 99);
+  const style = pickTactic(hf(s.seed, s.season, strHash(kind), round, 8182));
   return {
     label: `${cupName}${stagePrefix}${label}`,
     kind,
     round,
     strength: strengthVal,
     opponent: districtSchoolName(comp.districtId, strHash(kind) + round * 97 + s.season),
-    style: pickTactic(hf(s.seed, s.season, strHash(kind), round, 8182)),
+    style,
+    formation: pickFormation(hf(s.seed, s.season, strHash(kind), round, 8183), style),
   };
 }
 
@@ -1300,24 +1340,28 @@ export function competitionFixture(s: State, week: number): CompFixture | null {
     const club = comp.teamA.clubs[entry.clubIndex];
     if (!club) return null;
     const jitter = hf(s.seed, s.season, week, 6161);
+    const style = pickTactic(hf(s.seed, s.season, week, 6162));
     return {
       label: `U18${tierInfo[comp.teamA.tier].name}リーグ`,
       kind: 'league',
       round: entry.leg,
       strength: clamp(Math.round(club.strength + (jitter - 0.5) * 6), 20, 99),
       opponent: club.name,
-      style: pickTactic(hf(s.seed, s.season, week, 6162)),
+      style,
+      formation: pickFormation(hf(s.seed, s.season, week, 6163), style),
     };
   }
   if (FRIENDLY_WEEKS.includes(week)) {
     const jitter = hf(s.seed, s.season, week, 7171);
+    const style = pickTactic(hf(s.seed, s.season, week, 7172));
     return {
       label: '練習試合',
       kind: 'friendly',
       round: 0,
       strength: clamp(Math.round(strengthOf(s) - 4 + jitter * 8), 20, 99),
       opponent: districtSchoolName(comp.districtId, s.season * 100 + week),
-      style: pickTactic(hf(s.seed, s.season, week, 7172)),
+      style,
+      formation: pickFormation(hf(s.seed, s.season, week, 7173), style),
     };
   }
   return null;

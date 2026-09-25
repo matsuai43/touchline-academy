@@ -81,6 +81,8 @@ import {
   facilityUpgradeCost,
   LINEUP_POLICIES,
   lineupPolicyInfo,
+  fixtureFormation,
+  formationHint,
   type State,
   type Action,
   type Training,
@@ -713,8 +715,11 @@ export default function Game() {
                       <h2>{s.pending.label}</h2>
                       <p>
                         vs {s.pending.opponent} ・ 総合力 {s.pending.strength}{' '}
-                        ・ {tactics[s.pending.style].name}
+                        ・ {tactics[s.pending.style].name} ・ {fixtureFormation(s.pending)}
                       </p>
+                      {formationHint(fixtureFormation(s.pending)) && (
+                        <p>{formationHint(fixtureFormation(s.pending))}</p>
+                      )}
                     </div>
                     <button
                       className="secondary"

@@ -140,6 +140,10 @@ export type Fixture = {
   strength: number;
   opponent: string;
   style: Tactic;
+  // T-4: 相手の布陣。大会・リーグの対戦カード生成時に決定的に割り当てる（lib/competition.ts）。
+  // 旧セーブ・簡易テストのフィクスチャには無いことがあるため任意。無い場合は常に
+  // fixtureFormation() 経由で決定的に補う（style から選ぶため、値は空でも一貫している）。
+  formation?: Formation;
 };
 // 試合後サマリの成長差分（W4）が使う「試合開始時点の能力スナップショット」。
 // 旧セーブ（このフィールドが導入される前に開始した試合）には存在しないため必ず省略可能とし、
@@ -334,6 +338,64 @@ export const tactics: Record<Tactic, { name: string; desc: string }> = {
   counter: { name: 'カウンター', desc: '走力で速攻。プレスに強く、保持に弱い' },
   press: { name: 'ハイプレス', desc: '前で奪う。保持に強いが疲労が増える' },
 };
+// ---------------------------------------------------------------------------
+// T-4: フォーメーションの相性（小さく効かせる。戦術の相性1.17/0.87より小さい幅にとどめる）。
+// 各布陣の「得意」「弱点」の攻撃経路（サイド/中央、無ければ null）。lib/development.ts の
+// commandFactors() が、選んだ攻撃の指示（c.lane）と噛み合うときだけ小さな倍率として使う。
+// ---------------------------------------------------------------------------
+export const FORMATION_WEAK_LANE: Record<Formation, 'wide' | 'middle' | null> = {
+  // 3バックはサイドの人数が足りず崩されやすい。
+  '3-4-3': 'wide',
+  '4-2-3-1': null,
+  '4-4-2': null,
+  '4-3-3': null,
+};
+export const FORMATION_STRONG_LANE: Record<Formation, 'wide' | 'middle' | null> = {
+  // ダブルボランチ＋トップ下で中央の人数が厚い。
+  '4-2-3-1': 'middle',
+  // 両ウイング＋サイドバックの押し上げでサイドの数的優位を作りやすい。
+  '4-3-3': 'wide',
+  '3-4-3': null,
+  // バランス型。特有の強弱なし。
+  '4-4-2': null,
+};
+// 相手に持たせる布陣は戦術スタイルと整合させる（決定的な候補リスト。先頭ほど選ばれやすい
+// よう重複させてある）。Fixture.formation が未設定のフィクスチャ（旧セーブ・簡易テスト）の
+// フォールバックにも使う。
+export const STYLE_FORMATIONS: Record<Tactic, Formation[]> = {
+  possession: ['4-3-3', '4-2-3-1', '4-3-3', '4-4-2'],
+  counter: ['3-4-3', '4-4-2', '3-4-3', '4-3-3'],
+  press: ['4-2-3-1', '4-4-2', '4-2-3-1', '4-3-3'],
+  balanced: ['4-4-2', '4-3-3', '3-4-3', '4-2-3-1'],
+};
+/** Fixture.formation が未設定でも常に布陣を返す（旧セーブ・style だけのテスト用フィクスチャの
+ *  ためのフォールバック）。相手名・種別・ラウンドから決定的に選ぶ（s.seed は使わない＝純粋関数）。 */
+export function fixtureFormation(f: {
+  opponent: string;
+  kind: string;
+  round: number;
+  style: Tactic;
+  formation?: Formation;
+}): Formation {
+  if (f.formation) return f.formation;
+  let h = 2166136261 >>> 0;
+  for (const ch of `${f.opponent}|${f.kind}|${f.round}`)
+    h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  const u = (h >>> 0) / 4294967296;
+  const list = STYLE_FORMATIONS[f.style];
+  return list[Math.min(list.length - 1, Math.floor(u * list.length))];
+}
+/** 試合前・試合中の画面に出す、相手の布陣に対する相性のヒント。特筆すべき弱点が無い
+ *  （4-4-2など）場合は null。 */
+export function formationHint(theirs: Formation): string | null {
+  if (FORMATION_WEAK_LANE[theirs] === 'wide')
+    return `相手は${theirs}。サイド攻撃が有効です。`;
+  if (FORMATION_STRONG_LANE[theirs] === 'middle')
+    return `相手は${theirs}。中央が堅く、サイド攻撃が無難です。`;
+  if (FORMATION_STRONG_LANE[theirs] === 'wide')
+    return `相手は${theirs}。サイドの守備が厚く、中央攻撃が有効です。`;
+  return null;
+}
 const surnames = [
   '朝倉',
   '瀬戸',
@@ -1651,7 +1713,8 @@ export function validateSave(x: unknown): State {
     f.label.length < 100 &&
     typeof f.opponent === 'string' &&
     f.opponent.length < 100 &&
-    Object.keys(tactics).includes(f.style);
+    Object.keys(tactics).includes(f.style) &&
+    (f.formation === undefined || FORMATIONS.includes(f.formation));
   if (s.pending && !fixture(s.pending)) throw Error('日程データが不正です。');
   // S1: 試合が保留中(pending)なのは day が日曜(6)に達した時だけ。試合中でない限りは
   // 月〜土(0〜5)のはず。

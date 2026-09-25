@@ -584,7 +584,7 @@ export default function Game() {
                     />
                     <div className="status-foot">
                       <span>
-                        学校の評判 <b>{s.reputation}</b>
+                        学校の評判 <b>{Math.round(s.reputation)}</b>
                       </span>
                       <span>
                         部費 <b>{s.funds}</b>

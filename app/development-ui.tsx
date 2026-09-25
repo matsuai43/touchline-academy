@@ -264,7 +264,7 @@ export function DevelopmentView({
             <div>
               <h2>来春の仲間を探す</h2>
               <p>
-                評判 <b>{s.reputation}</b> / 部費 <b>{s.funds}</b> / 内諾{' '}
+                評判 <b>{Math.round(s.reputation)}</b> / 部費 <b>{s.funds}</b> / 内諾{' '}
                 <b>{d.candidates.filter((c) => c.promised).length} / 6</b>
               </p>
             </div>

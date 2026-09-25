@@ -43,3 +43,5 @@ release-times.json
 /test-results/
 /playwright-report/
 
+# プレビュー用のローカル設定
+/.claude/

@@ -140,7 +140,12 @@ export function DevelopmentView({
 }) {
   const [view, setView] = useState('plan'),
     [draft, setDraft] = useState<PlanKey>('technique'),
-    [origin, setOrigin] = useState('all');
+    [origin, setOrigin] = useState('all'),
+    [scoutSort, setScoutSort] = useState<'interest' | 'potential' | 'ability'>(
+      'interest',
+    ),
+    [scoutShown, setScoutShown] = useState(6),
+    [scoutOpen, setScoutOpen] = useState<Record<string, boolean>>({});
   const d = s.development,
     manager = d.manager === null ? null : managers[d.manager],
     left = 24 - (s.week % 24);
@@ -280,7 +285,10 @@ export function DevelopmentView({
           <Options
             label="候補の経歴"
             value={origin}
-            onChange={setOrigin}
+            onChange={(v) => {
+              setOrigin(v);
+              setScoutShown(6);
+            }}
             items={[
               { id: 'all', name: '全員' },
               ...Object.entries(origins).map(([id, v]) => ({
@@ -289,111 +297,181 @@ export function DevelopmentView({
               })),
             ]}
           />
-          <div className="scout-grid">
-            {d.candidates
-              .filter((c) => origin === 'all' || origin === c.origin)
-              .map((c) => {
-                const locked = s.reputation < c.required,
-                  used = d.lastVisit === s.season * 48 + s.week,
-                  slots =
-                    s.players.filter((p) => p.year === 3 && p.pos === c.pos)
-                      .length -
-                    d.candidates.filter((x) => x.promised && x.pos === c.pos)
-                      .length;
-                return (
-                  <article
-                    className={`scout-card ${locked ? 'locked' : ''}`}
-                    key={c.id}
-                  >
-                    <div className="scout-card-top">
-                      <Portrait index={c.portrait} name={c.name} />
-                      <div>
-                        <span className="origin-badge">
-                          {origins[c.origin].name}
-                        </span>
-                        <h3>{c.name}</h3>
-                        <span className={`position pos-${c.pos}`}>
-                          {c.pos}
-                        </span>{' '}
-                        <span className="muted">
-                          {personalities[c.personality].name}
-                        </span>
-                      </div>
-                    </div>
-                    <p>{origins[c.origin].story}</p>
-                    <div className="scout-values">
-                      <span>
-                        現在の力 <b>{c.scouted ? c.ability : '未視察'}</b>
-                      </span>
-                      <span>
-                        成長の素質{' '}
-                        {c.scouted ? (
-                          <PotentialBadge potential={c.potential} />
+          <Options
+            label="並び替え"
+            value={scoutSort}
+            onChange={(v) => {
+              setScoutSort(v as typeof scoutSort);
+              setScoutShown(6);
+            }}
+            items={[
+              { id: 'interest', name: '関心度順' },
+              { id: 'potential', name: '素質順' },
+              { id: 'ability', name: '現在の力順' },
+            ]}
+          />
+          {(() => {
+            // 内諾済み・交渉中（視察済みだが未内諾）を常に上に、その上で選んだ並び順で
+            // 並べる。1画面あたりの表示件数を抑えるため、最初は6件のみ描画し、
+            // 「さらに表示」で6件ずつ増やす（縦の長さを抑えるのが目的）。
+            const groupRank = (c: (typeof d.candidates)[number]) =>
+                c.promised ? 2 : c.scouted ? 1 : 0,
+              sortValue = (c: (typeof d.candidates)[number]) => {
+                if (scoutSort === 'interest') return c.interest;
+                if (scoutSort === 'potential') return c.potential;
+                return c.scouted ? c.ability : -1;
+              },
+              filtered = d.candidates
+                .filter((c) => origin === 'all' || origin === c.origin)
+                .slice()
+                .sort(
+                  (a, b) =>
+                    groupRank(b) - groupRank(a) || sortValue(b) - sortValue(a),
+                ),
+              visible = filtered.slice(0, scoutShown);
+            return (
+              <>
+                <div className="scout-grid">
+                  {visible.map((c) => {
+                    const locked = s.reputation < c.required,
+                      used = d.lastVisit === s.season * 48 + s.week,
+                      slots =
+                        s.players.filter(
+                          (p) => p.year === 3 && p.pos === c.pos,
+                        ).length -
+                        d.candidates.filter(
+                          (x) => x.promised && x.pos === c.pos,
+                        ).length,
+                      isOpen = !!scoutOpen[c.id];
+                    return (
+                      <article
+                        className={`scout-card ${locked ? 'locked' : ''}`}
+                        key={c.id}
+                      >
+                        <div className="scout-card-top">
+                          <Portrait index={c.portrait} name={c.name} />
+                          <div>
+                            <span className="origin-badge">
+                              {origins[c.origin].name}
+                            </span>
+                            <h3>{c.name}</h3>
+                            <span className={`position pos-${c.pos}`}>
+                              {c.pos}
+                            </span>{' '}
+                            <span className="muted">
+                              {personalities[c.personality].name}
+                            </span>
+                          </div>
+                        </div>
+                        {c.promised ? (
+                          <strong className="lime sc-status">
+                            内諾済み・来春の仲間に
+                          </strong>
+                        ) : c.scouted ? (
+                          <span className="sc-status sc-status-active">
+                            交渉中
+                          </span>
+                        ) : null}
+                        <div className="scout-values">
+                          <span>
+                            現在の力 <b>{c.scouted ? c.ability : '未視察'}</b>
+                          </span>
+                          <span>
+                            成長の素質{' '}
+                            {c.scouted ? (
+                              <PotentialBadge potential={c.potential} />
+                            ) : (
+                              <b>？</b>
+                            )}
+                          </span>
+                        </div>
+                        <div className="scout-interest">
+                          <span>関心 {c.interest} / 100</span>
+                          <Progress
+                            value={c.interest}
+                            aria-label={c.name + 'の関心'}
+                          />
+                        </div>
+                        {c.promised ? null : locked ? (
+                          <p>接触条件：学校の評判 {c.required}</p>
                         ) : (
-                          <b>？</b>
+                          <div className="scout-actions">
+                            {/* disabled は使わず aria-disabled で見た目だけ落ち着かせる。
+                                押した場合は lib/development.ts 側の検証がそのまま働き、
+                                理由（週1回制限・部費不足など）が既存のトーストに出る。 */}
+                            <button
+                              className="secondary"
+                              aria-disabled={used || c.scouted || s.funds < 3}
+                              onClick={() =>
+                                run({
+                                  type: 'scout',
+                                  id: c.id,
+                                  mode: 'observe',
+                                })
+                              }
+                            >
+                              {c.scouted ? '視察済' : '視察 / 3'}
+                            </button>
+                            <button
+                              className="secondary"
+                              aria-disabled={used || !c.scouted || s.funds < 5}
+                              onClick={() =>
+                                run({ type: 'scout', id: c.id, mode: 'visit' })
+                              }
+                            >
+                              面談 / 5
+                            </button>
+                            <button
+                              className="secondary"
+                              aria-disabled={
+                                used ||
+                                !c.scouted ||
+                                c.interest < 70 ||
+                                slots <= 0 ||
+                                s.funds < 8
+                              }
+                              onClick={() =>
+                                run({ type: 'scout', id: c.id, mode: 'offer' })
+                              }
+                            >
+                              入学提案 / 8
+                            </button>
+                          </div>
                         )}
-                      </span>
-                    </div>
-                    <div className="scout-interest">
-                      <span>関心 {c.interest} / 100</span>
-                      <Progress
-                        value={c.interest}
-                        aria-label={c.name + 'の関心'}
-                      />
-                    </div>
-                    {c.promised ? (
-                      <strong className="lime">
-                        入学内諾！ 来春の仲間に。
-                      </strong>
-                    ) : locked ? (
-                      <p>接触条件：学校の評判 {c.required}</p>
-                    ) : (
-                      <div className="scout-actions">
-                        {/* disabled は使わず aria-disabled で見た目だけ落ち着かせる。
-                            押した場合は lib/development.ts 側の検証がそのまま働き、
-                            理由（週1回制限・部費不足など）が既存のトーストに出る。 */}
                         <button
-                          className="secondary"
-                          aria-disabled={used || c.scouted || s.funds < 3}
+                          type="button"
+                          className="secondary sc-toggle"
+                          aria-expanded={isOpen}
                           onClick={() =>
-                            run({ type: 'scout', id: c.id, mode: 'observe' })
+                            setScoutOpen((o) => ({ ...o, [c.id]: !o[c.id] }))
                           }
                         >
-                          {c.scouted ? '視察済' : '視察 / 3'}
+                          {isOpen ? '閉じる' : '詳しく'}
                         </button>
-                        <button
-                          className="secondary"
-                          aria-disabled={used || !c.scouted || s.funds < 5}
-                          onClick={() =>
-                            run({ type: 'scout', id: c.id, mode: 'visit' })
-                          }
-                        >
-                          面談 / 5
-                        </button>
-                        <button
-                          className="secondary"
-                          aria-disabled={
-                            used ||
-                            !c.scouted ||
-                            c.interest < 70 ||
-                            slots <= 0 ||
-                            s.funds < 8
-                          }
-                          onClick={() =>
-                            run({ type: 'scout', id: c.id, mode: 'offer' })
-                          }
-                        >
-                          入学提案 / 8
-                        </button>
-                      </div>
-                    )}
-                    <small className="muted">
-                      {c.pos}の残り卒業枠 {Math.max(0, slots)}名
-                    </small>
-                  </article>
-                );
-              })}
-          </div>
+                        {isOpen && (
+                          <div className="sc-detail">
+                            <p>{origins[c.origin].story}</p>
+                            <small className="muted">
+                              {c.pos}の残り卒業枠 {Math.max(0, slots)}名
+                            </small>
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+                {visible.length < filtered.length && (
+                  <button
+                    type="button"
+                    className="secondary sc-more"
+                    onClick={() => setScoutShown((n) => n + 6)}
+                  >
+                    さらに表示（あと{filtered.length - visible.length}人）
+                  </button>
+                )}
+              </>
+            );
+          })()}
           <p className="muted instruction">
             経歴や親選手・育成組織はすべて架空です。部活の原石は現在の力が低くても、時間をかけて大きく育つ選手がいます。
           </p>

@@ -233,6 +233,12 @@ export type State = {
   autoLineupPolicy: LineupPolicy;
   autoLineupOnMatch: boolean;
   reputation: number;
+  // T-11: 評判の「持続」を積み上げる指標（0〜100、季節ごとの評判のEMA）。
+  // 新入生・スカウト候補の素質は「今の評判」ではなくこちらに連動させ、
+  // 評判が急に上がっただけでは即座に素質の高い選手が来ないようにする
+  // （暦の年数で区切っていた establishedRep の置き換え）。旧セーブ（このフィールドが
+  // 導入される前）は validateSave() が現在の評判から決定的に補う。
+  repSustain: number;
   cohesion: number;
   morale: number;
   facilities: number;
@@ -410,7 +416,12 @@ export const ROSTER_MIN = 20;
 export const ROSTER_MAX = 50;
 // S3: 1試合あたりの交代上限。旧仕様(3人)の途中セーブも読み込める（validateSaveが吸収）。
 export const MATCH_MAX_SUBS = 5;
-export const FACILITY_UPGRADE_COSTS = [40, 80, 140, 700] as const;
+// T-11: 最終段が直前の5倍(140→700)は崖が急すぎたため、40/80/140/450へ緩和
+// (直前比約3.2倍)。300まで下げると受け身の監督でも施設最大化が早まりすぎ、
+// 5〜8シーズン目のA級人数が balance.test.ts の目標(平均1〜5人)を超えたため、
+// 450で「崖を和らげつつ長期バランスを保てる」下限とした。
+// 4シーズン目より前には施設最大化が起きない受け入れ条件は balance.test.ts で確認済み。
+export const FACILITY_UPGRADE_COSTS = [40, 80, 140, 450] as const;
 export function facilityUpgradeCost(level: number): number {
   return FACILITY_UPGRADE_COSTS[level - 1] ?? Infinity;
 }
@@ -490,9 +501,11 @@ function effective(s: State, p: Player, slot: DetailPos) {
 function makePlayer(s: State, year: number, pos: Position): Player {
   const id = s.nextId++,
     base = 32 + year * 5 + Math.min(12, s.reputation * 0.12);
-  // 評判が定着した学校はスカウト網も育つ。短期的に評判だけが100へ達しても
-  // 即座にA級が大量入部せず、8年目以降に素質の高い新入生が増えていく。
-  const establishedRep = Math.min(0.24, Math.max(0, s.season - 7) * 0.08) * s.reputation / 100;
+  // T-11: 評判が「定着」した学校はスカウト網も育つ。年数の区切りではなく、
+  // 季節ごとの評判のEMAである s.repSustain（積み上げた実績）に連動させる。
+  // 短期的に評判だけが跳ね上がってもEMAはすぐには追いつかないため、即座にA級が
+  // 大量入部することはなく、評判を早く・長く高く保った学校ほど早くこの上限に届く。
+  const establishedRep = Math.min(0.24, Math.max(0, (s.repSustain ?? s.reputation) - 74) * 0.011) * s.reputation / 100;
   const p: Player = {
     identity: identityFor(id),
     id,
@@ -617,6 +630,7 @@ export function newGame(
     autoLineupPolicy: 'overall',
     autoLineupOnMatch: false,
     reputation: 15,
+    repSustain: 15,
     cohesion: 45,
     morale: 70,
     facilities: 1,
@@ -680,6 +694,10 @@ function finishWeek(s: State) {
       graduates: grads.map((p) => p.name),
     });
     s.history = s.history.slice(0, 20);
+    // T-11: 今シーズン終了時点の評判をEMAへ積み上げる（新入生の素質計算より前に更新し、
+    // 今回の新入生・以降のスカウト候補生成へ反映する）。alpha=0.3: 評判を維持し続けた
+    // 学校ほど数シーズンでEMAが実際の評判に近づき、単発の評判上昇では追いつかない。
+    s.repSustain = clamp((s.repSustain ?? s.reputation) * 0.78 + s.reputation * 0.22, 0, 100);
     s.players = s.players.filter((p) => p.year < 3);
     s.players.forEach((p) => {
       p.year++;
@@ -1504,6 +1522,9 @@ export function validateSave(x: unknown): State {
   if (s.autoLineupOnMatch === undefined) s.autoLineupOnMatch = false;
   // T4.2: 部費の収入履歴（導入前のセーブ）は空配列で補う。
   if (s.fundHistory === undefined) s.fundHistory = [];
+  // T-11: 評判の持続（repSustain、導入前のセーブ）は「今の評判が定着している」ものとして
+  // 決定的に補う（年数からは推定しない）。
+  if (s.repSustain === undefined) s.repSustain = s.reputation;
   const num = (v: unknown, min: number, max: number) =>
     typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
   if (
@@ -1572,6 +1593,7 @@ export function validateSave(x: unknown): State {
     s.lineup.some((id) => !ids.includes(id)) ||
     !num(s.nextId, Math.max(...ids) + 1, 10000000) ||
     !num(s.reputation, 0, 100) ||
+    !num(s.repSustain, 0, 100) ||
     !num(s.cohesion, 0, 100) ||
     !num(s.morale, 0, 100) ||
     !num(s.facilities, 1, 5) ||

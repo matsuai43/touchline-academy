@@ -58,6 +58,57 @@ test('v2 future: policy locks, manager motivates, scouting is limited, mobile ca
   ).toBeVisible();
 });
 
+test('T-9: scout screen is compact on mobile (paged cards, sort, and expandable detail)', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'この学校で始める' }).click();
+  await page.getByRole('tab', { name: '育成・スカウト', exact: true }).click();
+  await page.getByRole('button', { name: 'この半年の方針を確定' }).click();
+  await page
+    .getByRole('radio', { name: '新入生スカウト', exact: true })
+    .check();
+
+  // 最初は6件だけ描画され、縦の長さが抑えられている（目安：全20人を1画面に
+  // 並べた場合の約9000pxの半分以下）。
+  await expect(page.locator('.scout-card')).toHaveCount(6);
+  const initialHeight = await page.evaluate(
+    () => document.documentElement.scrollHeight,
+  );
+  expect(initialHeight).toBeLessThan(4500);
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    )
+    .toBe(true);
+
+  // 「さらに表示」で件数が増える。
+  const moreBtn = page.getByRole('button', { name: /さらに表示/ });
+  await expect(moreBtn).toBeVisible();
+  await moreBtn.click();
+  await expect(page.locator('.scout-card')).toHaveCount(12);
+
+  // 並び替え（関心度順・素質順・現在の力順）はラジオで、選ぶと件数表示が
+  // リセットされる（1画面あたりの件数を抑える方針を並び替え後も保つ）。
+  await page
+    .getByRole('radio', { name: '素質順', exact: true })
+    .check();
+  await expect(page.locator('.scout-card')).toHaveCount(6);
+
+  // 候補カードは「詳しく」で経歴の詳細が展開する（aria-expanded で状態を示す）。
+  const card = page.locator('.scout-card').first();
+  const toggle = card.locator('.sc-toggle');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(card.locator('.sc-detail')).toHaveCount(0);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(card.locator('.sc-detail')).toBeVisible();
+  await expect(
+    card.getByRole('button', { name: '閉じる' }),
+  ).toBeVisible();
+});
+
 test('v2 match: command, contextual coaching, real highlight canvas and replay do not duplicate score', async ({
   page,
 }) => {

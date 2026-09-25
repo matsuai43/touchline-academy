@@ -248,8 +248,11 @@ export function candidatePool(s: State): Candidate[] {
       origin,
       portrait: origin === 'exchange' ? 8 + (i % 4) : i % 12,
       personality: ps[(z >>> 5) % 4],
+      // T-11: 能力(ability)は「今の評判」による当座の注目度、素質(potential)は
+      // makePlayer の establishedRep と同じ考え方で「評判の持続」(repSustain)に連動させる。
+      // 評判を急に上げただけでは高素質のスカウト候補は増えず、長く高く保った学校ほど増える。
       ability: cap(39 + Math.floor(origins[origin].min / 8) + Math.floor(s.reputation * 0.2) + (z % 12), 30, 80),
-      potential: cap(1 + s.reputation * 0.005 + (z % 24) / 100 + (origin === 'local' ? 0 : 0.05), 1, 2),
+      potential: cap(1 + (s.repSustain ?? s.reputation) * 0.005 + (z % 24) / 100 + (origin === 'local' ? 0 : 0.05), 1, 2),
       required: origins[origin].min,
       interest: 20 + (z % 16),
       scouted: false,

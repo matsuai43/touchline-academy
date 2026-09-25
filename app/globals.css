@@ -2487,6 +2487,40 @@ footer button {
   color: var(--muted-foreground);
   line-height: 1.75;
 }
+.sc-status {
+  font-size: 12px;
+  font-weight: 700;
+}
+.sc-status-active {
+  color: var(--accent-foreground);
+  background: var(--accent);
+  padding: 3px 7px;
+  border-radius: 4px;
+  display: inline-block;
+  width: fit-content;
+}
+.sc-toggle {
+  font-size: 13px;
+  min-height: 44px;
+  width: 100%;
+}
+.sc-detail {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.sc-detail p {
+  font-size: 13px;
+  color: var(--muted-foreground);
+  line-height: 1.75;
+  margin: 0 0 8px;
+}
+.sc-more {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  font-size: 14px;
+  margin-top: 18px;
+}
 .origin-badge {
   font-size: 12px;
   color: var(--accent-foreground);

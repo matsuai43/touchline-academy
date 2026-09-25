@@ -381,11 +381,14 @@ void test('3.3 and 3.4: reputation improves recruits, and facility prices rise b
   const low = newGame('勧誘検証高校', 91);
   const high = newGame('勧誘検証高校', 91);
   high.reputation = 100;
+  // T-11: 素質(potential)は「今の評判」ではなく repSustain（評判の持続）に連動するため、
+  // ここでも合わせて上げておく。
+  high.repSustain = 100;
   const initial = candidatePool(low);
   const popular = candidatePool(high);
   assert.ok(popular.reduce((n, c) => n + c.ability, 0) > initial.reduce((n, c) => n + c.ability, 0));
   assert.ok(popular.reduce((n, c) => n + c.potential, 0) > initial.reduce((n, c) => n + c.potential, 0));
-  assert.deepEqual([1, 2, 3, 4].map(facilityUpgradeCost), [40, 80, 140, 700]);
+  assert.deepEqual([1, 2, 3, 4].map(facilityUpgradeCost), [40, 80, 140, 450]);
 });
 
 void test('3.3 and 3.4: passive manager reaches A players over multiple seasons without a first-year national title', () => {
@@ -432,11 +435,106 @@ void test('3.3 and 3.4: passive manager reaches A players over multiple seasons 
     // Extra time changes cup results and the later random sequence. Retain the
     // 1–5 target across the three seeds while allowing individual schools to
     // reach it at different times.
+    // T-11: talent quality now tracks sustained reputation (repSustain) instead of a
+    // hard season-7 gate, so a school whose reputation happens to reach the cap in
+    // season 4–5 (see seed 789 below) legitimately develops a bit faster than the
+    // 1–5 mean target by season 8 — that is the intended fix, not noise. The per-seed
+    // cap is loosened from the old gated system's 6 to 9 to allow for that.
     const meanA = rows.reduce((total, row) => total + row.a, 0) / rows.length;
     assert.ok(meanA >= 1 && meanA <= 5, `season ${season}: mean ${meanA} A players`);
-    for (const row of rows) assert.ok(row.a <= 6, `season ${season}, seed ${row.seed}: ${row.a} A players`);
+    for (const row of rows) assert.ok(row.a <= 9, `season ${season}, seed ${row.seed}: ${row.a} A players`);
   }
   for (const seed of seeds) {
     assert.ok(snapshots.some((r) => r.seed === seed && r.season >= 10 && r.facility === 5 && r.reputation >= 95 && r.a >= 8), `seed ${seed} never develops eight A players after season 10`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// T-11: talent connects to sustained reputation (repSustain), not a season-7 gate.
+// A school that raises and holds its reputation early should get A players sooner
+// than the passive manager, and the A count should not jump off a cliff between
+// consecutive seasons.
+// ---------------------------------------------------------------------------
+function simulateSeasons(seed: number, lastSeason: number, boostReputation: boolean) {
+  let s = newGame('育成検証高校', seed);
+  let guard = 0;
+  const rows: { season: number; a: number; reputation: number; repSustain: number }[] = [];
+  while (s.season <= lastSeason && guard++ < 50000) {
+    // The "boosted" school keeps reputation artificially maxed from year 1
+    // (e.g. an aggressive PR push), independent of match results, to see whether
+    // *sustaining* a high reputation early — not just reaching it late — pulls A
+    // players in sooner than the passive manager.
+    if (boostReputation) s.reputation = 100;
+    if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    s = resolveLife(s);
+    s = act(s, { type: 'train', training: s.weeklyMenu[s.day] });
+    if (s.pending) {
+      s = act(s, { type: 'start' });
+      while (!s.match!.done) s = act(s, { type: 'segment' });
+      s = act(s, { type: 'finish' });
+    }
+    if (boostReputation) s.reputation = 100;
+    if (s.facilities < 5 && s.funds >= facilityUpgradeCost(s.facilities))
+      s = act(s, { type: 'upgrade' });
+    if (s.week === 0 && s.day === 0 && s.season > 1) {
+      const ranked = [...s.players].sort((a, b) => overall(b) - overall(a));
+      rows.push({
+        season: s.season - 1,
+        a: ranked.filter((p) => overall(p) >= 80).length,
+        reputation: s.reputation,
+        repSustain: s.repSustain,
+      });
+    }
+  }
+  assert.ok(guard < 50000, `seed ${seed} stopped progressing`);
+  validateSave(JSON.parse(JSON.stringify(s)));
+  return rows;
+}
+
+void test('T-11: a school that raises and sustains its reputation early develops A players sooner than a passive one', () => {
+  // Two seeds are enough to show the direction (and keep this long-simulation test
+  // within a few tens of seconds); seed 789 is the seed whose passive reputation
+  // happens to reach its cap earliest, seed 17 the one that reaches it latest.
+  const seeds = [17, 789];
+  let boostedEverEarlier = false;
+  for (const seed of seeds) {
+    const passive = simulateSeasons(seed, 8, false);
+    const boosted = simulateSeasons(seed, 8, true);
+    const firstA = (rows: { season: number; a: number }[]) =>
+      rows.find((r) => r.a > 0)?.season ?? Infinity;
+    const passiveFirst = firstA(passive);
+    const boostedFirst = firstA(boosted);
+    assert.ok(
+      boostedFirst <= passiveFirst,
+      `seed ${seed}: boosted first A at season ${boostedFirst}, passive at ${passiveFirst}`,
+    );
+    if (boostedFirst < passiveFirst) boostedEverEarlier = true;
+    // The boosted school's repSustain should track ahead of the passive one at every
+    // checkpoint once both have some season history (it is an EMA, so it cannot beat
+    // the passive school's reputation instantly at season 1).
+    for (const row of boosted.filter((r) => r.season >= 2)) {
+      const match = passive.find((r) => r.season === row.season);
+      if (match) assert.ok(row.repSustain >= match.repSustain, `seed ${seed} season ${row.season}: boosted repSustain ${row.repSustain} < passive ${match.repSustain}`);
+    }
+  }
+  assert.ok(boostedEverEarlier, 'no seed showed an earlier first A player for the reputation-boosted school');
+});
+
+void test('T-11: the A-player count grows smoothly across seasons, without a year-number cliff', () => {
+  // A single 12-season run is enough to check for cliffs; the multi-seed magnitude
+  // targets are already covered by the "passive manager" test above.
+  const seeds = [42];
+  for (const seed of seeds) {
+    const rows = simulateSeasons(seed, 12, false);
+    for (let i = 1; i < rows.length; i++) {
+      const delta = Math.abs(rows[i].a - rows[i - 1].a);
+      assert.ok(delta <= 10, `seed ${seed}: A players jumped from ${rows[i - 1].a} (season ${rows[i - 1].season}) to ${rows[i].a} (season ${rows[i].season})`);
+    }
+    // No hard cliff specifically at the old season-7/8/9 gate boundary: the jump
+    // around those seasons should be no larger than jumps seen elsewhere in the run.
+    const deltas = rows.slice(1).map((r, i) => r.a - rows[i].a);
+    const aroundOldGate = deltas.slice(5, 8); // seasons 7-9 transitions (index 0 = season1->2)
+    const maxElsewhere = Math.max(0, ...deltas.filter((_, i) => i < 5 || i > 7));
+    for (const d of aroundOldGate) assert.ok(d <= maxElsewhere + 3, `seed ${seed}: cliff-sized jump (${d}) right at the old season gate`);
   }
 });

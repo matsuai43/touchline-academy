@@ -691,7 +691,7 @@ export function validateDevelopment(s: State) {
       if (
         !h ||
         typeof h.id !== 'string' ||
-        !number(h.minute, 0, 90) ||
+        !number(h.minute, 0, 120) ||
         !['goal', 'save', 'miss'].includes(h.kind) ||
         ![0, 1].includes(h.side) ||
         !s.players.some((p) => p.id === h.playerId) ||

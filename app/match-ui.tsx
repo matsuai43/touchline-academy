@@ -591,6 +591,70 @@ function SubstitutionDialog({
 // ---------------------------------------------------------------------------
 // 試合画面本体
 // ---------------------------------------------------------------------------
+function PenaltyShootoutView({ s, run }: { s: State; run: (a: Action) => State | null }) {
+  const m = s.match!;
+  const pk = m.pk!;
+  const chosen = pk.order;
+  const own = pk.kicks.filter((kick) => kick.side === 0);
+  const rival = pk.kicks.filter((kick) => kick.side === 1);
+  const ownGoals = own.filter((kick) => kick.scored).length;
+  const rivalGoals = rival.filter((kick) => kick.scored).length;
+  return (
+    <section className="match-view pk-view" aria-label="PK戦">
+      <div className="scoreboard">
+        <div className="match-caption"><span className="pill">PK戦</span><span>{m.fixture.label}</span></div>
+        <div className="score-row">
+          <div><h2>{s.school}</h2><small>HOME</small></div>
+          <div className="score"><strong>{m.home}<span>:</span>{m.away}</strong><b>120′</b></div>
+          <div><h2>{m.fixture.opponent}</h2><small>AWAY</small></div>
+        </div>
+        <p className="pk-live-score" aria-live="polite">PK {ownGoals} — {rivalGoals}</p>
+      </div>
+      <section className="panel pk-panel">
+        <h2>PK戦</h2>
+        <p className="muted">1本ずつ進みます。キッカーの順番を11人まで指定できます。</p>
+        {pk.kicks.length === 0 ? (
+          <>
+            <h3>キッカーの順番</h3>
+            <ol className="pk-order">
+              {Array.from({ length: 11 }, (_, i) => (
+                <li key={i}>{i + 1}番手：{s.players.find((p) => p.id === chosen[i])?.name ?? 'おまかせ'}</li>
+              ))}
+            </ol>
+            <div className="pk-choices" aria-label="キッカーを選ぶ">
+              {roster(s).map((p) => {
+                const number = chosen.indexOf(p.id);
+                return (
+                  <button key={p.id} type="button" className="secondary"
+                    aria-pressed={number >= 0} aria-disabled={number < 0 && chosen.length >= 11}
+                    onClick={() => {
+                      if (number >= 0) run({ type: 'pkOrder', ids: chosen.filter((id) => id !== p.id) });
+                      else if (chosen.length < 11) run({ type: 'pkOrder', ids: [...chosen, p.id] });
+                    }}>
+                    {number >= 0 ? `${number + 1}番手 ` : ''}{p.name}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="muted">選ばなかった枠は能力に応じて自動で決まり、12本目からは同じ順番を繰り返します。</p>
+          </>
+        ) : (
+          <ol className="pk-kicks" aria-label="PKの結果" aria-live="polite">
+            {pk.kicks.map((kick, i) => (
+              <li key={i}>
+                <span>{kick.side === 0 ? s.players.find((p) => p.id === kick.kickerId)?.name : `${m.fixture.opponent} ${Math.floor(i / 2) + 1}番手`}</span>
+                <b>{kick.scored ? '○ 成功' : kick.saved ? '× セーブ' : '× 枠外'}</b>
+              </li>
+            ))}
+          </ol>
+        )}
+        <button type="button" className="primary pk-advance" onClick={() => run({ type: 'segment' })}>
+          {pk.kicks.length ? '次のキックへ' : 'PK戦を始める'} <ArrowRight size={19} />
+        </button>
+      </section>
+    </section>
+  );
+}
 export function MatchView({
   s,
   run,
@@ -623,11 +687,12 @@ export function MatchView({
       </section>
     );
   }
+  if (m.pk) return <PenaltyShootoutView s={s} run={run} />;
   return (
     <section className="match-view">
       <div className="scoreboard">
         <div className="match-caption">
-          <span className="pill">{m.minute === 45 ? 'HALF TIME' : 'MATCH LIVE'}</span>
+          <span className="pill">{m.minute === 45 ? 'HALF TIME' : m.minute >= 90 ? 'EXTRA TIME' : 'MATCH LIVE'}</span>
           <span>{m.fixture.label}</span>
         </div>
         <div className="score-row">
@@ -693,7 +758,7 @@ export function MatchView({
                   );
               }}
             >
-              {m.minute === 45 ? '後半の15分を進める' : '次の15分を進める'}{' '}
+              {m.minute === 45 ? '後半の15分を進める' : m.minute === 90 ? '延長前半を進める' : m.minute === 105 ? '延長後半を進める' : '次の15分を進める'}{' '}
               <ArrowRight size={19} />
             </button>
           </div>

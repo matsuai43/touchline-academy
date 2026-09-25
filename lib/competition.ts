@@ -1113,7 +1113,7 @@ function prepareNationalRepresentative(s: State, cup: CupState, cupKey: 'ih' | '
   national.rounds[0][0].homeId = national.teams[0].id;
 }
 
-export function simulateCupMatch(s: State, cupKey: 'ih' | 'wc', national: boolean, round: number, index: number, a: CupTeam, b: CupTeam): { home: number; away: number; winnerId: string; penalties: string | null } {
+export function simulateCupRegulation(s: State, cupKey: 'ih' | 'wc', national: boolean, round: number, index: number, a: CupTeam, b: CupTeam): { home: number; away: number } {
   const tag = strHash(cupKey) + (national ? 5000 : 3000);
   // The same exponential curve drives played matches. The cap is slightly higher
   // because this quick simulation has no player tactics or skill bonuses.
@@ -1127,12 +1127,51 @@ export function simulateCupMatch(s: State, cupKey: 'ih' | 'wc', national: boolea
       if (hf(...key, 2) < (0.28 / ratio) * 1.9 * 0.25) away++;
     }
   }
+  return { home, away };
+}
+
+export function simulateCupMatch(s: State, cupKey: 'ih' | 'wc', national: boolean, round: number, index: number, a: CupTeam, b: CupTeam): { home: number; away: number; winnerId: string; penalties: string | null } {
+  const tag = strHash(cupKey) + (national ? 5000 : 3000);
+  const ratio = clamp(strengthRatio(a.strength - b.strength), 0.4, 1.75);
+  let { home, away } = simulateCupRegulation(s, cupKey, national, round, index, a, b);
+  if (home === away) {
+    for (let segment = 6; segment < 8; segment++) {
+      for (let chance = 0; chance < 3; chance++) {
+        const key = [s.seed, s.season, tag, round, index, segment, chance];
+        if (hf(...key, 1) < 0.29 * ratio * 1.9 * 0.25) home++;
+        if (hf(...key, 2) < (0.28 / ratio) * 1.9 * 0.25) away++;
+      }
+    }
+  }
   let penalties: string | null = null;
   let winnerId = home > away ? a.id : b.id;
   if (home === away) {
-    const aWon = hf(s.seed, s.season, tag, round, index, 999) < clamp(0.5 + (a.strength - b.strength) / 100, 0.2, 0.8);
-    winnerId = aWon ? a.id : b.id;
-    penalties = aWon ? '5 - 4' : '4 - 5';
+    let own = 0;
+    let rival = 0;
+    let ownAttempts = 0;
+    let rivalAttempts = 0;
+    const ownChance = clamp(0.7 + (a.strength - b.strength) * 0.005, 0.45, 0.9);
+    const rivalChance = clamp(0.7 + (b.strength - a.strength) * 0.005, 0.45, 0.9);
+    for (let kick = 0; kick < 100; kick++) {
+      if (kick % 2 === 0) {
+        ownAttempts++;
+        if (hf(s.seed, s.season, tag, round, index, 9000, kick) < ownChance) own++;
+      } else {
+        rivalAttempts++;
+        if (hf(s.seed, s.season, tag, round, index, 9000, kick) < rivalChance) rival++;
+      }
+      const early = (ownAttempts < 5 || rivalAttempts < 5) &&
+        (own > rival + Math.max(0, 5 - rivalAttempts) || rival > own + Math.max(0, 5 - ownAttempts));
+      const sudden = ownAttempts === rivalAttempts && ownAttempts >= 5 && own !== rival;
+      if (early || sudden) break;
+    }
+    // A 50-round deadlock is extremely unlikely; resolve it deterministically.
+    if (own === rival) {
+      if (hf(s.seed, s.season, tag, round, index, 9999) < 0.5) own++;
+      else rival++;
+    }
+    winnerId = own > rival ? a.id : b.id;
+    penalties = `${own} - ${rival}`;
   }
   return { home, away, winnerId, penalties };
 }

@@ -1381,6 +1381,41 @@ footer button {
   background: radial-gradient(ellipse at center, var(--accent), var(--card) 80%);
   margin-bottom: 22px;
 }
+.pk-live-score {
+  text-align: center;
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.pk-panel {
+  display: grid;
+  gap: 14px;
+}
+.pk-order,
+.pk-kicks {
+  display: grid;
+  gap: 8px;
+  padding-left: 24px;
+}
+.pk-kicks li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 0;
+}
+.pk-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+.pk-choices button,
+.pk-advance {
+  min-height: 44px;
+}
+.pk-advance {
+  justify-self: start;
+}
 .match-caption {
   display: flex;
   gap: 15px;

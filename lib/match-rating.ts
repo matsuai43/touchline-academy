@@ -232,7 +232,7 @@ export function matchRatings(s: State): PlayerRating[] {
     // スタッツ採点（statRatingFor）を使う。旧セーブの試合途中データ（スタッツ無し）は
     // 従来の簡易式（ratingFor）にフォールバックする。
     const stStats = m.playerStats?.[id];
-    const rating = stStats
+    const baseRating = stStats
       ? statRatingFor({
           seed: s.seed,
           id,
@@ -256,6 +256,12 @@ export function matchRatings(s: State): PlayerRating[] {
           fatigueAfter: p.fatigue,
           cleanSheet,
         });
+    const pkGoals = m.pk?.kicks.filter((kick) => kick.side === 0 && kick.kickerId === id && kick.scored).length ?? 0;
+    const pkSaves = s.lineup[0] === id
+      ? m.pk?.kicks.filter((kick) => kick.side === 1 && kick.saved).length ?? 0
+      : 0;
+    const rating = clamp(Math.round((baseRating + pkGoals * 0.25 + pkSaves * 0.4) * 10) / 10,
+      RATING_MIN, RATING_MAX);
     rows.push({
       id,
       name: p.name,

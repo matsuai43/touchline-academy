@@ -340,6 +340,49 @@ test('mobile 390px: substitution dialog and match result fit the viewport', asyn
   await page.screenshot({ path: 'test-results/match-result-mobile.png', fullPage: true });
 });
 
+test('T-10: mobile shootout lets the manager choose a kicker, saves each kick and shows the result', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  let s = newGame('PK画面検証高校', 5);
+  s.day = 6;
+  s.pending = { label: '県予選', kind: 'summer', round: 0, strength: 50, opponent: '架空高校', style: 'balanced' };
+  s = act(s, { type: 'start' });
+  while (!s.match!.pk) s = act(s, { type: 'segment' });
+  const firstKicker = s.players.find((p) => p.id === s.lineup[9])!;
+  await page.goto('/');
+  await page.evaluate((value) => localStorage.setItem('touchline-academy-v1', JSON.stringify(value)), s);
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'PK戦', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: firstKicker.name, exact: true }).click();
+  await expect(page.getByText(`1番手：${firstKicker.name}`)).toBeVisible();
+  await page.getByRole('button', { name: 'PK戦を始める' }).click();
+  await expect(page.locator('.pk-kicks li')).toHaveCount(1);
+  await page.reload();
+  await expect(page.locator('.pk-kicks li')).toHaveCount(1);
+  for (let i = 0; i < 30 && !(await page.getByText('MATCH RESULT', { exact: true }).count()); i++) {
+    await page.getByRole('button', { name: '次のキックへ' }).click();
+  }
+  await expect(page.getByRole('heading', { name: 'PK戦の記録' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('T-10: extra time remains playable with tactics until 120 minutes', async ({ page }) => {
+  let s = newGame('延長画面検証高校', 3);
+  s.day = 6;
+  s.pending = { label: '県予選', kind: 'summer', round: 0, strength: 50, opponent: '架空高校', style: 'balanced' };
+  s = act(s, { type: 'start' });
+  for (let i = 0; i < 6; i++) s = act(s, { type: 'segment' });
+  expect(s.match!.done).toBe(false);
+  await page.goto('/');
+  await page.evaluate((value) => localStorage.setItem('touchline-academy-v1', JSON.stringify(value)), s);
+  await page.reload();
+  await expect(page.getByText('EXTRA TIME', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '延長前半を進める' }).click();
+  await expect(page.getByRole('button', { name: '延長後半を進める' })).toBeVisible();
+  await page.getByRole('button', { name: '延長後半を進める' }).click();
+  await expect(page.getByText('MATCH RESULT', { exact: true })).toBeVisible();
+  await expect(page.getByText('延長戦：120分まで実施')).toBeVisible();
+});
+
 // ---------------------------------------------------------------------------
 // M2: 交代画面の「習熟度」ラベルと凡例。
 // ---------------------------------------------------------------------------

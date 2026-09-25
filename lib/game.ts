@@ -158,6 +158,17 @@ export type MatchSnapshotEntry = {
    *  これを追加する前に始まった試合のセーブには無い。 */
   prof?: Partial<Record<DetailPos, number>>;
 };
+export type PenaltyKick = {
+  side: 0 | 1;
+  kickerId: number | null;
+  scored: boolean;
+  saved: boolean;
+};
+export type PenaltyShootout = {
+  /** Chosen by the manager before the first kick; unfilled places are automatic. */
+  order: number[];
+  kicks: PenaltyKick[];
+};
 export type Match = {
   details: MatchDetails;
   fixture: Fixture;
@@ -175,6 +186,8 @@ export type Match = {
   done: boolean;
   won: boolean;
   penalties: string | null;
+  /** Absent in saves from before extra time and interactive shootouts. */
+  pk?: PenaltyShootout;
   possession: number;
   lastSide: number;
   snapshot?: MatchSnapshotEntry[];
@@ -867,6 +880,7 @@ export type Action =
   | { type: 'start' }
   | { type: 'tactic'; tactic: Tactic }
   | { type: 'mentality'; mentality: Match['mentality'] }
+  | { type: 'pkOrder'; ids: number[] }
   | { type: 'segment' }
   | { type: 'finish' };
 export function act(old: State, a: Action): State {
@@ -947,8 +961,16 @@ export function act(old: State, a: Action): State {
     const startMinute = s.match.minute;
     simulateSegment(s);
     // v3.4 M1: 区間処理の「後」に選手ごとのスタッツを積み上げる（s.seedは消費しない）。
-    applyMatchSegmentStats(s, startMinute);
+    if (s.match.minute > startMinute) applyMatchSegmentStats(s, startMinute);
     if (s.match.done) applyMatchGrowth(s);
+    return s;
+  }
+  if (a.type === 'pkOrder') {
+    const m = s.match;
+    if (!m?.pk || m.done || m.pk.kicks.length || !Array.isArray(a.ids) || a.ids.length > 11 ||
+      new Set(a.ids).size !== a.ids.length || a.ids.some((id) => !s.lineup.includes(id)))
+      throw Error('PKのキッカーを選び直してください。');
+    m.pk.order = [...a.ids];
     return s;
   }
   if (a.type === 'finish') {
@@ -961,7 +983,7 @@ export function act(old: State, a: Action): State {
     return s;
   }
   if (a.type === 'tactic' || a.type === 'mentality') {
-    if (!s.match || s.match.done) throw Error('試合中のみ変更できます。');
+    if (!s.match || s.match.done || s.match.pk) throw Error('試合中のみ変更できます。');
     if (a.type === 'tactic') {
       if (!(a.tactic in tactics)) throw Error('戦術が不正です。');
       s.match.tactic = a.tactic;
@@ -1031,6 +1053,7 @@ export function act(old: State, a: Action): State {
       const isBench = isBenchPlayer(s, a.id);
       if (
         s.match.done ||
+        !!s.match.pk ||
         s.match.subs >= MATCH_MAX_SUBS ||
         s.match.used.includes(a.id) ||
         incoming.injury ||
@@ -1119,7 +1142,7 @@ function grantMatchPositionExperience(s: State, profMult: Map<number, number>): 
       cur = e.id;
       from = e.minute;
     }
-    const minutes = 90 - from;
+    const minutes = m.minute - from;
     if (minutes > 0) gainProficiency(s, cur, slot, 8 * (minutes / 90) * (profMult.get(cur) ?? 1));
   }
 }
@@ -1129,8 +1152,12 @@ function matchStaminaCost(s: State, p: Player, tactic: Tactic): number {
   return clamp(1 + (45 - stamina) / 100, 0.7, 1.4);
 }
 function simulateSegment(s: State) {
-  const m = s.match!,
-    team = roster(s),
+  const m = s.match!;
+  if (m.pk) {
+    simulatePenaltyKick(s);
+    return;
+  }
+  const team = roster(s),
     rating = strength(s),
     style = m.fixture.style;
   const advantage =
@@ -1309,61 +1336,116 @@ function simulateSegment(s: State) {
   createMoment(s);
   if (m.minute === 45)
     m.logs.unshift('HALF TIME：疲労を確認して、交代と後半の戦術を決めよう。');
-  if (m.minute >= 90) {
-    m.done = true;
-    m.won = m.home > m.away;
-    if (m.home === m.away && !['friendly', 'league'].includes(m.fixture.kind)) {
-      m.won =
-        rand(s) <
-        clamp(
-          0.5 +
-            (stat('mental') - m.fixture.strength) / 180 +
-            (skillFx.pkMult - 1) +
-            (1 - skillFx.pkStopMult),
-          0.25,
-          0.75,
-        );
-      m.penalties = m.won ? '5 - 4' : '4 - 5';
-      m.logs.unshift(
-        `PK戦 ${m.penalties}。${m.won ? '勝利！' : '惜しくも敗退。'}`,
-      );
-    }
-    s.records.games++;
-    s.records.goals += m.home;
-    s.seasonGoals += m.home;
-    for (const id of m.used) {
-      const p = s.players.find((p) => p.id === id)!;
-      p.appearances++;
-    }
-    if (m.won) {
-      s.records.wins++;
-      s.seasonWins++;
-      s.reputation = clamp(s.reputation + (m.fixture.kind === 'friendly' ? 0.25 : 1));
-      s.morale = clamp(s.morale + 7);
-      addFunds(
-        s,
-        m.fixture.kind === 'friendly' ? 2 : 4,
-        m.fixture.kind === 'friendly' ? '試合（練習試合勝利）' : '試合（公式戦勝利）',
-      );
-    } else s.morale = clamp(s.morale - 4);
-    resolveCompetitionMatch(s, m);
-    if (
-      m.fixture.kind === 'ih_qualifier' ||
-      m.fixture.kind === 'ih_national' ||
-      m.fixture.kind === 'wc_qualifier' ||
-      m.fixture.kind === 'wc_national'
-    ) {
-      const comp = readCompetition(s);
-      s.best = m.fixture.kind.startsWith('ih') ? comp.ih.best : comp.wc.best;
-    }
-    log(
-      s,
-      `${m.fixture.label}：${s.school} ${m.home} - ${m.away} ${m.fixture.opponent}${m.penalties ? '（PK ' + m.penalties + '）' : ''}`,
-    );
-    // v3.4 M1: 活躍連動の成長・特殊能力・信頼・ポジション経験値は、この区間ぶんの
-    // スタッツが積み上がった後（act()の'segment'ハンドラでapplyMatchSegmentStatsを
-    // 呼んだ後）にまとめて適用する（applyMatchGrowth参照）。ここでは呼ばない。
+  const cup = !['friendly', 'league'].includes(m.fixture.kind);
+  if (m.minute === 90 && cup && m.home === m.away) {
+    m.logs.unshift('90′ 同点。延長戦は15分ハーフです。');
+    return;
   }
+  if (m.minute === 105) {
+    m.logs.unshift('105′ 延長前半終了。延長後半へ。');
+    return;
+  }
+  if (m.minute === 120 && cup && m.home === m.away) {
+    m.pk = { order: [], kicks: [] };
+    m.logs.unshift('120′ 同点。PK戦に進みます。キッカーの順番を選べます。');
+    return;
+  }
+  if (m.minute >= 90) finishMatch(s);
+}
+function simulatePenaltyKick(s: State): void {
+  const m = s.match!;
+  const pk = m.pk!;
+  if (!pk.kicks.length) {
+    const remaining = roster(s).filter((p) => !pk.order.includes(p.id));
+    remaining.sort((a, b) =>
+      (b.stats.shoot * 0.55 + b.stats.mental * 0.45 - b.fatigue * 0.1 - (b.pos === 'GK' ? 30 : 0)) -
+      (a.stats.shoot * 0.55 + a.stats.mental * 0.45 - a.fatigue * 0.1 - (a.pos === 'GK' ? 30 : 0)) || a.id - b.id);
+    pk.order.push(...remaining.map((p) => p.id));
+  }
+  const side = pk.kicks.length % 2 as 0 | 1;
+  const attempt = pk.kicks.filter((kick) => kick.side === side).length;
+  const keeper = s.players.find((p) => p.id === s.lineup[0])!;
+  let kickerId: number | null = null;
+  let scored: boolean;
+  let saved: boolean;
+  if (side === 0) {
+    const kicker = s.players.find((p) => p.id === pk.order[attempt % pk.order.length])!;
+    kickerId = kicker.id;
+    const specialist = s.v3.squad.players[kicker.id]?.skills.includes('pk_killer') ? 0.08 : 0;
+    // Rival squads have no individual players; their team strength supplies
+    // the opposing goalkeeper's skill estimate.
+    const opponentGkSkill = m.fixture.strength;
+    const onTarget = rand(s) < clamp(0.9 + (kicker.stats.shoot - 50) * 0.001 - kicker.fatigue * 0.001, 0.65, 0.98);
+    scored = onTarget && rand(s) < clamp(
+      0.69 + (kicker.stats.shoot - 50) * 0.003 + (kicker.stats.mental - 50) * 0.002 -
+        kicker.fatigue * 0.0012 - (opponentGkSkill - 50) * 0.002 + specialist,
+      0.3, 0.92);
+    saved = onTarget && !scored;
+    m.logs.unshift(`PK ${attempt + 1}本目 ${kicker.name}：${scored ? '成功○' : saved ? '相手GKがセーブ×' : '枠外×'}`);
+  } else {
+    const stopper = s.v3.squad.players[keeper.id]?.skills.includes('pk_stopper') ? 0.08 : 0;
+    const onTarget = rand(s) < clamp(0.88 + (m.fixture.strength - 50) * 0.001, 0.65, 0.98);
+    scored = onTarget && rand(s) < clamp(
+      0.7 + (m.fixture.strength - 50) * 0.002 - (keeper.stats.keep - 50) * 0.003 -
+        keeper.fatigue * 0.001 + stopper * -1,
+      0.3, 0.92);
+    saved = onTarget && !scored;
+    m.logs.unshift(`PK 相手${attempt + 1}本目：${scored ? '成功○' : saved ? `${keeper.name}がセーブ×` : '枠外×'}`);
+  }
+  pk.kicks.push({ side, kickerId, scored, saved });
+  m.logs = m.logs.slice(0, 90);
+  const own = pk.kicks.filter((kick) => kick.side === 0);
+  const rival = pk.kicks.filter((kick) => kick.side === 1);
+  const ownGoals = own.filter((kick) => kick.scored).length;
+  const rivalGoals = rival.filter((kick) => kick.scored).length;
+  const decidedInFive = (own.length < 5 || rival.length < 5) &&
+    (ownGoals > rivalGoals + Math.max(0, 5 - rival.length) ||
+      rivalGoals > ownGoals + Math.max(0, 5 - own.length));
+  const decidedInSuddenDeath = own.length === rival.length && own.length >= 5 && ownGoals !== rivalGoals;
+  if (decidedInFive || decidedInSuddenDeath) {
+    m.penalties = `${ownGoals} - ${rivalGoals}`;
+    m.won = ownGoals > rivalGoals;
+    m.logs.unshift(`PK戦 ${m.penalties}。${m.won ? '勝利！' : '惜しくも敗退。'}`);
+    finishMatch(s);
+  }
+}
+function finishMatch(s: State): void {
+  const m = s.match!;
+  m.done = true;
+  if (!m.pk) m.won = m.home > m.away;
+  s.records.games++;
+  s.records.goals += m.home;
+  s.seasonGoals += m.home;
+  for (const id of m.used) {
+    const p = s.players.find((p) => p.id === id)!;
+    p.appearances++;
+  }
+  if (m.won) {
+    s.records.wins++;
+    s.seasonWins++;
+    s.reputation = clamp(s.reputation + (m.fixture.kind === 'friendly' ? 0.25 : 1));
+    s.morale = clamp(s.morale + 7);
+    addFunds(
+      s,
+      m.fixture.kind === 'friendly' ? 2 : 4,
+      m.fixture.kind === 'friendly' ? '試合（練習試合勝利）' : '試合（公式戦勝利）',
+    );
+  } else s.morale = clamp(s.morale - 4);
+  resolveCompetitionMatch(s, m);
+  if (
+    m.fixture.kind === 'ih_qualifier' ||
+    m.fixture.kind === 'ih_national' ||
+    m.fixture.kind === 'wc_qualifier' ||
+    m.fixture.kind === 'wc_national'
+  ) {
+    const comp = readCompetition(s);
+    s.best = m.fixture.kind.startsWith('ih') ? comp.ih.best : comp.wc.best;
+  }
+  log(
+    s,
+    `${m.fixture.label}：${s.school} ${m.home} - ${m.away} ${m.fixture.opponent}${m.penalties ? '（PK ' + m.penalties + '）' : ''}`,
+  );
+  // The caller applies match growth after final segment stats are recorded.
 }
 // v3.4 M1: 試合終了時、活躍（評価点・記録したスタッツ）に応じて能力・習熟度・
 // 特殊能力・信頼を成長させる。旧仕様の「出場者一律 精神力+0.5」を置き換える。
@@ -1558,7 +1640,7 @@ export function validateSave(x: unknown): State {
     if (
       !s.pending ||
       !fixture(m.fixture) ||
-      !num(m.minute, 0, 90) ||
+      !num(m.minute, 0, 120) ||
       m.minute % 15 !== 0 ||
       !num(m.home, 0, 100) ||
       !num(m.away, 0, 100) ||
@@ -1580,13 +1662,27 @@ export function validateSave(x: unknown): State {
       !Object.keys(tactics).includes(m.tactic) ||
       !['safe', 'normal', 'attack'].includes(m.mentality) ||
       typeof m.done !== 'boolean' ||
-      m.done !== (m.minute === 90) ||
+      (m.done && m.minute !== 90 && m.minute !== 120) ||
+      (!m.done && m.minute === 120 && !m.pk) ||
+      (!m.done && m.minute === 90 &&
+        (['friendly', 'league'].includes(m.fixture.kind) || m.home !== m.away)) ||
       typeof m.won !== 'boolean' ||
       !num(m.possession, 0, 100) ||
       ![0, 1].includes(m.lastSide) ||
       (m.penalties !== null && typeof m.penalties !== 'string')
     )
       throw Error('試合データが不正です。');
+    if (m.pk !== undefined && (
+      !m.pk || m.minute !== 120 || m.home !== m.away ||
+      !Array.isArray(m.pk.order) || m.pk.order.length > 11 ||
+      new Set(m.pk.order).size !== m.pk.order.length ||
+      m.pk.order.some((id) => !s.lineup.includes(id)) ||
+      !Array.isArray(m.pk.kicks) || m.pk.kicks.length > 1000 ||
+      m.pk.kicks.some((kick, i) => !kick || kick.side !== i % 2 ||
+        (kick.side === 0 ? !s.lineup.includes(kick.kickerId ?? -1) : kick.kickerId !== null) ||
+        typeof kick.scored !== 'boolean' || typeof kick.saved !== 'boolean' ||
+        (kick.scored && kick.saved))
+    )) throw Error('PK戦データが不正です。');
     // snapshot は試合後サマリの成長差分表示にのみ使う表示専用データで、これが導入される前に
     // 開始した試合のセーブには存在しない。存在しない場合は許容し、UI側で空として扱う。
     if (s.match.snapshot !== undefined) {
@@ -1638,7 +1734,7 @@ export function validateSave(x: unknown): State {
             Number.isInteger(e.index) &&
             e.index >= 0 &&
             e.index <= 10 &&
-            num(e.minute, 0, 90),
+            num(e.minute, 0, 120),
         )
       )
         throw Error('試合の交代記録が不正です。');

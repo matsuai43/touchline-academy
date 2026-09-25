@@ -384,6 +384,20 @@ export function MatchResult({
           {resultLabel}
           {m.penalties ? `（PK ${m.penalties}）` : ''}
         </p>
+        {m.minute > 90 && <p className="muted">延長戦：{m.minute}分まで実施</p>}
+        {m.pk && (
+          <section className="panel pk-panel" aria-label="PK戦の結果">
+            <h2>PK戦の記録</h2>
+            <ol className="pk-kicks">
+              {m.pk.kicks.map((kick, i) => (
+                <li key={i}>
+                  <span>{kick.side === 0 ? s.players.find((p) => p.id === kick.kickerId)?.name : `${m.fixture.opponent} ${Math.floor(i / 2) + 1}番手`}</span>
+                  <b>{kick.scored ? '○ 成功' : kick.saved ? '× セーブ' : '× 枠外'}</b>
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
         <div className="match-stats">
           <span>
             シュート{' '}

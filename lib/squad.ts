@@ -1255,6 +1255,17 @@ export function grantMatchAchievements(s: State): void {
   }
   const firstGoalSide = m.details.highlights.find((h) => h.kind === 'goal')?.side;
   if (m.won && firstGoalSide === 1) for (const id of cast) tryGrant(id, ['精神']);
+  if (m.pk) {
+    const scorers = new Set(m.pk.kicks.filter((kick) => kick.side === 0 && kick.scored)
+      .map((kick) => kick.kickerId).filter((id): id is number => id !== null));
+    for (const id of scorers) {
+      if (hf(s.seed, id, s.week, 6010) < 0.35) grantSkill(s, id, 'pk_killer');
+    }
+    if (m.pk.kicks.some((kick) => kick.side === 1 && kick.saved)) {
+      const keeperId = s.lineup[0];
+      if (hf(s.seed, keeperId, s.week, 6011) < 0.4) grantSkill(s, keeperId, 'pk_stopper');
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

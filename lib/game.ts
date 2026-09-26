@@ -54,7 +54,9 @@ import {
   resolveCompetitionMatch,
   advanceCupWeek,
   readCompetition,
+  drawPendingCup,
   type CompetitionAction,
+  type CupDrawResult,
 } from './competition.ts';
 // v3.4 M1: 選手ごとの試合スタッツ・活躍連動の成長（lib/match-stats.ts）。
 import {
@@ -255,6 +257,9 @@ export type State = {
   pending: Fixture | null;
   match: Match | null;
   event: string | null;
+  // T-12: 大会直前の組み合わせ抽選イベント（自校が出場する大会の分だけ立つ）。
+  // 旧セーブ（このフィールドが導入される前）は validateSave() が null で補う。
+  cupDraw: CupDrawResult | null;
   qualified: boolean;
   alive: boolean;
   summerAlive: boolean;
@@ -702,6 +707,7 @@ export function newGame(
     pending: null,
     match: null,
     event: null,
+    cupDraw: null,
     qualified: false,
     alive: true,
     summerAlive: true,
@@ -924,19 +930,33 @@ function finishDay(s: State) {
     // マネージャーの週次サポートのみを週1回適用する。
     developmentWeek(s);
     s.weekTrainings = [];
-    const f = competitionFixture(s, s.week);
-    if (f) {
-      s.pending = f;
-    } else {
-      finishWeek(s);
-      s.day = 0;
-      if (s.week > 0 && s.week % 7 === 0)
-        s.event = pick(s, [
-          '部員たちの自主練習',
-          '主将からの提案',
-          '雨の日のミーティング',
-        ]);
-    }
+    resolveWeekOutcome(s);
+  }
+}
+// T-12: 週の練習日(月〜土)が終わった時点(day===6)の続き。大会直前の組み合わせ抽選が
+// あれば、その週の試合判定・週終了処理より先にそこで止める（s.cupDraw）。抽選自体は
+// drawPendingCup() が内部で決定的に行い、自校が出場する大会の抽選だけ画面を止める
+// （自校が出場しない大会は黙って抽選だけ済ませて続行する）。抽選イベントを閉じた
+// （'cupDrawAck'）直後にも呼び直され、その週の残りの処理（次の抽選 or 試合 or 週終了）
+// を続きから行う。
+function resolveWeekOutcome(s: State) {
+  const draw = drawPendingCup(s);
+  if (draw) {
+    s.cupDraw = draw;
+    return;
+  }
+  const f = competitionFixture(s, s.week);
+  if (f) {
+    s.pending = f;
+  } else {
+    finishWeek(s);
+    s.day = 0;
+    if (s.week > 0 && s.week % 7 === 0)
+      s.event = pick(s, [
+        '部員たちの自主練習',
+        '主将からの提案',
+        '雨の日のミーティング',
+      ]);
   }
 }
 export type Action =
@@ -949,6 +969,7 @@ export type Action =
   | { type: 'autoWeek' }
   | { type: 'setMenu'; menu: Training[] }
   | { type: 'event'; choice: 'team' | 'individual' }
+  | { type: 'cupDrawAck' }
   | { type: 'formation'; formation: Formation }
   | { type: 'swap'; index: number; id: number }
   | { type: 'auto' }
@@ -971,8 +992,14 @@ export function act(old: State, a: Action): State {
   if (handleLife(s, a)) return s;
   if (handleCompetition(s, a)) return s;
   if (handleTrainingPolicy(s, a as TrainingPolicyAction)) return s;
+  if (a.type === 'cupDrawAck') {
+    if (!s.cupDraw) throw Error('抽選イベントはありません。');
+    s.cupDraw = null;
+    resolveWeekOutcome(s);
+    return s;
+  }
   if (a.type === 'train') {
-    if (s.pending || s.match || s.event || s.v3.life.current)
+    if (s.pending || s.match || s.event || s.cupDraw || s.v3.life.current)
       throw Error('試合または部内イベントを先に終えてください。');
     if (!(a.training in training)) throw Error('練習メニューが不正です。');
     if (a.training === 'position' && !s.positionFocus)
@@ -983,13 +1010,13 @@ export function act(old: State, a: Action): State {
     return s;
   }
   if (a.type === 'autoWeek') {
-    if (s.pending || s.match || s.event || s.v3.life.current)
+    if (s.pending || s.match || s.event || s.cupDraw || s.v3.life.current)
       throw Error('試合または部内イベントを先に終えてください。');
     let guard = 0;
     // 「試合日まで進める」: 週間メニューで自動進行し、試合が見つかるか、
-    // 日常イベント・クラブイベント・けがが起きたその日で止まる。最悪でも
-    // ガード上限（十分な週数分）で必ず終了する。
-    while (!s.pending && !s.event && !s.v3.life.current && guard < 60) {
+    // 日常イベント・クラブイベント・けが・大会直前の組み合わせ抽選が起きたその日で
+    // 止まる。最悪でもガード上限（十分な週数分）で必ず終了する。
+    while (!s.pending && !s.event && !s.cupDraw && !s.v3.life.current && guard < 60) {
       guard++;
       const raw = s.weeklyMenu[s.day] ?? 'balance';
       // S4: 週間メニューに「ポジション練習」が入っていても対象未指定なら、
@@ -1593,6 +1620,8 @@ export function validateSave(x: unknown): State {
   // T-11: 評判の持続（repSustain、導入前のセーブ）は「今の評判が定着している」ものとして
   // 決定的に補う（年数からは推定しない）。
   if (s.repSustain === undefined) s.repSustain = s.reputation;
+  // T-12: 大会直前の組み合わせ抽選イベント（導入前のセーブ）は「無し」で補う。
+  if (s.cupDraw === undefined) s.cupDraw = null;
   const num = (v: unknown, min: number, max: number) =>
     typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
   if (
@@ -1723,9 +1752,28 @@ export function validateSave(x: unknown): State {
     (f.formation === undefined || FORMATIONS.includes(f.formation));
   if (s.pending && !fixture(s.pending)) throw Error('日程データが不正です。');
   // S1: 試合が保留中(pending)なのは day が日曜(6)に達した時だけ。試合中でない限りは
-  // 月〜土(0〜5)のはず。
+  // 月〜土(0〜5)のはず。T-12: 大会直前の組み合わせ抽選イベント中(cupDraw)も、
+  // まだ試合が組まれる前の day===6 で止まる（週の残りは抽選を閉じてから決まる）。
   if (s.pending && s.day !== 6) throw Error('曜日データが不正です。');
-  if (!s.pending && !s.match && s.day === 6) throw Error('曜日データが不正です。');
+  if (!s.pending && !s.match && !s.cupDraw && s.day === 6) throw Error('曜日データが不正です。');
+  if (s.cupDraw) {
+    const d = s.cupDraw;
+    if (
+      (s.pending || s.match) ||
+      !['ih', 'wc'].includes(d.cupKey) ||
+      typeof d.national !== 'boolean' ||
+      typeof d.seeded !== 'boolean' ||
+      typeof d.opponentName !== 'string' ||
+      d.opponentName.length > 60 ||
+      !num(d.opponentStrength, 1, 99) ||
+      !FORMATIONS.includes(d.opponentFormation) ||
+      !Object.keys(tactics).includes(d.opponentStyle) ||
+      typeof d.label !== 'string' ||
+      d.label.length > 60 ||
+      s.day !== 6
+    )
+      throw Error('抽選イベントのデータが不正です。');
+  }
   if (s.match) {
     const m = s.match;
     if (

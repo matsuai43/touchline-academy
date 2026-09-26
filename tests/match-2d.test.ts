@@ -29,8 +29,9 @@ function playOneMatch(seed: number): { s: State; highlights: Highlight[] } {
   let s = newGame('観測高校', seed);
   for (let i = 0; i < 40 && !s.match; i++) {
     if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
     s = resolveLife(s);
-    s = act(s, { type: 'train', training: 'balance' });
+    if (!s.pending) s = act(s, { type: 'train', training: 'balance' });
     if (s.pending) s = act(s, { type: 'start' });
   }
   assert.ok(s.match, '試合が開始しませんでした（テスト前提が崩れています）');

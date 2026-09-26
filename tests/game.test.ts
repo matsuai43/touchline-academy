@@ -17,8 +17,9 @@ function step(s:State,t:Training='balance'){
   const week0=s.week;
   while(s.week===week0){
     if(s.event)s=act(s,{type:'event',choice:'team'});
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
     s=resolveLife(s);
-    s=act(s,{type:'train',training:t});
+    if (!s.pending) s=act(s,{type:'train',training:t});
     if(s.pending)s=play(s);
   }
   return s;
@@ -30,8 +31,9 @@ function toMatchDay(s:State,t:Training='rest'){
   let guard=0;
   while(!s.pending&&guard++<20){
     if(s.event)s=act(s,{type:'event',choice:'team'});
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
     s=resolveLife(s);
-    s=act(s,{type:'train',training:t});
+    if (!s.pending) s=act(s,{type:'train',training:t});
   }
   return s;
 }
@@ -160,7 +162,7 @@ void test('S1: autoWeek follows the stored weekly menu until match day, stopping
   // どのシードでも決定的に止められるよう、生活イベントの発生率を人為的に検証するのではなく、
   // 単に「pendingかevent/life.currentのどれかが立つまで進む」ことと、進みすぎないことを確認する。
   s=act(s,{type:'autoWeek'});
-  assert.ok(s.pending||s.event||s.v3.life.current,'試合・クラブイベント・生活イベントのいずれかで止まっているはず');
+  assert.ok(s.pending||s.event||s.cupDraw||s.v3.life.current,'試合・クラブイベント・生活イベント・抽選イベントのいずれかで止まっているはず');
   assert.ok(s.day>=1,'最低でも1日は進んでいるはず');
 });
 void test('S1: setMenu validates and persists the weekly template; autoWeek uses it for untouched days',()=>{
@@ -191,6 +193,7 @@ function stepMenu(s:State){
   const week0=s.week;let guard=0;
   while(s.week===week0&&guard++<20){
     if(s.event)s=act(s,{type:'event',choice:'team'});
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
     s=resolveLife(s);
     if(s.pending){s=play(s);continue;}
     s=act(s,{type:'train',training:s.weeklyMenu[s.day]});
@@ -256,6 +259,7 @@ void test('S1: fatigue does not run away over 10 seasons of continuous league pl
   while(s.season<=10&&guard<3000){
     guard++;
     if(s.event)s=act(s,{type:'event',choice:'team'});
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
     s=resolveLife(s);
     if(s.pending&&!s.match){
       matchFatigueSamples.push(roster(s).reduce((a,p)=>a+p.fatigue,0)/11);

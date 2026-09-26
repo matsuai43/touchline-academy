@@ -119,7 +119,8 @@ test('v2 match: command, contextual coaching, real highlight canvas and replay d
     const cur = getCurrentLifeEvent(s);
     if (cur) s = act(s, { type: 'life', choiceId: cur.event.choices[0].id });
     if (s.event) s = act(s, { type: 'event', choice: 'team' });
-    s = act(s, { type: 'train', training: 'rest' });
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
+    if (!s.pending) s = act(s, { type: 'train', training: 'rest' });
   }
   s = act(s, { type: 'start' });
   await page.addInitScript(

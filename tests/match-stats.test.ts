@@ -30,8 +30,9 @@ function toMatchDay(s: State, t: Training = 'rest') {
   let guard = 0;
   while (!s.pending && guard++ < 60) {
     if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
     s = resolveLife(s);
-    s = act(s, { type: 'train', training: t });
+    if (!s.pending) s = act(s, { type: 'train', training: t });
   }
   return s;
 }
@@ -409,9 +410,10 @@ void test('the kick-off snapshot keeps proficiency so the result screen can show
   s.week = 3;
   for (let i = 0; i < 20 && !s.pending; i++) {
     if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
     const life = getCurrentLifeEvent(s);
     if (life) s = act(s, { type: 'life', choiceId: life.event.choices[0].id } as never);
-    s = act(s, { type: 'train', training: 'rest' });
+    if (!s.pending) s = act(s, { type: 'train', training: 'rest' });
   }
   s = act(s, { type: 'start' });
   const gk = s.match!.snapshot!.find((e) => e.id === s.lineup[0])!;

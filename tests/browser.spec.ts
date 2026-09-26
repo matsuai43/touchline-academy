@@ -1,4 +1,6 @@
 import {test,expect,type Page} from '@playwright/test';
+import {newGame} from '../lib/game';
+import {drawPendingCup,IH_QUALIFIER_DRAW_WEEK,IH_NATIONAL_DRAW_WEEK} from '../lib/competition';
 // W3日常イベント: 「試合の無い週」に確率で学校生活イベントが発生し、選択肢を選ぶまで
 // 次の練習に進めない仕様（lib/game.ts の 'train' ガード）。ブラウザ操作テストでは
 // newGame() がUI起動時に時刻ベースのシードを使うため発生タイミングは実行ごとに変わる。
@@ -43,7 +45,15 @@ test('desktop: train, lineup, match, save resume, export and dialogs',async({pag
 });
 test('mobile: main journey fits viewport',async({page})=>{await page.setViewportSize({width:390,height:844});await page.goto('/');await page.getByRole('button',{name:'この学校で始める'}).click();await page.getByRole('radio',{name:/休養・ケア/}).check();await page.getByRole('button',{name:/で1日進める/}).click();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:'test-results/mobile.png',fullPage:true});});
 test('mobile: both cup brackets show rival results inside horizontally scrollable tables',async({page})=>{
- await page.setViewportSize({width:375,height:812});await page.goto('/');await page.getByRole('button',{name:'この学校で始める'}).click();
+ // T-12: 組み合わせ抽選の導入で、県予選・全国大会とも抽選が行われるまで対戦表は
+ // 「抽選前」表示になる。この検証はドロー後の対戦表そのもの（横スクロール）を
+ // 見たいので、両方の抽選を済ませたセーブを直接読み込ませる（週を1つずつ
+ // クリックで進めるより高速で、他のUIテストと同じ手筋: withSave）。
+ const s=newGame('抽選済み検証高校',4001);
+ s.week=IH_QUALIFIER_DRAW_WEEK;drawPendingCup(s);
+ s.week=IH_NATIONAL_DRAW_WEEK;drawPendingCup(s);
+ await page.addInitScript((value)=>localStorage.setItem('touchline-academy-v1',JSON.stringify(value)),s);
+ await page.setViewportSize({width:375,height:812});await page.goto('/');
  await page.getByRole('tab',{name:'大会・日程'}).click();
  await page.getByText('インターハイのトーナメント表').click();
  const prefecture=page.getByRole('region',{name:'県予選トーナメント表（横にスクロールできます）'});
@@ -51,6 +61,16 @@ test('mobile: both cup brackets show rival results inside horizontally scrollabl
  await expect(prefecture).toBeVisible();await expect(national).toBeVisible();
  await expect(prefecture.getByText('1回戦')).toBeVisible();
  expect(await prefecture.evaluate(el=>el.scrollWidth>el.clientWidth)).toBe(true);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+test('mobile: before the qualifier draw, the tournament tab shows the entrant list instead of a bracket',async({page})=>{
+ // T-12: 抽選前（新規ゲーム開始直後）は「抽選前（◯月◯週に抽選）」と出場校の一覧だけが
+ // 見え、対戦表（1回戦などの見出し）はまだ出ない。
+ await page.setViewportSize({width:375,height:812});await page.goto('/');await page.getByRole('button',{name:'この学校で始める'}).click();
+ await page.getByRole('tab',{name:'大会・日程'}).click();
+ await page.getByText('インターハイのトーナメント表').click();
+ await expect(page.getByText(/抽選前/).first()).toBeVisible();
+ await expect(page.getByText('出場校').first()).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 test('player dialog and substitution dialog always release the page; substitutions cap at 5',async({page})=>{

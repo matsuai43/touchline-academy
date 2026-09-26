@@ -456,9 +456,33 @@ const CLUB_SCENES: EventSceneEntry[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// T-12: 大会の組み合わせ抽選イベント（lib/competition.ts drawPendingCup が返す
+// CupDrawResult を app/game-ui.tsx が表示する際に使う場面対応表）。s.cupDraw.national
+// の真偽で id を切り替える（'cup_draw_qualifier' / 'cup_draw_national'）。
+// ---------------------------------------------------------------------------
+export const CUP_DRAW_EVENT_IDS: readonly string[] = ['cup_draw_qualifier', 'cup_draw_national'];
+
+const CUP_DRAW_SCENES: EventSceneEntry[] = [
+  mk('cup_draw_qualifier', {
+    scene: 'clubroom',
+    narration: () => '抽選会場に主将が向かった。県予選の組み合わせ抽選がまもなく始まる。',
+    establishingAria: () => '抽選会場でくじを引く順番を待つ主将',
+    momentAria: () => 'くじを引く瞬間の主将',
+    resultAria: () => '初戦の相手が決まり、部室で報告する主将',
+  }),
+  mk('cup_draw_national', {
+    scene: 'clubroom',
+    narration: () => '県予選を勝ち抜いたチームに、全国大会の組み合わせ抽選の知らせが届いた。',
+    establishingAria: () => '全国大会の抽選会場でくじを引く順番を待つ主将',
+    momentAria: () => 'くじを引く瞬間の主将',
+    resultAria: () => '全国大会の初戦の相手が決まり、部室で報告する主将',
+  }),
+];
+
+// ---------------------------------------------------------------------------
 // まとめ
 // ---------------------------------------------------------------------------
-export const EVENT_SCENES: EventSceneEntry[] = [...LIFE_SCENES, ...CLUB_SCENES];
+export const EVENT_SCENES: EventSceneEntry[] = [...LIFE_SCENES, ...CLUB_SCENES, ...CUP_DRAW_SCENES];
 export const EVENT_SCENES_BY_ID: Record<string, EventSceneEntry> = Object.fromEntries(
   EVENT_SCENES.map((e) => [e.id, e]),
 );
@@ -505,5 +529,9 @@ export function validateEventScenes(): void {
   // クラブイベント3種すべてに場面が定義されているか
   for (const id of CLUB_EVENT_IDS) {
     if (!EVENT_SCENES_BY_ID[id]) throw Error(`クラブイベント「${id}」の場面が未定義です`);
+  }
+  // T-12: 組み合わせ抽選イベント2種すべてに場面が定義されているか
+  for (const id of CUP_DRAW_EVENT_IDS) {
+    if (!EVENT_SCENES_BY_ID[id]) throw Error(`組み合わせ抽選イベント「${id}」の場面が未定義です`);
   }
 }

@@ -23,8 +23,9 @@ function toMatchDay(s: State, t: Training = 'rest') {
   let guard = 0;
   while (!s.pending && guard++ < 20) {
     if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
     s = resolveLife(s);
-    s = act(s, { type: 'train', training: t });
+    if (!s.pending) s = act(s, { type: 'train', training: t });
   }
   return s;
 }

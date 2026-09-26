@@ -6,6 +6,7 @@ import {
   EVENT_SCENES,
   EVENT_SCENES_BY_ID,
   CLUB_EVENT_IDS,
+  CUP_DRAW_EVENT_IDS,
   getEventScenePanels,
   validateEventScenes,
   type SceneId,
@@ -32,7 +33,7 @@ void test('場面（SVG背景）は10〜12種として定義されている', ()
 });
 
 void test('36の学校生活イベントすべてにパネル列（establishing/moment/result）が定義されている', () => {
-  assert.equal(LIFE_EVENTS.length, EVENT_SCENES.length - CLUB_EVENT_IDS.length);
+  assert.equal(LIFE_EVENTS.length, EVENT_SCENES.length - CLUB_EVENT_IDS.length - CUP_DRAW_EVENT_IDS.length);
   for (const e of LIFE_EVENTS) {
     const panels = getEventScenePanels(e.id);
     assert.ok(panels, `${e.id} の場面が見つかりません`);
@@ -46,6 +47,15 @@ void test('36の学校生活イベントすべてにパネル列（establishing/
 void test('クラブイベント3種すべてにパネル列が定義されている', () => {
   assert.equal(CLUB_EVENT_IDS.length, 3);
   for (const id of CLUB_EVENT_IDS) {
+    const panels = getEventScenePanels(id);
+    assert.ok(panels, `${id} の場面が見つかりません`);
+    assert.ok(panels!.length >= 2 && panels!.length <= 3);
+  }
+});
+
+void test('T-12: 組み合わせ抽選イベント2種すべてにパネル列が定義されている', () => {
+  assert.equal(CUP_DRAW_EVENT_IDS.length, 2);
+  for (const id of CUP_DRAW_EVENT_IDS) {
     const panels = getEventScenePanels(id);
     assert.ok(panels, `${id} の場面が見つかりません`);
     assert.ok(panels!.length >= 2 && panels!.length <= 3);

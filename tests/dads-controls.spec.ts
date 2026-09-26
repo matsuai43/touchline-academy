@@ -20,7 +20,8 @@ function startedMatch(school: string, seed: number): State {
     const cur = getCurrentLifeEvent(s);
     if (cur) s = act(s, { type: 'life', choiceId: cur.event.choices[0].id });
     if (s.event) s = act(s, { type: 'event', choice: 'team' });
-    s = act(s, { type: 'train', training: 'rest' });
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
+    if (!s.pending) s = act(s, { type: 'train', training: 'rest' });
   }
   s = act(s, { type: 'start' });
   return s;

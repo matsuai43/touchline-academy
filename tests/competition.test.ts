@@ -10,6 +10,9 @@ import {
   readCompetition,
   competitionFixture,
   advanceCupWeek,
+  drawPendingCup,
+  IH_QUALIFIER_DRAW_WEEK,
+  IH_NATIONAL_DRAW_WEEK,
   mapLegacyFixtureKind,
   choosablePrefectures,
   canChoosePrefecture,
@@ -38,13 +41,19 @@ void test('T-2: rival cup results advance the bracket and stronger schools survi
   for (let seed = 1; seed <= 50; seed++) {
     const s = newGame('大会検証高校', seed * 37);
     const cup = readCompetition(s).ih;
+    // T-12: 組み合わせは抽選まで確定しない。この検証は抽選後の対戦表の性質を
+    // 見るためのものなので、先に決定的に抽選だけ済ませておく（週送りは不要）。
+    s.week = IH_QUALIFIER_DRAW_WEEK;
+    drawPendingCup(s);
     const bracket = cup.qualifier!;
     // The player's first-round loss is recorded by the real match engine in play.
     // Here it is supplied directly to isolate the rival-vs-rival tournament curve.
-    const selfMatch = bracket.rounds[0][0];
+    // T-12: 抽選で自校がどの枠に入るかは季ごとに変わるため、自校の実際の対戦を探す。
+    const selfIdx = bracket.rounds[0].findIndex((m) => m.homeId === 'self' || m.awayId === 'self');
+    const selfMatch = bracket.rounds[0][selfIdx];
     selfMatch.home = 0;
     selfMatch.away = 1;
-    selfMatch.winnerId = selfMatch.awayId;
+    selfMatch.winnerId = selfMatch.homeId === 'self' ? selfMatch.awayId : selfMatch.homeId;
     cup.alive = false;
     for (const week of IH_QUALIFIER_WEEKS) advanceCupWeek(s, week);
     assert.equal(bracket.completedRounds, 4);
@@ -57,6 +66,10 @@ void test('T-2: rival cup results advance the bracket and stronger schools survi
     const topQuartile = [...entrants].sort((a, b) => b - a)[3];
     if (championStrength >= topQuartile) upperSeedChampions++;
     const national = cup.national!;
+    // T-12: 全国大会の組み合わせも抽選まで確定しない。同様に先に抽選だけ済ませる
+    // （自校は県予選で敗退させているため、この抽選には出場しない＝黙って済む）。
+    s.week = IH_NATIONAL_DRAW_WEEK;
+    drawPendingCup(s);
     for (const week of IH_NATIONAL_WEEKS) advanceCupWeek(s, week);
     assert.equal(national.completedRounds, 5, 'national tournament continues even after the school loses');
   }
@@ -73,7 +86,10 @@ void test('T-2: the next opponent is the school that won the adjacent bracket ma
     const cup = readCompetition(s).ih;
     if (!cup.alive) continue;
     const bracket = cup.qualifier!;
-    const otherMatch = bracket.rounds[0][1];
+    // T-12: 抽選で自校がどの枠に入るかは季ごとに変わるため、自校の対戦の「隣」
+    // （準々決勝で当たる、同じ組の別の1回戦）を実際の位置から求める。
+    const selfIdx = bracket.rounds[0].findIndex((m) => m.homeId === 'self' || m.awayId === 'self');
+    const otherMatch = bracket.rounds[0][selfIdx ^ 1];
     const winner = bracket.teams.find((team) => team.id === otherMatch.winnerId)!;
     const fixture = competitionFixture(s, IH_QUALIFIER_WEEKS[1])!;
     assert.equal(fixture.opponent, winner.name);
@@ -88,8 +104,9 @@ void test('T-2: old saves without a bracket keep their current season fixture an
   while (s.week < IH_QUALIFIER_WEEKS[0]) s = step(s, 'rest');
   while (!s.pending) {
     if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
     s = resolveLife(s);
-    s = act(s, { type: 'train', training: 'rest' });
+    if (!s.pending) s = act(s, { type: 'train', training: 'rest' });
   }
   const fixture = s.pending;
   const raw = JSON.parse(JSON.stringify(s));
@@ -121,8 +138,9 @@ function step(s: State, t: Training = 'balance'): State {
   const week0 = s.week;
   while (s.week === week0) {
     if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
     s = resolveLife(s);
-    s = act(s, { type: 'train', training: t });
+    if (!s.pending) s = act(s, { type: 'train', training: t });
     if (s.pending) {
       s = act(s, { type: 'start' });
       while (!s.match!.done) s = act(s, { type: 'segment' });

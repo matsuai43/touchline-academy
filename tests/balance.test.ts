@@ -35,8 +35,9 @@ function toMatchDay(s: State, t: 'rest' = 'rest'): State {
   let guard = 0;
   while (!s.pending && guard++ < 60) {
     if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
     s = resolveLife(s);
-    s = act(s, { type: 'train', training: t });
+    if (!s.pending) s = act(s, { type: 'train', training: t });
   }
   return s;
 }
@@ -456,8 +457,9 @@ void test('3.3 and 3.4: passive manager reaches A players over multiple seasons 
     let guard = 0;
     while (s.season <= 12 && guard++ < 50000) {
       if (s.event) s = act(s, { type: 'event', choice: 'team' });
+      while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
       s = resolveLife(s);
-      s = act(s, { type: 'train', training: s.weeklyMenu[s.day] });
+      if (!s.pending) s = act(s, { type: 'train', training: s.weeklyMenu[s.day] });
       if (s.pending) {
         s = act(s, { type: 'start' });
         while (!s.match!.done) s = act(s, { type: 'segment' });
@@ -529,8 +531,9 @@ function simulateSeasons(seed: number, lastSeason: number, boostReputation: bool
     // players in sooner than the passive manager.
     if (boostReputation) s.reputation = 100;
     if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
     s = resolveLife(s);
-    s = act(s, { type: 'train', training: s.weeklyMenu[s.day] });
+    if (!s.pending) s = act(s, { type: 'train', training: s.weeklyMenu[s.day] });
     if (s.pending) {
       s = act(s, { type: 'start' });
       while (!s.match!.done) s = act(s, { type: 'segment' });

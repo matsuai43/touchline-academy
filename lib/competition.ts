@@ -310,7 +310,17 @@ export type CupMatch = {
   away: number | null;
   penalties: string | null;
 };
-export type CupBracket = { teams: CupTeam[]; rounds: CupMatch[][]; completedRounds: number };
+export type CupBracket = {
+  teams: CupTeam[];
+  rounds: CupMatch[][];
+  completedRounds: number;
+  /** T-12: 抽選前は false（rounds[0] は homeId/awayId とも null）。抽選が行われると
+   *  performDraw() が rounds[0] を埋めて true にする。旧セーブ（T-12導入前に生成された
+   *  ブラケット、常にこのフィールドを持たない）は hydrateCompetition() が true で補う
+   *  （＝進行中の季は従来どおり最初から表が決まっているものとして続行し、次の大会から
+   *  抽選の対象にする）。 */
+  drawn: boolean;
+};
 export type CupState = {
   qualified: boolean;
   alive: boolean;
@@ -318,9 +328,13 @@ export type CupState = {
   /** Old saves can finish the current season with the original cup schedule. */
   qualifier?: CupBracket;
   national?: CupBracket;
+  /** T-12: 今季この大会で自校が勝ち上がった回数（0＝1回戦敗退／未実施）。次シーズンの
+   *  シード選出（前回大会成績）に使う。旧セーブは hydrateCompetition() が0で補う。 */
+  qualifierRoundsWon: number;
+  nationalRoundsWon: number;
 };
 function freshCup(): CupState {
-  return { qualified: false, alive: true, best: '予選未突破' };
+  return { qualified: false, alive: true, best: '予選未突破', qualifierRoundsWon: 0, nationalRoundsWon: 0 };
 }
 
 export type CompHistoryEntry = {
@@ -332,6 +346,11 @@ export type CompHistoryEntry = {
   tierB: LeagueTier | null;
   ihBest: string;
   wcBest: string;
+  /** T-12: 翌シーズンの抽選シード判定に使う、この季の最終的な勝ち上がり回数。 */
+  ihQualifierRounds: number;
+  ihNationalRounds: number;
+  wcQualifierRounds: number;
+  wcNationalRounds: number;
 };
 
 export type CompState = {
@@ -780,6 +799,12 @@ function finalizeTeamA(s: State, comp: CompState, prevSeason: number): void {
       tierB: comp.teamB?.tier ?? null,
       ihBest: comp.ih.best,
       wcBest: comp.wc.best,
+      // T-12: 翌シーズンのシード選出用（このあと comp.ih/comp.wc は freshCup() でリセットされる
+      // ため、リセット前のここで拾っておく）。
+      ihQualifierRounds: comp.ih.qualifierRoundsWon ?? 0,
+      ihNationalRounds: comp.ih.nationalRoundsWon ?? 0,
+      wcQualifierRounds: comp.wc.qualifierRoundsWon ?? 0,
+      wcNationalRounds: comp.wc.nationalRoundsWon ?? 0,
     },
     ...comp.history,
   ].slice(0, 20);
@@ -931,6 +956,16 @@ export function hydrateCompetition(s: State): void {
   // 現在の s.seed で代用して以後固定する（ここから先は決定的に安定する）。
   if (typeof comp.teamA.scheduleSeed !== 'number') comp.teamA.scheduleSeed = s.seed;
   if (comp.teamB && typeof comp.teamB.scheduleSeed !== 'number') comp.teamB.scheduleSeed = s.seed;
+  // T-12: 旧セーブ互換。qualifierRoundsWon/nationalRoundsWon（導入前のセーブ）は0で補い、
+  // bracket.drawn（導入前に生成されたブラケットは常に持たない）は true で補う
+  // （＝進行中のシーズンで既に組み合わせが決まっている表はそのまま続行し、
+  // 抽選が働くのは次の大会からになる）。
+  for (const cup of [comp.ih, comp.wc]) {
+    if (typeof cup.qualifierRoundsWon !== 'number') cup.qualifierRoundsWon = 0;
+    if (typeof cup.nationalRoundsWon !== 'number') cup.nationalRoundsWon = 0;
+    if (cup.qualifier && typeof cup.qualifier.drawn !== 'boolean') cup.qualifier.drawn = true;
+    if (cup.national && typeof cup.national.drawn !== 'boolean') cup.national.drawn = true;
+  }
   if (comp.seasonGenerated !== s.season) advanceCompetitionSeason(s, comp);
 }
 export function validateCompetition(s: State): void {
@@ -982,14 +1017,18 @@ export function validateCompetition(s: State): void {
       typeof cup.qualified !== 'boolean' ||
       typeof cup.alive !== 'boolean' ||
       typeof cup.best !== 'string' ||
-      cup.best.length > 60
+      cup.best.length > 60 ||
+      // T-12: 翌シーズンのシード選出に使う勝ち上がり回数（県予選0〜4、全国0〜5）。
+      !num(cup.qualifierRoundsWon, 0, 4) ||
+      !num(cup.nationalRoundsWon, 0, 5)
     )
       throw Error(`${label}のデータが不正です。`);
     for (const [stage, bracket, count] of [['県予選', cup.qualifier, 16], ['全国', cup.national, 32]] as const) {
       if (bracket === undefined) continue; // pre-T-2 saves continue the current season unchanged
       if (!Array.isArray(bracket.teams) || bracket.teams.length !== count ||
           !Array.isArray(bracket.rounds) || bracket.rounds.length !== Math.log2(count) ||
-          !num(bracket.completedRounds, 0, bracket.rounds.length))
+          !num(bracket.completedRounds, 0, bracket.rounds.length) ||
+          typeof bracket.drawn !== 'boolean')
         throw Error(`${label}${stage}のトーナメント表が不正です。`);
       const ids = new Set<string>();
       for (const team of bracket.teams) {
@@ -1040,6 +1079,28 @@ export const IH_NATIONAL_WEEKS = [16, 17, 18, 19, 20];
 // 選手権（冬）: 11月に県予選4ラウンド、1月に全国5ラウンド。
 export const WC_QUALIFIER_WEEKS = [27, 28, 29, 30];
 export const WC_NATIONAL_WEEKS = [36, 37, 38, 39, 40];
+
+// T-12: 組み合わせ抽選が起きる週。県予選は初戦の2週前、全国大会は県予選の決勝が
+// 終わった直後の週（＝全国大会の初戦よりずっと前）。実際の抽選イベントは、この週に
+// 達した時点でその季まだ抽選していなければ（bracket.drawn===false）行う
+// （resolveWeekOutcome/drawPendingCup、lib/game.ts・本ファイル）。
+export const IH_QUALIFIER_DRAW_WEEK = IH_QUALIFIER_WEEKS[0] - 2;
+export const IH_NATIONAL_DRAW_WEEK = IH_QUALIFIER_WEEKS[IH_QUALIFIER_WEEKS.length - 1] + 1;
+export const WC_QUALIFIER_DRAW_WEEK = WC_QUALIFIER_WEEKS[0] - 2;
+export const WC_NATIONAL_DRAW_WEEK = WC_QUALIFIER_WEEKS[WC_QUALIFIER_WEEKS.length - 1] + 1;
+/** 週番号(0〜47)を「◯月第◯週」のような大まかな表示に変換する（新入部員の入学が4月という
+ *  想定に合わせ、week0〜3を4月・以後4週ごとに1ヶ月進める簡易換算。既存の週別コメント
+ *  「6月に県予選」等ともおおむね一致する）。UI表示（抽選前バナー等）専用の飾り。 */
+export function weekCalendarLabel(week: number): string {
+  const monthIndex = (Math.floor(week / 4) + 3) % 12;
+  const weekOfMonth = (week % 4) + 1;
+  return `${monthIndex + 1}月第${weekOfMonth}週`;
+}
+/** 抽選が行われる週番号（UI側が「抽選前」バナーの日付表示に使う）。 */
+export function cupDrawWeek(cupKey: 'ih' | 'wc', national: boolean): number {
+  if (cupKey === 'ih') return national ? IH_NATIONAL_DRAW_WEEK : IH_QUALIFIER_DRAW_WEEK;
+  return national ? WC_NATIONAL_DRAW_WEEK : WC_QUALIFIER_DRAW_WEEK;
+}
 
 export type CompFixtureKind =
   | 'friendly'
@@ -1120,14 +1181,14 @@ function createCupBracket(s: State, district: District, cupKey: 'ih' | 'wc', nat
   teams[0] = national
     ? { ...teams[0], id: `${cupKey}-representative`, name: '代表未定' }
     : { ...teams[0], id: 'self', name: s.school, strength: Math.round([...s.players].sort((a, b) => overall(b) - overall(a)).slice(0, 11).reduce((sum, p) => sum + overall(p), 0) / 11) };
+  // T-12: 出場校は季の開始時に決めるが、組み合わせ（rounds[0]）は抽選まで空にしておく
+  // （drawn:false）。抽選は performDraw() が行う。
   const rounds: CupMatch[][] = [];
   for (let r = 0; r < (national ? 5 : 4); r++) {
     const matches = count >> (r + 1);
-    rounds.push(Array.from({ length: matches }, (_, i) =>
-      r === 0 ? emptyCupMatch(teams[i * 2].id, teams[i * 2 + 1].id) : emptyCupMatch(),
-    ));
+    rounds.push(Array.from({ length: matches }, () => emptyCupMatch()));
   }
-  return { teams, rounds, completedRounds: 0 };
+  return { teams, rounds, completedRounds: 0, drawn: false };
 }
 
 function cupTeam(bracket: CupBracket, id: string | null): CupTeam | undefined {
@@ -1147,7 +1208,129 @@ function prepareNationalRepresentative(s: State, cup: CupState, cupKey: 'ih' | '
   national.teams[0] = winnerId === 'self'
     ? { ...placeholder, id: 'self', name: s.school, strength: strengthOf(s) }
     : { ...placeholder, name: winner.name, strength: winner.strength, style: winner.style, formation: teamFormation(winner) };
-  national.rounds[0][0].homeId = national.teams[0].id;
+  // T-12: rounds[0] の組み合わせは抽選（performDraw）が後で決めるため、ここでは
+  // teams[0] の中身（代表校の正体）を更新するだけでよい（以前はここで
+  // rounds[0][0].homeId を直接埋めていたが、抽選前提の構造では意味を持たない）。
+}
+
+// ---------------------------------------------------------------------------
+// T-12: 組み合わせ抽選
+// ---------------------------------------------------------------------------
+export type CupDrawResult = {
+  cupKey: 'ih' | 'wc';
+  national: boolean;
+  /** 自校がシード（別の山）に入ったか。紙芝居で知らせる。 */
+  seeded: boolean;
+  opponentName: string;
+  opponentStrength: number;
+  opponentFormation: Formation;
+  opponentStyle: Tactic;
+  /** 表示用ラベル（例:「インターハイ県予選」）。 */
+  label: string;
+};
+
+/** 前回大会（comp.history[0]、無ければ初年度でfalse）で自校がベスト4（県予選）／
+ *  ベスト8（全国）相当まで勝ち上がっていたか。シード選出の基準に使う。 */
+function selfHistoricalSeed(comp: CompState, cupKey: 'ih' | 'wc', national: boolean): boolean {
+  const h = comp.history[0];
+  if (!h) return false; // 初年度は評判・強さ（＝現時点のteams[].strength）だけで判定する
+  const SEED_ROUNDS_THRESHOLD = 2; // 県予選=準々決勝を突破(ベスト4)／全国=2回戦を突破(ベスト8)
+  const rounds = national
+    ? cupKey === 'ih' ? h.ihNationalRounds : h.wcNationalRounds
+    : cupKey === 'ih' ? h.ihQualifierRounds : h.wcQualifierRounds;
+  return (rounds ?? 0) >= SEED_ROUNDS_THRESHOLD;
+}
+
+/** シード校のID集合（strength上位。自校が前回大会で好成績なら強制的にシードへ）。
+ *  他校は季ごとに乱数生成される架空校で前季との同一性を持たないため、
+ *  「前回大会成績」による選出は自校にのみ適用し、他校は毎季のstrengthで代替する
+ *  （初年度の「評判・強さの上位」という仕様と実質的に同じ基準に揃うため、
+ *  毎季この方式で統一する）。 */
+// export: テストが「シードが実際に別の組へ分かれているか」を、strength の同点により
+// 実装と食い違う独自の並べ替えをせずに検証できるようにするため。
+export function computeSeedIds(bracket: CupBracket, seedCount: number, forceSelf: boolean): string[] {
+  const sorted = [...bracket.teams].sort(
+    (a, b) => b.strength - a.strength || strHash(a.id) - strHash(b.id),
+  );
+  const seeds = sorted.slice(0, seedCount).map((t) => t.id);
+  if (forceSelf && bracket.teams.some((t) => t.id === 'self') && !seeds.includes('self')) {
+    seeds[seeds.length - 1] = 'self';
+  }
+  return seeds;
+}
+
+/** 抽選本体: シード校をそれぞれ別の「組」（groupSize = 出場校数/シード数）に1校ずつ
+ *  決定的に配置し、残りは決定的にシャッフルして埋める。組のサイズはブラケットの構造上、
+ *  同じ組に入った学校同士でなければ準決勝（県予選・シード4）／準々決勝の手前
+ *  （全国・シード8）より前には対戦しない（＝「別の山に分ける」の実装）。 */
+function performDraw(
+  s: State,
+  comp: CompState,
+  cupKey: 'ih' | 'wc',
+  national: boolean,
+  bracket: CupBracket,
+): CupDrawResult | null {
+  const seedCount = national ? 8 : 4;
+  const forceSelf = selfHistoricalSeed(comp, cupKey, national);
+  const seedIds = computeSeedIds(bracket, seedCount, forceSelf);
+  const seedSet = new Set(seedIds);
+  const others = bracket.teams.map((t) => t.id).filter((id) => !seedSet.has(id));
+  const salt = strHash(cupKey) + (national ? 42000 : 41000);
+  const seedOrder = shuffledSeq(s.seed, s.season, salt + 1, seedIds.length).map((i) => seedIds[i]);
+  const otherOrder = shuffledSeq(s.seed, s.season, salt + 2, others.length).map((i) => others[i]);
+  const groupSize = bracket.teams.length / seedIds.length;
+  const slots: string[] = Array.from({ length: bracket.teams.length });
+  let otherCursor = 0;
+  for (let g = 0; g < seedIds.length; g++) {
+    const start = g * groupSize;
+    const seedSlot = start + Math.floor(hf(s.seed, s.season, salt, g, 3) * groupSize);
+    for (let i = 0; i < groupSize; i++) {
+      const idx = start + i;
+      slots[idx] = idx === seedSlot ? seedOrder[g] : otherOrder[otherCursor++];
+    }
+  }
+  const matches = bracket.rounds[0];
+  for (let i = 0; i < matches.length; i++) {
+    matches[i].homeId = slots[i * 2];
+    matches[i].awayId = slots[i * 2 + 1];
+  }
+  bracket.drawn = true;
+  const selfMatch = matches.find((m) => m.homeId === 'self' || m.awayId === 'self');
+  if (!selfMatch) return null; // 自校が出場していない大会（例: 全国大会に自校が未出場）は静かに済ませる
+  const opponentId = selfMatch.homeId === 'self' ? selfMatch.awayId : selfMatch.homeId;
+  const opponent = cupTeam(bracket, opponentId);
+  if (!opponent) return null;
+  return {
+    cupKey,
+    national,
+    seeded: seedSet.has('self'),
+    opponentName: opponent.name,
+    opponentStrength: opponent.strength,
+    opponentFormation: teamFormation(opponent),
+    opponentStyle: opponent.style,
+    label: `${cupKey === 'ih' ? 'インターハイ' : '選手権'}${national ? '全国大会' : '県予選'}`,
+  };
+}
+
+/** 今この週に抽選すべき大会があれば決定的に抽選を行い、自校が出場する場合だけ結果を返す
+ *  （呼び出し側 lib/game.ts はこれが非nullを返す間、週の進行をそこで止めて紙芝居を見せる）。
+ *  自校が出場しない大会（例: 全国大会に自校が未出場）の抽選は、この関数の中で静かに
+ *  済ませてから次を調べる（画面は止めない）。旧セーブの表（bracket.drawn===true）は
+ *  対象外になるため、進行中のシーズンは従来どおり続行し、次の大会から抽選される。 */
+export function drawPendingCup(s: State): CupDrawResult | null {
+  const comp = readCompetition(s);
+  const entries: ['ih' | 'wc', boolean, CupBracket | undefined, number][] = [
+    ['ih', false, comp.ih.qualifier, IH_QUALIFIER_DRAW_WEEK],
+    ['wc', false, comp.wc.qualifier, WC_QUALIFIER_DRAW_WEEK],
+    ['ih', true, comp.ih.national, IH_NATIONAL_DRAW_WEEK],
+    ['wc', true, comp.wc.national, WC_NATIONAL_DRAW_WEEK],
+  ];
+  for (const [cupKey, national, bracket, drawWeek] of entries) {
+    if (!bracket || bracket.drawn || s.week < drawWeek) continue;
+    const result = performDraw(s, comp, cupKey, national, bracket);
+    if (result) return result;
+  }
+  return null;
 }
 
 // T-2/T-6: quick (non-engine) simulations of matches between two teams whose stats we
@@ -1432,6 +1615,8 @@ export function resolveCompetitionMatch(s: State, m: ResolvableMatch): void {
   if (f.kind === 'ih_qualifier' || f.kind === 'wc_qualifier') {
     const cup = f.kind === 'ih_qualifier' ? comp.ih : comp.wc;
     recordSelfCupMatch(cup.qualifier, m);
+    // T-12: 翌シーズンの県予選シード選出（前回大会ベスト4=準々決勝突破）に使う。
+    if (m.won) cup.qualifierRoundsWon = Math.max(cup.qualifierRoundsWon ?? 0, f.round + 1);
     if (!m.won) {
       cup.alive = false;
       cup.best = `${f.label}敗退`;
@@ -1445,6 +1630,8 @@ export function resolveCompetitionMatch(s: State, m: ResolvableMatch): void {
   if (f.kind === 'ih_national' || f.kind === 'wc_national') {
     const cup = f.kind === 'ih_national' ? comp.ih : comp.wc;
     recordSelfCupMatch(cup.national, m);
+    // T-12: 翌シーズンの全国大会シード選出（前回大会ベスト8=2回戦突破）に使う。
+    if (m.won) cup.nationalRoundsWon = Math.max(cup.nationalRoundsWon ?? 0, f.round + 1);
     if (!m.won) {
       cup.alive = false;
       cup.best = `${f.label}敗退`;

@@ -233,7 +233,8 @@ void test('10シーズン相当を進行させても士気・疲労・信頼・�
       handleLife(s, { type: 'life', choiceId: cur.event.choices[idx].id });
     }
     if (s.event) s = act(s, { type: 'event', choice: s.week % 2 === 0 ? 'team' : 'individual' });
-    s = act(s, { type: 'train', training: pickTraining(s, s.week) });
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
+    if (!s.pending) s = act(s, { type: 'train', training: pickTraining(s, s.week) });
     if (s.pending) {
       s = act(s, { type: 'start' });
       while (!s.match!.done) s = act(s, { type: 'segment' });
@@ -302,7 +303,8 @@ void test('S1: 最初の8週以内に学校生活イベントが発生する（�
         triggeredWithin8Weeks = true;
       }
       if (s.event) s = act(s, { type: 'event', choice: 'team' });
-      s = act(s, { type: 'train', training: pickTraining(s, s.week) });
+      while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
+      if (!s.pending) s = act(s, { type: 'train', training: pickTraining(s, s.week) });
       if (s.pending) {
         s = act(s, { type: 'start' });
         while (!s.match!.done) s = act(s, { type: 'segment' });
@@ -333,7 +335,8 @@ void test('決定性：同じシード・同じ操作列なら同じイベント
       const cur = getCurrentLifeEvent(s);
       if (cur) handleLife(s, { type: 'life', choiceId: cur.event.choices[0].id });
       if (s.event) s = act(s, { type: 'event', choice: 'team' });
-      s = act(s, { type: 'train', training: pickTraining(s, i) });
+      while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
+      if (!s.pending) s = act(s, { type: 'train', training: pickTraining(s, i) });
       if (s.pending) {
         s = act(s, { type: 'start' });
         while (!s.match!.done) s = act(s, { type: 'segment' });

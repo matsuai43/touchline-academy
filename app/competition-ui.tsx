@@ -37,6 +37,8 @@ import {
   leagueNextFixture,
   promotionZoneActive,
   relegationZoneActive,
+  cupDrawWeek,
+  weekCalendarLabel,
   type District,
   type LeagueTier,
   type CupState,
@@ -588,7 +590,50 @@ const cupRoundLabels = {
   national: ['1回戦', '2回戦', '準々決勝', '準決勝', '決勝'],
 };
 
-function CupBracketView({ bracket, stage }: { bracket: CupBracket; stage: 'qualifier' | 'national' }) {
+/** T-12: 抽選前の出場校一覧（組み合わせはまだ無い）。 */
+function DrawPendingList({
+  bracket,
+  cupKey,
+  national,
+}: {
+  bracket: CupBracket;
+  cupKey: 'ih' | 'wc';
+  national: boolean;
+}) {
+  const week = cupDrawWeek(cupKey, national);
+  return (
+    <section
+      className="flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/10 p-3"
+      aria-label={`${national ? '全国大会' : '県予選'}・抽選前の出場校一覧`}
+    >
+      <p className="text-sm font-medium">
+        抽選前（{weekCalendarLabel(week)}に抽選）
+      </p>
+      <p className="text-xs text-muted-foreground">出場校（{bracket.teams.length}校）</p>
+      <ul className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:grid-cols-3">
+        {bracket.teams.map((team) => (
+          <li key={team.id} className={team.id === 'self' ? 'font-semibold' : ''}>
+            {team.name}
+            {team.id === 'self' ? '（自校）' : ''}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function CupBracketView({
+  bracket,
+  stage,
+  cupKey,
+}: {
+  bracket: CupBracket;
+  stage: 'qualifier' | 'national';
+  cupKey: 'ih' | 'wc';
+}) {
+  if (!bracket.drawn) {
+    return <DrawPendingList bracket={bracket} cupKey={cupKey} national={stage === 'national'} />;
+  }
   const teams = new Map(bracket.teams.map((team) => [team.id, team]));
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A focused scroll region supports keyboard scrolling on narrow screens.
@@ -617,14 +662,14 @@ function CupBracketView({ bracket, stage }: { bracket: CupBracket; stage: 'quali
   );
 }
 
-function CupTournament({ name, cup }: { name: string; cup: CupState }) {
+function CupTournament({ name, cup, cupKey }: { name: string; cup: CupState; cupKey: 'ih' | 'wc' }) {
   if (!cup.qualifier || !cup.national) return null;
   return (
     <details className="rounded-xl border border-border/60 bg-card p-3">
       <summary className="cursor-pointer text-sm font-semibold">{name}のトーナメント表</summary>
       <div className="mt-3 flex flex-col gap-4">
-        <div><h3 className="mb-2 text-sm font-semibold">県予選</h3><CupBracketView bracket={cup.qualifier} stage="qualifier" /></div>
-        <div><h3 className="mb-2 text-sm font-semibold">全国大会</h3><CupBracketView bracket={cup.national} stage="national" /></div>
+        <div><h3 className="mb-2 text-sm font-semibold">県予選</h3><CupBracketView bracket={cup.qualifier} stage="qualifier" cupKey={cupKey} /></div>
+        <div><h3 className="mb-2 text-sm font-semibold">全国大会</h3><CupBracketView bracket={cup.national} stage="national" cupKey={cupKey} /></div>
       </div>
     </details>
   );
@@ -669,8 +714,8 @@ export function CompetitionPanel({
         </div>
       </section>
 
-      <CupTournament name="インターハイ" cup={comp.ih} />
-      <CupTournament name="選手権" cup={comp.wc} />
+      <CupTournament name="インターハイ" cup={comp.ih} cupKey="ih" />
+      <CupTournament name="選手権" cup={comp.wc} cupKey="wc" />
 
       <LeagueSection state={state} />
 

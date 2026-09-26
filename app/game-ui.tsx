@@ -697,6 +697,59 @@ export default function Game() {
                       </section>
                     );
                   })()}
+                {s.cupDraw &&
+                  (() => {
+                    // T-12: 大会直前の組み合わせ抽選。クラブイベントと同じ EventStills
+                    // （情景→場面→結果の紙芝居）で見せる。選択肢は無く「結果を見る」の
+                    // 1つだけ（実際の抽選は drawPendingCup が既に決定的に済ませており、
+                    // ここでは結果を見せて閉じるだけ）。
+                    const draw = s.cupDraw;
+                    const scenePanels = getEventScenePanels(
+                      draw.national ? 'cup_draw_national' : 'cup_draw_qualifier',
+                    );
+                    const repPlayer = focus ?? s.players[0] ?? null;
+                    if (!scenePanels || !repPlayer) return null;
+                    const cupName = draw.cupKey === 'ih' ? 'インターハイ' : '選手権';
+                    const stageLabel = draw.national ? '全国大会' : '県予選';
+                    const choices: EventStillsChoice[] = [{ id: 'reveal', label: '結果を見る' }];
+                    const resolveResult = (): EventStillsResult => ({
+                      text: `初戦の相手は${draw.opponentName}（総合力${draw.opponentStrength}・${tactics[draw.opponentStyle].name}・${draw.opponentFormation}）に決まった。`,
+                      effects: [
+                        ...(draw.seeded
+                          ? [{ label: '自校はシード校です', positive: true }]
+                          : []),
+                        { label: `相手: ${draw.opponentName}`, positive: true },
+                      ],
+                    });
+                    return (
+                      <section className="event-panel-stills" aria-label="組み合わせ抽選">
+                        <EventStills
+                          key={`cupdraw-${draw.cupKey}-${draw.national}-${s.week}-${s.season}`}
+                          scenePanels={scenePanels}
+                          playerName={repPlayer.name}
+                          portraitIndex={repPlayer.identity.portrait}
+                          kicker={
+                            <>
+                              <Trophy size={14} /> 組み合わせ抽選
+                            </>
+                          }
+                          heading={`${cupName}${stageLabel}・組み合わせ抽選`}
+                          metaLine={
+                            draw.seeded
+                              ? '前回大会の成績により、自校はシード校です。'
+                              : `${cupName}${stageLabel}の組み合わせ抽選が行われます。`
+                          }
+                          momentNarration={`${cupName}${stageLabel}の抽選会。主将がくじを引く。`}
+                          choices={choices}
+                          resolveResult={resolveResult}
+                          onCommit={() => {
+                            playSfx('click');
+                            run({ type: 'cupDrawAck' });
+                          }}
+                        />
+                      </section>
+                    );
+                  })()}
                 <LifeEventPanel
                   state={s}
                   onChoose={(choiceId) => {

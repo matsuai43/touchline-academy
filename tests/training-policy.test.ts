@@ -14,8 +14,9 @@ function resolveLife(s: State) {
 // 1日ぶん練習を進める（試合・イベントが挟まっても先頭の選択肢で流す）。
 function day(s: State, t: Training = 'balance') {
   if (s.event) s = act(s, { type: 'event', choice: 'team' });
+  while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
   s = resolveLife(s);
-  s = act(s, { type: 'train', training: t });
+  if (!s.pending) s = act(s, { type: 'train', training: t });
   if (s.pending) {
     s = act(s, { type: 'start' });
     while (!s.match!.done) s = act(s, { type: 'segment' });

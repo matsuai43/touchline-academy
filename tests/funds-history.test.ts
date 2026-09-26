@@ -11,8 +11,9 @@ function resolveLife(s: State) {
 }
 function step(s: State, t: Training = 'balance'): State {
   if (s.event) s = act(s, { type: 'event', choice: 'team' });
+  while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
   s = resolveLife(s);
-  s = act(s, { type: 'train', training: t });
+  if (!s.pending) s = act(s, { type: 'train', training: t });
   if (s.pending) {
     s = act(s, { type: 'start' });
     while (!s.match!.done) s = act(s, { type: 'segment' });
@@ -70,8 +71,9 @@ void test('T4.2: a match win is recorded with the correct reason (friendly vs of
   let guard = 0;
   while (!s.pending && guard++ < 30) {
     if (s.event) s = act(s, { type: 'event', choice: 'team' });
+    while (s.cupDraw) s = act(s, { type: 'cupDrawAck' });
     s = resolveLife(s);
-    s = act(s, { type: 'train', training: 'balance' });
+    if (!s.pending) s = act(s, { type: 'train', training: 'balance' });
   }
   assert.ok(s.pending);
   const kind = s.pending!.kind;

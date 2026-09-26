@@ -46,6 +46,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ArrowRight, ArrowRightLeft, Flag, Shield, X } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -260,6 +261,11 @@ function moodLabelFor(s: State, id: number): string | null {
 // 予約は個別に取り消せる。最後に「◯人の交代を確定」で、予約した組を順番に既存の
 // 'swap' アクションとして発行する（1件でも失敗したら、そこで止めて残りは予約に残す）。
 // ---------------------------------------------------------------------------
+// T-14: 試合中の「映像／声かけ／戦術／交代」は、以前はアンカーリンクで同じページ内を
+// スクロールする作りだったため、4区画すべてが常に描画され縦に長くなっていた。ここでは
+// 選択した区画だけを表示するタブに変える（交代の実際の選択はこれまでどおりダイアログ）。
+type MatchSection = 'movie' | 'voice' | 'tactics' | 'bench';
+
 type PendingReservation = { outgoing: number; incoming: number; index: number };
 function SubstitutionDialog({
   s,
@@ -666,6 +672,7 @@ export function MatchView({
   onPlayer: (p: Player) => void;
 }) {
   const m = s.match!;
+  const [matchSection, setMatchSection] = useState<MatchSection>('movie');
   const [subOpen, setSubOpen] = useState(false);
   const [subInitial, setSubInitial] = useState<{
     outgoing: number | null;
@@ -741,32 +748,45 @@ export function MatchView({
           </span>
         </div>
       </div>
-          <div className="match-actionbar">
-            <nav aria-label="試合中の移動">
-              <a href="#match-movie">映像</a>
-              <a href="#match-voice">声かけ</a>
-              <a href="#match-tactics">戦術</a>
-              <a href="#match-bench">交代</a>
-            </nav>{' '}
-            <button
-              className="primary match-advance"
-              onClick={() => {
-                playSfx('click');
-                const next = run({ type: 'segment' });
-                if (next)
-                  requestAnimationFrame(() =>
-                    document.getElementById('match-movie')?.scrollIntoView({ block: 'start' }),
-                  );
-              }}
-            >
-              {m.minute === 45 ? '後半の15分を進める' : m.minute === 90 ? '延長前半を進める' : m.minute === 105 ? '延長後半を進める' : '次の15分を進める'}{' '}
-              <ArrowRight size={19} />
-            </button>
-          </div>
-          <MatchCinema key={`cinema-${m.minute}`} s={s} />
-          <VoicePanel s={s} run={run} />
-          <div className="match-grid">
-            <section className="panel">
+          <Tabs
+            value={matchSection}
+            onValueChange={(v) => setMatchSection(v as MatchSection)}
+            className="match-section-tabswrap"
+          >
+            <div className="match-actionbar" id="match-live-top">
+              <TabsList
+                className="match-section-tabs"
+                variant="line"
+                aria-label="試合中の区画"
+              >
+                <TabsTrigger value="movie">映像</TabsTrigger>
+                <TabsTrigger value="voice">声かけ</TabsTrigger>
+                <TabsTrigger value="tactics">戦術</TabsTrigger>
+                <TabsTrigger value="bench">交代</TabsTrigger>
+              </TabsList>
+              <button
+                className="primary match-advance"
+                onClick={() => {
+                  playSfx('click');
+                  const next = run({ type: 'segment' });
+                  if (next) {
+                    // T-14: 進めた直後は必ず映像の区画に戻し、新しい実況が見える位置まで
+                    // スクロールする（以前は常設だった #match-movie への自動スクロールと
+                    // 同じ意図）。
+                    setMatchSection('movie');
+                    requestAnimationFrame(() =>
+                      document
+                        .getElementById('match-live-top')
+                        ?.scrollIntoView({ block: 'start' }),
+                    );
+                  }
+                }}
+              >
+                {m.minute === 45 ? '後半の15分を進める' : m.minute === 90 ? '延長前半を進める' : m.minute === 105 ? '延長後半を進める' : '次の15分を進める'}{' '}
+                <ArrowRight size={19} />
+              </button>
+            </div>
+            <section className="panel pitch-panel">
               <div className="section-head">
                 <h2>タッチラインからの指示</h2>
                 <span className="formation-label">{s.formation}</span>
@@ -783,62 +803,18 @@ export function MatchView({
                 ))}
               </div>
             </section>
-            <section className="panel command-panel" id="match-tactics">
-              <span className="eyebrow">MANAGER&apos;S DECISION</span>
-              <h2>{m.minute === 45 ? '後半のプランを。' : '次の15分を、どう戦う？'}</h2>
-              <p className="muted">
-                相手：{tactics[m.fixture.style].name}（{fixtureFormation(m.fixture)}） / 総合力 {m.fixture.strength}
-              </p>
-              {/* この一帯は m.done の間はそもそも描画されない（上の早期returnで
-                  MatchResult に置き換わる）ため、disabled={m.done} のような
-                  常にfalseの死んだ条件は、DADSの方針どおりそもそも付けない。 */}
-              <RadioGroup
-                className="tactic-grid"
-                aria-label="試合の戦術"
-                value={m.tactic}
-                onValueChange={(v) => run({ type: 'tactic', tactic: v as Tactic })}
-              >
-                {(Object.keys(tactics) as Tactic[]).map((key) => (
-                  <label
-                    key={key}
-                    className={`tactic-card ${m.tactic === key ? 'selected' : ''}`}
-                  >
-                    <RadioGroupItem value={key} />
-                    <div>
-                      <b>{tactics[key].name}</b>
-                      <small>{tactics[key].desc}</small>
-                    </div>
-                  </label>
-                ))}
-              </RadioGroup>
-              <h3>攻守の意識</h3>
-              <Choices
-                label="攻守の意識"
-                value={m.mentality}
-                onChange={(v) =>
-                  run({
-                    type: 'mentality',
-                    mentality: v as 'safe' | 'normal' | 'attack',
-                  })
-                }
-                items={[
-                  { value: 'safe', label: '守備重視' },
-                  { value: 'normal', label: '標準' },
-                  { value: 'attack', label: '攻撃重視' },
-                ]}
-              />
-              <MatchCommands s={s} run={run} />
-              <div className="bench-head" id="match-bench">
+            {/* T-14: 交代の起点（件数表示・「交代する選手を選ぶ」）は、既存のPlaywright
+                テストや実プレイの導線が「試合画面を開いたらすぐ操作できる」ことを前提に
+                しているため、区画切り替えの対象からは外し、常に見える帯として残す。
+                区画切り替えで隠すのは「ベンチ一覧（個別に押して選ぶ簡易版）」のみ。
+                交代の実際の選択はこれまでどおりダイアログで行う。 */}
+            <section className="panel bench-quickbar">
+              <div className="bench-head">
                 <h3>交代</h3>
                 <span className="subs-counter">
                   交代 {m.subs} / {MATCH_MAX_SUBS}
                 </span>
               </div>
-              {/* 交代する選手を選ぶ、は「次の15分を進める」と同じ画面に同時に出る
-                  ため、DADSの「塗り(Primary)は1画面1つ」に合わせて枠線(Secondary)に
-                  格下げした。交代枠を使い切った後もダイアログ自体は開け、枠を使い切った
-                  旨の案内とcapReachedによる見た目のトーン落としで示す（disabled は
-                  使わない）。 */}
               <button
                 type="button"
                 className="secondary sub-open-btn"
@@ -847,42 +823,106 @@ export function MatchView({
               >
                 <ArrowRightLeft size={17} /> 交代する選手を選ぶ
               </button>
-              {/* S3: 交代できるのはベンチ入り(Aチームの先発以外9人)の選手のみ。
-                  Bチームや、Aチームでもベンチ外の選手は一覧にすら出さない。 */}
-              <div className="bench">
-                {s.players
-                  .filter((p) => isBenchPlayer(s, p.id))
-                  .map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      aria-disabled={
-                        m.used.includes(p.id) || m.subs >= MATCH_MAX_SUBS || !!p.injury
-                      }
-                      onClick={() => openSub({ incoming: p.id })}
-                    >
-                      <Portrait
-                        index={p.identity.portrait}
-                        name={p.name}
-                        size="tiny"
-                      />
-                      <span className={`position pos-${p.pos}`}>{p.pos}</span>
-                      <b>{p.name}</b>
-                      <small>
-                        {m.used.includes(p.id)
-                          ? '交代済'
-                          : p.injury
-                            ? '調整中'
-                            : `疲労 ${Math.round(p.fatigue)}`}
-                      </small>
-                    </button>
-                  ))}
-              </div>
-              <small className="muted">
-                采配は次の15分に反映。途中でも自動保存されます。
-              </small>
             </section>
-          </div>
+            <TabsContent value="movie">
+              <MatchCinema key={`cinema-${m.minute}`} s={s} />
+            </TabsContent>
+            <TabsContent value="voice">
+              <VoicePanel s={s} run={run} />
+            </TabsContent>
+            <TabsContent value="tactics">
+              <section className="panel command-panel">
+                <span className="eyebrow">MANAGER&apos;S DECISION</span>
+                <h2>{m.minute === 45 ? '後半のプランを。' : '次の15分を、どう戦う？'}</h2>
+                <p className="muted">
+                  相手：{tactics[m.fixture.style].name}（{fixtureFormation(m.fixture)}） / 総合力 {m.fixture.strength}
+                </p>
+                {/* この一帯は m.done の間はそもそも描画されない（上の早期returnで
+                    MatchResult に置き換わる）ため、disabled={m.done} のような
+                    常にfalseの死んだ条件は、DADSの方針どおりそもそも付けない。 */}
+                <RadioGroup
+                  className="tactic-grid"
+                  aria-label="試合の戦術"
+                  value={m.tactic}
+                  onValueChange={(v) => run({ type: 'tactic', tactic: v as Tactic })}
+                >
+                  {(Object.keys(tactics) as Tactic[]).map((key) => (
+                    <label
+                      key={key}
+                      className={`tactic-card ${m.tactic === key ? 'selected' : ''}`}
+                    >
+                      <RadioGroupItem value={key} />
+                      <div>
+                        <b>{tactics[key].name}</b>
+                        <small>{tactics[key].desc}</small>
+                      </div>
+                    </label>
+                  ))}
+                </RadioGroup>
+                <h3>攻守の意識</h3>
+                <Choices
+                  label="攻守の意識"
+                  value={m.mentality}
+                  onChange={(v) =>
+                    run({
+                      type: 'mentality',
+                      mentality: v as 'safe' | 'normal' | 'attack',
+                    })
+                  }
+                  items={[
+                    { value: 'safe', label: '守備重視' },
+                    { value: 'normal', label: '標準' },
+                    { value: 'attack', label: '攻撃重視' },
+                  ]}
+                />
+                <MatchCommands s={s} run={run} />
+                <small className="muted">
+                  采配は次の15分に反映。途中でも自動保存されます。
+                </small>
+              </section>
+            </TabsContent>
+            <TabsContent value="bench">
+              <section className="panel command-panel">
+                <p className="muted instruction">
+                  ベンチの選手を押すと、その選手を投入する交代ダイアログを開きます。
+                </p>
+                {/* S3: 交代できるのはベンチ入り(Aチームの先発以外9人)の選手のみ。
+                    Bチームや、Aチームでもベンチ外の選手は一覧にすら出さない。 */}
+                <div className="bench">
+                  {s.players
+                    .filter((p) => isBenchPlayer(s, p.id))
+                    .map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        aria-disabled={
+                          m.used.includes(p.id) || m.subs >= MATCH_MAX_SUBS || !!p.injury
+                        }
+                        onClick={() => openSub({ incoming: p.id })}
+                      >
+                        <Portrait
+                          index={p.identity.portrait}
+                          name={p.name}
+                          size="tiny"
+                        />
+                        <span className={`position pos-${p.pos}`}>{p.pos}</span>
+                        <b>{p.name}</b>
+                        <small>
+                          {m.used.includes(p.id)
+                            ? '交代済'
+                            : p.injury
+                              ? '調整中'
+                              : `疲労 ${Math.round(p.fatigue)}`}
+                        </small>
+                      </button>
+                    ))}
+                </div>
+                <small className="muted">
+                  采配は次の15分に反映。途中でも自動保存されます。
+                </small>
+              </section>
+            </TabsContent>
+          </Tabs>
           <SubstitutionDialog
             key={`sub-${subToken}`}
             s={s}

@@ -41,7 +41,7 @@ async function trainUntilMatchIsPending(page: Page) {
 test('desktop: train, lineup, match, save resume, export and dialogs',async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/');await page.getByRole('button',{name:'この学校で始める'}).click();await expect(page.getByRole('heading',{name:'今日の練習',exact:true})).toBeVisible();await page.screenshot({path:'test-results/desktop.png',fullPage:true});
  await trainUntilMatchIsPending(page);await expect(page.getByRole('button',{name:'試合へ進む'})).toBeVisible();await page.getByRole('button',{name:'試合へ進む'}).click();for(let i=0;i<3;i++)await page.getByRole('button',{name:'次の15分を進める'}).click();await expect(page.getByText('HALF TIME',{exact:true})).toBeVisible();await page.reload();await expect(page.getByText('HALF TIME',{exact:true})).toBeVisible();await page.screenshot({path:'test-results/match.png',fullPage:true});await page.getByRole('button',{name:'後半の15分を進める'}).click();for(let i=0;i<2;i++)await page.getByRole('button',{name:'次の15分を進める'}).click();await expect(page.getByText('MATCH RESULT',{exact:true})).toBeVisible();await page.getByRole('button',{name:'部に戻る'}).click();
- await page.getByRole('tab',{name:'選手・編成'}).click();await page.getByRole('button',{name:'おすすめ編成'}).click();await expect(page.getByRole('heading',{name:/部員一覧/})).toBeVisible();await page.getByRole('button',{name:'保存・設定'}).click();const download=page.waitForEvent('download');await page.getByRole('button',{name:'セーブを書き出す'}).click();expect((await download).suggestedFilename()).toContain('touchline-season');await page.keyboard.press('Escape');await page.getByRole('button',{name:'遊び方',exact:true}).click();await expect(page.getByRole('heading',{name:'監督の手引き'})).toBeVisible();expect(errors).toEqual([]);
+ await page.getByRole('tab',{name:'選手・編成'}).click();await page.getByRole('button',{name:'おすすめ編成'}).click();await page.getByRole('tab',{name:'部員一覧',exact:true}).click();await expect(page.getByRole('heading',{name:/部員一覧/})).toBeVisible();await page.getByRole('button',{name:'保存・設定'}).click();const download=page.waitForEvent('download');await page.getByRole('button',{name:'セーブを書き出す'}).click();expect((await download).suggestedFilename()).toContain('touchline-season');await page.keyboard.press('Escape');await page.getByRole('button',{name:'遊び方',exact:true}).click();await expect(page.getByRole('heading',{name:'監督の手引き'})).toBeVisible();expect(errors).toEqual([]);
 });
 test('mobile: main journey fits viewport',async({page})=>{await page.setViewportSize({width:390,height:844});await page.goto('/');await page.getByRole('button',{name:'この学校で始める'}).click();await page.getByRole('radio',{name:/休養・ケア/}).check();await page.getByRole('button',{name:/で1日進める/}).click();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:'test-results/mobile.png',fullPage:true});});
 test('mobile: both cup brackets show rival results inside horizontally scrollable tables',async({page})=>{
@@ -55,6 +55,7 @@ test('mobile: both cup brackets show rival results inside horizontally scrollabl
  await page.addInitScript((value)=>localStorage.setItem('touchline-academy-v1',JSON.stringify(value)),s);
  await page.setViewportSize({width:375,height:812});await page.goto('/');
  await page.getByRole('tab',{name:'大会・日程'}).click();
+ await page.getByRole('tab',{name:'トーナメント',exact:true}).click();
  await page.getByText('インターハイのトーナメント表').click();
  const prefecture=page.getByRole('region',{name:'県予選トーナメント表（横にスクロールできます）'});
  const national=page.getByRole('region',{name:'全国大会トーナメント表（横にスクロールできます）'});
@@ -68,6 +69,7 @@ test('mobile: before the qualifier draw, the tournament tab shows the entrant li
  // 見え、対戦表（1回戦などの見出し）はまだ出ない。
  await page.setViewportSize({width:375,height:812});await page.goto('/');await page.getByRole('button',{name:'この学校で始める'}).click();
  await page.getByRole('tab',{name:'大会・日程'}).click();
+ await page.getByRole('tab',{name:'トーナメント',exact:true}).click();
  await page.getByText('インターハイのトーナメント表').click();
  await expect(page.getByText(/抽選前/).first()).toBeVisible();
  await expect(page.getByText('出場校').first()).toBeVisible();
@@ -76,7 +78,12 @@ test('mobile: before the qualifier draw, the tournament tab shows the entrant li
 test('player dialog and substitution dialog always release the page; substitutions cap at 5',async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));const overlay=page.locator('[data-slot="dialog-overlay"]');
  await page.goto('/');await page.getByRole('button',{name:'この学校で始める'}).click();
+ // T-13: クラブハウスは「今週の練習」「チームの状況」「部活ノート」のサブタブに分けたため、
+ // スターティングXIのピッチ図は「チームの状況」に切り替えてから見える。
+ await page.getByRole('tab',{name:'チームの状況',exact:true}).click();
  await page.locator('.pitch-player').first().click();await expect(page.getByText('PLAYER PROFILE',{exact:false})).toBeVisible();await page.keyboard.press('Escape');await expect(overlay).toHaveCount(0);
+ // trainUntilMatchIsPending は「今週の練習」サブタブの「試合日まで進める」を使う。
+ await page.getByRole('tab',{name:'今週の練習',exact:true}).click();
  await trainUntilMatchIsPending(page);
  await page.getByRole('button',{name:'試合へ進む'}).click();
  // 交代フロー: 「交代する選手を選ぶ」→ 下げる選手（ピッチ）→ 入れる選手（ベンチ）→ 予約に追加 → まとめて確定。

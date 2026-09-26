@@ -1428,3 +1428,19 @@ export function handleSquad(s: State, a: SquadAction): boolean {
   ps.teamManual = true;
   return true;
 }
+
+// ユーザー要望（2026-09-26）: 育成重視の編成は習熟度D（50）未満を起用しないが、新入生の顔ぶれ次第で
+// その年だけ特定の枠にD以上の候補がAチームにいないことがある（6シーズンの点検で約0.8%）。
+// 戦術ボードで知らせるため、現在のフォーメーションで「D以上の候補がAチームにいない枠」を返す。
+// 同じ詳細ポジションが複数ある布陣（CB×2など）は、必要な人数に対して候補が足りない場合に返す。
+export function thinSlots(s: State, formation: Formation, minProf = 50): DetailPos[] {
+  const teamA = s.players.filter((p) => s.v3.squad.players[p.id]?.team === 'A' && !p.injury);
+  const need = new Map<DetailPos, number>();
+  for (const slot of formationSlots(formation)) need.set(slot, (need.get(slot) ?? 0) + 1);
+  const thin: DetailPos[] = [];
+  for (const [slot, n] of need) {
+    const have = teamA.filter((p) => (s.v3.squad.players[p.id]?.prof[slot] ?? 0) >= minProf).length;
+    if (have < n) thin.push(slot);
+  }
+  return thin;
+}

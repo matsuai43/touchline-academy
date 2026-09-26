@@ -90,26 +90,35 @@ export function PrefectureSelectPanel({
           現在: {districtById(current).name}（3年ごとに選び直せます）
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-        {districts.map((d) => (
-          <button
-            key={d.id}
-            type="button"
-            onClick={() => onChoosePrefecture(d.id)}
-            aria-pressed={d.id === current}
-            className={
-              'flex min-h-11 flex-col items-start gap-1 rounded-lg border px-3 py-2 text-left transition-colors ' +
-              (d.id === current
-                ? 'border-primary/60 bg-primary/10'
-                : 'border-border/60 bg-muted/20 hover:bg-muted/50 hover:border-border')
-            }
-          >
-            <span className="text-sm font-medium leading-tight">{d.name}</span>
-            <Stars count={d.stars} />
-            <span className="text-[0.7rem] text-muted-foreground">参加校目安 {d.schools}校</span>
-          </button>
-        ))}
-      </div>
+      {/* T-13: 大会・日程タブを「リーグ順位」サブタブに独立させたところ、47都道府県ぶんの
+          選択肢がこのサブタブの縦の長さの大半を占めてしまっていた。滅多に使わない操作
+          （3年に一度）なので、既存の「週間メニューを編集」等と同じ <details> に収め、
+          既定では畳んでおく（一覧性そのものは開けば変わらない）。 */}
+      <details className="prefecture-picker">
+        <summary className="text-sm font-medium text-foreground cursor-pointer">
+          都道府県を選ぶ（{districts.length}件）
+        </summary>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+          {districts.map((d) => (
+            <button
+              key={d.id}
+              type="button"
+              onClick={() => onChoosePrefecture(d.id)}
+              aria-pressed={d.id === current}
+              className={
+                'flex min-h-11 flex-col items-start gap-1 rounded-lg border px-3 py-2 text-left transition-colors ' +
+                (d.id === current
+                  ? 'border-primary/60 bg-primary/10'
+                  : 'border-border/60 bg-muted/20 hover:bg-muted/50 hover:border-border')
+              }
+            >
+              <span className="text-sm font-medium leading-tight">{d.name}</span>
+              <Stars count={d.stars} />
+              <span className="text-[0.7rem] text-muted-foreground">参加校目安 {d.schools}校</span>
+            </button>
+          ))}
+        </div>
+      </details>
     </section>
   );
 }
@@ -676,10 +685,11 @@ function CupTournament({ name, cup, cupKey }: { name: string; cup: CupState; cup
 }
 
 /**
- * 大会・リーグの現在状況（赴任地区、U18リーグのA/B階層と成績、インターハイ・選手権の進捗、
- * 直近の昇格・降格履歴）をまとめて表示するパネル。
+ * T-13: 大会・日程タブが縦に長くなっていたため、呼び出し側（app/game-ui.tsx）で
+ * 「リーグ順位」「トーナメント」のサブタブに分けられるよう、中身を3つの部品に割った。
+ * view を指定しなければ従来どおり全部まとめて表示する（既存の呼び出しとの後方互換）。
  */
-export function CompetitionPanel({
+export function CompetitionStatusSection({
   state,
   onChoosePrefecture,
   className,
@@ -714,9 +724,6 @@ export function CompetitionPanel({
         </div>
       </section>
 
-      <CupTournament name="インターハイ" cup={comp.ih} cupKey="ih" />
-      <CupTournament name="選手権" cup={comp.wc} cupKey="wc" />
-
       <LeagueSection state={state} />
 
       {comp.history.length > 0 && (
@@ -739,6 +746,38 @@ export function CompetitionPanel({
           </ul>
         </section>
       )}
+    </div>
+  );
+}
+
+/** T-13: トーナメント表だけをまとめた部品（大会・日程タブの「トーナメント」サブタブ用）。 */
+export function CompetitionTournamentSection({ state, className }: { state: State; className?: string }) {
+  const comp = readCompetition(state);
+  return (
+    <div className={'flex flex-col gap-3 ' + (className ?? '')}>
+      <CupTournament name="インターハイ" cup={comp.ih} cupKey="ih" />
+      <CupTournament name="選手権" cup={comp.wc} cupKey="wc" />
+    </div>
+  );
+}
+
+/**
+ * 大会・リーグの現在状況（赴任地区、U18リーグのA/B階層と成績、インターハイ・選手権の進捗、
+ * 直近の昇格・降格履歴）をまとめて表示するパネル。後方互換のため残す（サブタブ分割前の全部入り）。
+ */
+export function CompetitionPanel({
+  state,
+  onChoosePrefecture,
+  className,
+}: {
+  state: State;
+  onChoosePrefecture: (districtId: string) => void;
+  className?: string;
+}) {
+  return (
+    <div className={'flex flex-col gap-3 ' + (className ?? '')}>
+      <CompetitionStatusSection state={state} onChoosePrefecture={onChoosePrefecture} />
+      <CompetitionTournamentSection state={state} />
     </div>
   );
 }

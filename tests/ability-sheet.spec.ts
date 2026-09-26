@@ -20,6 +20,7 @@ test('部員一覧の「能力シートを見る」は表内展開ではなく�
 }) => {
   await startFresh(page);
   await page.getByRole('tab', { name: '選手・編成', exact: true }).click();
+  await page.getByRole('tab', { name: '部員一覧', exact: true }).click();
 
   // 表の中に展開行が残っていないこと（bug 2 の直し方: ダイアログに一本化）。
   await expect(page.locator('.ability-sheet-row')).toHaveCount(0);
@@ -54,6 +55,7 @@ test('ポジション適性の「主ポジション」チップは文字色と�
 }) => {
   await startFresh(page);
   await page.getByRole('tab', { name: '選手・編成', exact: true }).click();
+  await page.getByRole('tab', { name: '部員一覧', exact: true }).click();
   await page.locator('button.ability-toggle').first().click();
 
   const chip = page.locator('.position-aptitude-cell.primary').first();

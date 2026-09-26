@@ -7,7 +7,7 @@ import {
   PotentialBadge,
 } from './development-ui';
 import { personalities } from '@/lib/development';
-import { formationSlots, detailInfo, isBenchPlayer, DETAIL_POS, basePos, type DetailPos } from '@/lib/squad';
+import { formationSlots, detailInfo, isBenchPlayer, DETAIL_POS, basePos, thinSlots, type DetailPos } from '@/lib/squad';
 import {
   SquadPanel,
   SquadProfile,
@@ -20,7 +20,7 @@ import { LifeEventPanel } from './life-ui';
 import { AudioSettingsPanel } from './audio-ui';
 import { playScene, playSfx, primeAudio } from '@/lib/audio';
 import { MatchView, Metric, Meter, Choices, Pitch } from './match-ui';
-import { CompetitionPanel } from './competition-ui';
+import { CompetitionStatusSection, CompetitionTournamentSection } from './competition-ui';
 import { readCompetition, competitionFixture } from '@/lib/competition';
 import { EventStills, type EventStillsChoice, type EventStillsResult } from './event-scenes';
 import { getEventScenePanels } from '@/lib/event-scenes';
@@ -45,6 +45,7 @@ import {
   Shield,
   Star,
   Target,
+  TriangleAlert,
   Trophy,
   Upload,
   Users,
@@ -124,9 +125,45 @@ const trainingIcons: Record<Training, typeof Dumbbell> = {
 function dailyFatigueDelta(key: Training): number {
   return key === 'rest' ? -15 : Math.round(training[key].fatigue / 6 - 3);
 }
+// T-13: 各メインタブの中身をサブタブ（セグメント切り替え）で分けるための共通部品。
+// Base UI の Tabs（components/ui/tabs.tsx）を使い回すことで role="tablist"／aria-selected／
+// キーボード操作（矢印キー）を自前実装せずに満たす。main-nav（メインタブ）とは見た目を
+// 小さめの「セグメント」風に分けるため、専用クラス .sub-tabs を付ける。
+function SubTabs<T extends string>({
+  value,
+  onChange,
+  items,
+  label,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  items: { value: T; label: string }[];
+  label: string;
+}) {
+  return (
+    <Tabs value={value} onValueChange={(v) => onChange(v as T)} className="sub-tabs-wrap">
+      <TabsList className="sub-tabs" variant="line" aria-label={label}>
+        {items.map((i) => (
+          <TabsTrigger key={i.value} value={i.value}>
+            {i.label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
+  );
+}
 export default function Game() {
   const [s, setS] = useState<State | null>(null),
     [tab, setTab] = useState('club'),
+    // T-13: 各メインタブが縦に長くなっていたため、サブタブ（セグメント切り替え）で分ける。
+    // スクロール位置記憶（scrollMemory）と同じく画面内だけの状態でよく、セーブには含めない。
+    // メインタブを行き来しても Game コンポーネント自体は再マウントしないので、この
+    // useState だけで「選んだサブタブを覚えておく」要件を満たせる。
+    [clubSection, setClubSection] = useState<'training' | 'status' | 'notes'>('training'),
+    [teamSection, setTeamSection] = useState<'board' | 'roster'>('board'),
+    [seasonSection, setSeasonSection] = useState<'schedule' | 'league' | 'tournament'>(
+      'schedule',
+    ),
     [plan, setPlan] = useState<Training>('balance'),
     [notice, setNotice] = useState(''),
     [saving, setSaving] = useState(''),
@@ -511,89 +548,52 @@ export default function Game() {
             <>
               <TabsContent value="club">
                 <ManagerNote s={s} />
-                <div className="overview-grid">
-                  <section className="club-hero">
-                    <div className="hero-squad">
-                      {s.players.slice(0, 3).map((p) => (
-                        <div key={p.id}>
-                          <Portrait
-                            index={p.identity.portrait}
-                            name={p.name}
-                            size="large"
-                          />
-                          <b>{p.name}</b>
-                          <small>
-                            {personalities[p.identity.personality].name}
-                          </small>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="hero-shade" />
-                    <div className="hero-content">
-                      <span className="pill">
-                        <span className="dot" />{' '}
-                        {cupsQualified
-                          ? '全国への挑戦'
-                          : cupsAlive
-                            ? '全国を目指す、新しい一週間'
-                            : '次の世代へ、つなぐ時間'}
-                      </span>
-                      <h2>
-                        {s.pending
-                          ? 'さあ、ピッチへ。'
-                          : s.week >= 44
-                            ? 'この仲間と、最後まで。'
-                            : '一人ひとりを育て、\n未来のチームへ。'}
-                      </h2>
-                      <p>
-                        {s.pending
-                          ? `${s.pending.label} / ${s.pending.opponent}`
-                          : '練習を決める。仲間を信じる。\nあなたの采配で、この部の未来を変えよう。'}
-                      </p>
-                      <div className="hero-bottom">
-                        <span>
-                          <Flag size={16} /> {s.best}
-                        </span>
-                        <span>部員 {s.players.length}名</span>
+                <section className="club-hero">
+                  <div className="hero-squad">
+                    {s.players.slice(0, 3).map((p) => (
+                      <div key={p.id}>
+                        <Portrait
+                          index={p.identity.portrait}
+                          name={p.name}
+                          size="large"
+                        />
+                        <b>{p.name}</b>
+                        <small>
+                          {personalities[p.identity.personality].name}
+                        </small>
                       </div>
-                    </div>
-                  </section>
-                  <section className="panel club-status">
-                    <div className="section-head">
-                      <h2>チームコンディション</h2>
-                      <ChartNoAxesCombined size={19} />
-                    </div>
-                    <div className="rating">
-                      <strong>{strength(s)}</strong>
-                      <div>
-                        <span>チーム総合力</span>
-                        <small>疲労・配置を反映</small>
-                      </div>
-                      <span className="rank">
-                        {s.reputation < 30
-                          ? '新鋭'
-                          : s.reputation < 60
-                            ? '注目校'
-                            : '強豪'}
-                      </span>
-                    </div>
-                    <Meter label="チーム連携" value={s.cohesion} />
-                    <Meter label="士気" value={s.morale} />
-                    <Meter
-                      label="平均疲労"
-                      value={fatigue}
-                      warn={fatigue > 55}
-                    />
-                    <div className="status-foot">
+                    ))}
+                  </div>
+                  <div className="hero-shade" />
+                  <div className="hero-content">
+                    <span className="pill">
+                      <span className="dot" />{' '}
+                      {cupsQualified
+                        ? '全国への挑戦'
+                        : cupsAlive
+                          ? '全国を目指す、新しい一週間'
+                          : '次の世代へ、つなぐ時間'}
+                    </span>
+                    <h2>
+                      {s.pending
+                        ? 'さあ、ピッチへ。'
+                        : s.week >= 44
+                          ? 'この仲間と、最後まで。'
+                          : '一人ひとりを育て、\n未来のチームへ。'}
+                    </h2>
+                    <p>
+                      {s.pending
+                        ? `${s.pending.label} / ${s.pending.opponent}`
+                        : '練習を決める。仲間を信じる。\nあなたの采配で、この部の未来を変えよう。'}
+                    </p>
+                    <div className="hero-bottom">
                       <span>
-                        学校の評判 <b>{Math.round(s.reputation)}</b>
+                        <Flag size={16} /> {s.best}
                       </span>
-                      <span>
-                        部費 <b>{s.funds}</b>
-                      </span>
+                      <span>部員 {s.players.length}名</span>
                     </div>
-                  </section>
-                </div>
+                  </div>
+                </section>
                 {s.event &&
                   (() => {
                     // W9/D1: クラブイベントは、週の学校生活イベント（LifeEventPanel）と同じ
@@ -791,7 +791,20 @@ export default function Game() {
                     </button>
                   </section>
                 ) : null}
-                <div className="lower-grid">
+                {/* T-13: クラブハウスが縦に長かったため、以下をサブタブで分ける。
+                    選んだサブタブは（スクロール位置記憶と同様）画面内の状態として
+                    メインタブを行き来しても覚えている（clubSection は Game 本体の state）。 */}
+                <SubTabs
+                  value={clubSection}
+                  onChange={setClubSection}
+                  label="クラブハウスの表示切り替え"
+                  items={[
+                    { value: 'training', label: '今週の練習' },
+                    { value: 'status', label: 'チームの状況' },
+                    { value: 'notes', label: '部活ノート' },
+                  ]}
+                />
+                {clubSection === 'training' && (
                   <section className="panel training-panel">
                     <div className="section-head">
                       <div>
@@ -944,96 +957,152 @@ export default function Game() {
                       </div>
                     </details>
                   </section>
-                  <section className="panel lineup-preview">
-                    <div className="section-head">
-                      <h2>スターティング XI</h2>
-                      <span className="formation-label">{s.formation}</span>
+                )}
+                {clubSection === 'status' && (
+                  <>
+                    <div className="lower-grid">
+                      <section className="panel club-status">
+                        <div className="section-head">
+                          <h2>チームコンディション</h2>
+                          <ChartNoAxesCombined size={19} />
+                        </div>
+                        <div className="rating">
+                          <strong>{strength(s)}</strong>
+                          <div>
+                            <span>チーム総合力</span>
+                            <small>疲労・配置を反映</small>
+                          </div>
+                          <span className="rank">
+                            {s.reputation < 30
+                              ? '新鋭'
+                              : s.reputation < 60
+                                ? '注目校'
+                                : '強豪'}
+                          </span>
+                        </div>
+                        <Meter label="チーム連携" value={s.cohesion} />
+                        <Meter label="士気" value={s.morale} />
+                        <Meter
+                          label="平均疲労"
+                          value={fatigue}
+                          warn={fatigue > 55}
+                        />
+                        <div className="status-foot">
+                          <span>
+                            学校の評判 <b>{Math.round(s.reputation)}</b>
+                          </span>
+                          <span>
+                            部費 <b>{s.funds}</b>
+                          </span>
+                        </div>
+                      </section>
+                      <section className="panel lineup-preview">
+                        <div className="section-head">
+                          <h2>スターティング XI</h2>
+                          <span className="formation-label">{s.formation}</span>
+                        </div>
+                        <Pitch s={s} onPick={(p) => setSelected(p.id)} />
+                        <button
+                          className="wide-link"
+                          onClick={() => setTab('team')}
+                        >
+                          選手・編成を開く <ArrowRight size={16} />
+                        </button>
+                      </section>
                     </div>
-                    <Pitch s={s} onPick={(p) => setSelected(p.id)} />
-                    <button
-                      className="wide-link"
-                      onClick={() => setTab('team')}
-                    >
-                      選手・編成を開く <ArrowRight size={16} />
-                    </button>
-                  </section>
-                </div>
-                <div className="bottom-grid">
-                  <section className="coach-note">
-                    <span className="coach-icon">
-                      <ClipboardList />
-                    </span>
-                    <div>
-                      <span className="eyebrow">COACH&apos;S NOTE</span>
-                      <p>{coachTip}</p>
-                    </div>
-                  </section>
-                  <section className="next-up">
-                    <span className="eyebrow">NEXT MATCH</span>
-                    <strong>{nextFixture?.f?.label || '来季への準備'}</strong>
-                    <span>
-                      {nextFixture
-                        ? `${Math.floor(nextFixture.week / 4) + 4 > 12 ? Math.floor(nextFixture.week / 4) - 8 : Math.floor(nextFixture.week / 4) + 4}月 第${(nextFixture.week % 4) + 1}週`
-                        : '3月は卒業・世代交代'}
-                    </span>
-                  </section>
-                </div>
-                <section className="activity">
-                  <h2>部活ノート</h2>
-                  {s.feed.slice(0, 4).map((line, i) => (
-                    <p key={i}>
-                      <span className={i === 0 ? 'dot' : 'dot dim'} />
-                      {line}
-                    </p>
-                  ))}
-                </section>
-                {/* T4.2: 部費の見える化。「設備強化まであと◯」のゲージと直近の収入5件。
-                    実際の設備強化ボタンは「選手・編成」タブに残したまま（経済バランスは
-                    変えず、表示だけをここに足す）。 */}
-                <section className="panel club-funds" aria-label="部費">
-                  <div className="section-head">
-                    <h2>
-                      <Wallet size={18} aria-hidden="true" /> 部費
-                    </h2>
-                    <span className="muted">
-                      現在 <b>{s.funds}</b>
-                    </span>
-                  </div>
-                  {s.facilities < 5 ? (
-                    <div className="funds-gauge">
-                      <div>
-                        <span>設備強化まで</span>
-                        <b>あと {Math.max(0, facilityUpgradeCost(s.facilities) - s.funds)}</b>
+                    {/* T4.2: 部費の見える化。「設備強化まであと◯」のゲージと直近の収入5件。
+                        実際の設備強化ボタンは「選手・編成」タブに残したまま（経済バランスは
+                        変えず、表示だけをここに足す）。 */}
+                    <section className="panel club-funds" aria-label="部費">
+                      <div className="section-head">
+                        <h2>
+                          <Wallet size={18} aria-hidden="true" /> 部費
+                        </h2>
+                        <span className="muted">
+                          現在 <b>{s.funds}</b>
+                        </span>
                       </div>
-                      <Progress
-                        aria-label="設備強化までの部費"
-                        value={Math.max(0, Math.min(100, (s.funds / facilityUpgradeCost(s.facilities)) * 100))}
-                      />
+                      {s.facilities < 5 ? (
+                        <div className="funds-gauge">
+                          <div>
+                            <span>設備強化まで</span>
+                            <b>あと {Math.max(0, facilityUpgradeCost(s.facilities) - s.funds)}</b>
+                          </div>
+                          <Progress
+                            aria-label="設備強化までの部費"
+                            value={Math.max(0, Math.min(100, (s.funds / facilityUpgradeCost(s.facilities)) * 100))}
+                          />
+                        </div>
+                      ) : (
+                        <p className="muted">練習設備は最高レベルです。</p>
+                      )}
+                      <h3 className="v2-subhead">直近の収入</h3>
+                      {s.fundHistory.length ? (
+                        <ul className="funds-history">
+                          {s.fundHistory.slice(0, 5).map((f, i) => (
+                            <li key={i}>
+                              <b>+{f.amount}</b>
+                              <span>{f.reason}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="muted">まだ収入の記録がありません。</p>
+                      )}
+                    </section>
+                  </>
+                )}
+                {clubSection === 'notes' && (
+                  <>
+                    <div className="bottom-grid">
+                      <section className="coach-note">
+                        <span className="coach-icon">
+                          <ClipboardList />
+                        </span>
+                        <div>
+                          <span className="eyebrow">COACH&apos;S NOTE</span>
+                          <p>{coachTip}</p>
+                        </div>
+                      </section>
+                      <section className="next-up">
+                        <span className="eyebrow">NEXT MATCH</span>
+                        <strong>{nextFixture?.f?.label || '来季への準備'}</strong>
+                        <span>
+                          {nextFixture
+                            ? `${Math.floor(nextFixture.week / 4) + 4 > 12 ? Math.floor(nextFixture.week / 4) - 8 : Math.floor(nextFixture.week / 4) + 4}月 第${(nextFixture.week % 4) + 1}週`
+                            : '3月は卒業・世代交代'}
+                        </span>
+                      </section>
                     </div>
-                  ) : (
-                    <p className="muted">練習設備は最高レベルです。</p>
-                  )}
-                  <h3 className="v2-subhead">直近の収入</h3>
-                  {s.fundHistory.length ? (
-                    <ul className="funds-history">
-                      {s.fundHistory.slice(0, 5).map((f, i) => (
-                        <li key={i}>
-                          <b>+{f.amount}</b>
-                          <span>{f.reason}</span>
-                        </li>
+                    <section className="activity">
+                      <h2>部活ノート</h2>
+                      {s.feed.slice(0, 4).map((line, i) => (
+                        <p key={i}>
+                          <span className={i === 0 ? 'dot' : 'dot dim'} />
+                          {line}
+                        </p>
                       ))}
-                    </ul>
-                  ) : (
-                    <p className="muted">まだ収入の記録がありません。</p>
-                  )}
-                </section>
+                    </section>
+                  </>
+                )}
               </TabsContent>
               <TabsContent value="future">
                 <DevelopmentView s={s} run={run} />
               </TabsContent>
               <TabsContent value="team">
-                <div className="team-grid">
-                  <section className="panel">
+                {/* T-13: 選手・編成タブが縦に長かったため、「戦術ボード」「部員一覧」の
+                    サブタブに分ける。 */}
+                <SubTabs
+                  value={teamSection}
+                  onChange={setTeamSection}
+                  label="選手・編成の表示切り替え"
+                  items={[
+                    { value: 'board', label: '戦術ボード' },
+                    { value: 'roster', label: '部員一覧' },
+                  ]}
+                />
+                {teamSection === 'board' && (
+                  <section className="panel team-board-panel">
                     <div className="section-head">
                       <h2>戦術ボード</h2>
                       <button
@@ -1079,6 +1148,24 @@ export default function Game() {
                         label: v,
                       }))}
                     />
+                    {/* ユーザー要望（2026-09-26）: 現在のフォーメーションで習熟度D(50)以上の
+                        候補がAチームにいない枠があれば知らせる。lib/squad.ts の thinSlots を
+                        使い、色だけでなくアイコン＋文章で伝える（--warning系トークンは
+                        両テーマで4.5:1/3:1を満たす前提で他所でも使用済み）。formation が
+                        変わるたびに再計算されるので、切り替え直後も更新される。 */}
+                    {(() => {
+                      const thin = thinSlots(s, s.formation);
+                      if (!thin.length) return null;
+                      return (
+                        <output className="thin-slots-warning">
+                          <TriangleAlert size={16} aria-hidden="true" />
+                          <span>
+                            {thin.map((d) => detailInfo[d].name).join('、')}
+                            に習熟度D以上の選手がいません。ポジション練習や個人方針で育てましょう。
+                          </span>
+                        </output>
+                      );
+                    })()}
                     <Pitch s={s} onPick={(p) => setSelected(p.id)} />
                     <p className="muted instruction">
                       選手を押すと能力と起用先を変更できます。起用先は詳細ポジション（例:
@@ -1105,8 +1192,10 @@ export default function Game() {
                       </button>
                     </div>
                   </section>
+                )}
+                {teamSection === 'roster' && (
                   <SquadPanel s={s} run={run} onSelect={setSelected} />
-                </div>
+                )}
               </TabsContent>
               <TabsContent value="season">
                 <div className="season-overview panel">
@@ -1119,52 +1208,76 @@ export default function Game() {
                   </div>
                   <Trophy size={52} />
                 </div>
-                <CompetitionPanel
-                  state={s}
-                  onChoosePrefecture={(districtId) =>
-                    run({ type: 'compPrefecture', districtId })
-                  }
+                {/* T-13: 大会・日程タブが縦に長かったため、「日程」「リーグ順位」
+                    「トーナメント」のサブタブに分ける。CompetitionPanel は
+                    app/competition-ui.tsx 側で CompetitionStatusSection（赴任地・
+                    リーグ順位・歴史）と CompetitionTournamentSection（大会表）に
+                    分割済み。 */}
+                <SubTabs
+                  value={seasonSection}
+                  onChange={setSeasonSection}
+                  label="大会・日程の表示切り替え"
+                  items={[
+                    { value: 'schedule', label: '日程' },
+                    { value: 'league', label: 'リーグ順位' },
+                    { value: 'tournament', label: 'トーナメント' },
+                  ]}
                 />
-                <div className="calendar-grid">
-                  {Array.from({ length: 12 }, (_, month) => (
-                    <section
-                      className={`month-card ${Math.floor(s.week / 4) === month ? 'current' : ''}`}
-                      key={month}
-                    >
-                      <h3>
-                        {((month + 3) % 12) + 1}
-                        <small>月</small>
-                        {Math.floor(s.week / 4) === month && (
-                          <span className="pill">今月</span>
-                        )}
-                      </h3>
-                      {Array.from({ length: 4 }, (_, w) => {
-                        const week = month * 4 + w,
-                          f = competitionFixture(seasonPreviewState, week);
-                        return (
-                          <div
-                            key={w}
-                            className={`calendar-week ${week < s.week ? 'past' : ''} ${week === s.week ? 'now' : ''}`}
-                          >
-                            <span>{w + 1}週</span>
-                            <strong>
-                              {f?.label ||
-                                (week === 47
-                                  ? '卒業・新入生加入'
-                                  : '練習・育成')}
-                            </strong>
-                            {week === s.week && <span className="dot" />}
-                          </div>
-                        );
-                      })}
-                    </section>
-                  ))}
-                </div>
-                <p className="muted instruction">
-                  U18リーグは通年のホーム&アウェー総当たり。インターハイ・選手権は勝ち抜き方式で、
-                  県予選を優勝すると全国大会へ進みます。敗退後も育成もリーグ戦も続き、4月には新しい世代で再挑戦できます。
-                  日程はゲーム用に簡略化した独自大会です。
-                </p>
+                {seasonSection === 'schedule' && (
+                  <>
+                    <div className="calendar-grid">
+                      {Array.from({ length: 12 }, (_, month) => (
+                        <section
+                          className={`month-card ${Math.floor(s.week / 4) === month ? 'current' : ''}`}
+                          key={month}
+                        >
+                          <h3>
+                            {((month + 3) % 12) + 1}
+                            <small>月</small>
+                            {Math.floor(s.week / 4) === month && (
+                              <span className="pill">今月</span>
+                            )}
+                          </h3>
+                          {Array.from({ length: 4 }, (_, w) => {
+                            const week = month * 4 + w,
+                              f = competitionFixture(seasonPreviewState, week);
+                            return (
+                              <div
+                                key={w}
+                                className={`calendar-week ${week < s.week ? 'past' : ''} ${week === s.week ? 'now' : ''}`}
+                              >
+                                <span>{w + 1}週</span>
+                                <strong>
+                                  {f?.label ||
+                                    (week === 47
+                                      ? '卒業・新入生加入'
+                                      : '練習・育成')}
+                                </strong>
+                                {week === s.week && <span className="dot" />}
+                              </div>
+                            );
+                          })}
+                        </section>
+                      ))}
+                    </div>
+                    <p className="muted instruction">
+                      U18リーグは通年のホーム&アウェー総当たり。インターハイ・選手権は勝ち抜き方式で、
+                      県予選を優勝すると全国大会へ進みます。敗退後も育成もリーグ戦も続き、4月には新しい世代で再挑戦できます。
+                      日程はゲーム用に簡略化した独自大会です。
+                    </p>
+                  </>
+                )}
+                {seasonSection === 'league' && (
+                  <CompetitionStatusSection
+                    state={s}
+                    onChoosePrefecture={(districtId) =>
+                      run({ type: 'compPrefecture', districtId })
+                    }
+                  />
+                )}
+                {seasonSection === 'tournament' && (
+                  <CompetitionTournamentSection state={s} />
+                )}
               </TabsContent>
               <TabsContent value="history">
                 <div className="record-stats">

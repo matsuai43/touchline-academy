@@ -603,6 +603,8 @@ function makePlayer(s: State, year: number, pos: Position): Player {
 // T2: おまかせ編成4方針それぞれのスコア（値が高いほどそのスロットに起用したい）。
 // 'overall'はeffective()そのもの（習熟度・疲労・調子込みの実効能力）で、既存の
 // autoLineup()の挙動と完全に一致する（後方互換）。
+// 育成重視の編成で起用を許す最低の習熟度（ランクD）。
+export const GROWTH_MIN_PROF = 50;
 function policyScore(s: State, p: Player, slot: DetailPos, policy: LineupPolicy): number {
   const ps = s.v3?.squad?.players[p.id];
   const eff = effective(s, p, slot);
@@ -620,13 +622,16 @@ function policyScore(s: State, p: Player, slot: DetailPos, policy: LineupPolicy)
     return eff * moodBias * fatigueBias;
   }
   // 育成重視: 下級生・素質の高い選手・習得途中のポジションの選手に出場機会を
-  // 与える（ただしGKはGKの習熟度60以上から。それ以外に候補がいない場合のみ
-  // 最終手段として習熟度60未満も許す）。
+  // 与える。ただし現実的な起用に留めるため、その枠の習熟度が
+  // GROWTH_MIN_PROF（ランクD＝50）未満の選手は候補から外す（GKはGKの習熟度60以上）。
+  // 条件を満たす候補がいない枠に限り、最終手段として習熟度の高い順に起用する。
   const prof = ps ? (ps.prof[slot] ?? 0) : 0;
-  if (basePos(slot) === 'GK' && prof < MASTERY_THRESHOLD) return -1;
+  const minProf = basePos(slot) === 'GK' ? MASTERY_THRESHOLD : GROWTH_MIN_PROF;
+  if (prof < minProf) return -1000 + prof;
   const yearBonus = p.year === 1 ? 1.35 : p.year === 2 ? 1.15 : 1;
   const talentBonus = 0.8 + p.talent * 0.3;
-  const learningBonus = prof >= MASTERY_THRESHOLD ? 1 : 1 + (MASTERY_THRESHOLD - prof) / 200;
+  // 習得途中（D〜Cの手前）だけを少し優遇する。習熟度の低い選手ほど有利になる形にはしない。
+  const learningBonus = prof >= MASTERY_THRESHOLD ? 1 : 1.08;
   return eff * yearBonus * talentBonus * learningBonus;
 }
 // T2: ベンチ9人も同じ方針の裏返し。系統(GK/DF/MF/FW)ごとにAチームの人数が

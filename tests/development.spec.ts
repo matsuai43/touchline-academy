@@ -131,9 +131,14 @@ test('v2 match: command, contextual coaching, real highlight canvas and replay d
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('/');
+  // T-13: 試合画面は「映像／声かけ／戦術／交代」の区画切り替えになったため、
+  // 細かなチーム指示（テンポ・攻撃の経路）を触るには先に「戦術」区画を開く。
+  await page.getByRole('tab', { name: '戦術', exact: true }).click();
   await page.getByRole('radio', { name: '速く', exact: true }).check();
   await page.getByRole('radio', { name: 'サイド', exact: true }).check();
   await page.getByRole('button', { name: '次の15分を進める' }).click();
+  // 進めると映像の区画に戻るため、声かけの区画に切り替える。
+  await page.getByRole('tab', { name: '声かけ', exact: true }).click();
   await page.getByRole('button', { name: '挑戦をほめる' }).click();
   await expect(page.locator('.voice-response')).toContainText('育った');
   await expect(page.getByRole('button', { name: '挑戦をほめる' })).toHaveCount(
@@ -141,6 +146,7 @@ test('v2 match: command, contextual coaching, real highlight canvas and replay d
   );
   // W8: 試合ハイライトは Canvas の映像風ハイライトから、真上視点で点が動く
   // Football Manager 風の SVG 戦術図に置き換わった（app/match-cinema.tsx）。
+  await page.getByRole('tab', { name: '映像', exact: true }).click();
   await expect(page.locator('.cinema svg.fm-pitch')).toBeVisible();
   const before = await page.locator('.score>strong').innerText();
   await page.getByRole('button', { name: 'リプレイ', exact: true }).click();
@@ -184,6 +190,7 @@ test('v2 reduced motion and legacy saves retain career and assign unique portrai
     page.getByRole('heading', { name: /継承テスト高校/ }),
   ).toBeVisible();
   await page.getByRole('tab', { name: '選手・編成' }).click();
+  await page.getByRole('tab', { name: '部員一覧', exact: true }).click();
   // S3: 新規ゲームの部員数は20人（旧18人から拡大）。
   await expect(page.locator('.player-link .portrait')).toHaveCount(20);
   await page.locator('.player-link').first().click();

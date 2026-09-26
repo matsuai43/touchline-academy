@@ -963,6 +963,7 @@ h1 > span {
 }
 .choices {
   display: flex !important;
+  flex-wrap: wrap;
   gap: 7px !important;
   margin: 10px 0 18px;
 }
@@ -974,11 +975,21 @@ h1 > span {
   border: 1px solid var(--border);
   border-radius: 5px;
   background: var(--surface-2);
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 88px;
   padding: 9px 6px;
   cursor: pointer;
   font-size: 12px;
   white-space: nowrap;
+}
+/* T-13: 4択以上（例: おまかせ編成の方針）だと1行に収まらず、右端が画面から
+   見切れていた（幅375〜390pxで確認）。flex-wrap:wrap で折り返させ、
+   min-width で1個あたりの最小幅を確保する。3択まではこれまでどおり1行に収まる。 */
+@media (max-width: 480px) {
+  .choices label {
+    min-width: calc(50% - 4px);
+    white-space: normal;
+  }
 }
 .choices .selected {
   border-color: var(--primary);
@@ -992,6 +1003,51 @@ h1 > span {
 .instruction {
   font-size: 13px;
   margin-top: 16px;
+}
+/* T-13: メインタブ（クラブハウス・選手・編成・大会・日程…）の中をさらに分ける
+   サブタブ。メインタブ（.main-nav、下線スタイル）と見分けられるよう、区切った
+   セグメント（ピル）の見た目にする。role="tablist"／aria-selected／矢印キー操作は
+   components/ui/tabs.tsx（Base UI Tabs）がそのまま提供する。 */
+.sub-tabs-wrap {
+  display: block !important;
+  margin: 18px 0 4px;
+}
+.sub-tabs {
+  display: inline-flex !important;
+  flex-wrap: wrap;
+  gap: 4px;
+  height: auto !important;
+  padding: 4px !important;
+  background: var(--muted) !important;
+  border-radius: 10px;
+  max-width: 100%;
+}
+.sub-tabs [data-slot='tabs-trigger'] {
+  flex: none;
+  min-height: 44px;
+  padding: 6px 16px !important;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted-foreground);
+}
+.sub-tabs [data-slot='tabs-trigger'][data-active] {
+  background: var(--card) !important;
+  color: var(--foreground);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+.sub-tabs [data-slot='tabs-trigger']:after {
+  display: none;
+}
+@media (max-width: 480px) {
+  .sub-tabs {
+    width: 100%;
+  }
+  .sub-tabs [data-slot='tabs-trigger'] {
+    flex: 1;
+    padding: 6px 8px !important;
+    font-size: 12.5px;
+  }
 }
 .facility {
   border-top: 1px solid var(--border);
@@ -1499,7 +1555,8 @@ footer button {
   grid-template-columns: 1.1fr 1fr;
   gap: 22px;
 }
-.match-grid .pitch {
+.match-grid .pitch,
+.pitch-panel .pitch {
   height: 420px;
 }
 .match-ball {
@@ -1805,10 +1862,12 @@ footer button {
   .team-grid {
     grid-template-columns: 1fr;
   }
-  .team-grid .pitch {
+  .team-grid .pitch,
+.team-board-panel .pitch {
     height: 370px;
   }
-  .team-grid > .panel:first-child {
+  .team-grid > .panel:first-child,
+  .team-board-panel {
     max-width: 100%;
   }
   .calendar-grid {
@@ -1826,7 +1885,8 @@ footer button {
   .match-grid {
     grid-template-columns: 1fr;
   }
-  .match-grid .pitch {
+  .match-grid .pitch,
+  .pitch-panel .pitch {
     height: 370px;
   }
   .bench {
@@ -2052,11 +2112,14 @@ footer button {
     margin: 0;
   }
   .calendar-grid {
-    gap: 12px;
-    grid-template-columns: 1fr;
+    gap: 10px;
+    /* T-13: 大会・日程を「日程」サブタブに独立させたことで、12ヶ月ぶんのカードが
+       このサブタブの中身のほとんどを占めるようになった。1列だと縦にとても長くなる
+       ため、スマホ幅でも2列を保って縦の長さを抑える。 */
+    grid-template-columns: 1fr 1fr;
   }
   .month-card {
-    padding: 18px;
+    padding: 14px 12px;
   }
   .season-overview h2 {
     font-size: 19px;
@@ -2112,7 +2175,8 @@ footer button {
   .match-stats b {
     margin-left: 4px;
   }
-  .match-grid .pitch {
+  .match-grid .pitch,
+  .pitch-panel .pitch {
     height: 340px;
   }
   .command-panel {
@@ -2121,7 +2185,7 @@ footer button {
   .command-panel > h2 {
     font-size: 20px;
   }
-  .match-view .panel:first-child {
+  .match-view .pitch-panel {
     padding: 18px 14px;
   }
   .command-panel .bench {
@@ -2897,10 +2961,12 @@ footer button {
 .scout-card button:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--primary);
 }
-.team-grid .pitch {
+.team-grid .pitch,
+.team-board-panel .pitch {
   height: 390px;
 }
-.match-grid .pitch {
+.match-grid .pitch,
+.pitch-panel .pitch {
   height: 440px;
 }
 @media (max-width: 1200px) {
@@ -3255,10 +3321,12 @@ footer button {
   .roster-panel [data-slot='table-cell'] {
     padding: 11px 4px;
   }
-  .team-grid .pitch {
+  .team-grid .pitch,
+.team-board-panel .pitch {
     height: 360px;
   }
-  .match-grid .pitch {
+  .match-grid .pitch,
+  .pitch-panel .pitch {
     height: 355px;
   }
   .pitch-player > .portrait {
@@ -3297,24 +3365,42 @@ footer button {
   margin: 18px 0;
   backdrop-filter: blur(8px);
 }
-.match-actionbar > nav {
-  display: flex;
-  gap: 8px;
+/* T-14: 試合中の区画切り替え（映像／声かけ／戦術／交代）。以前は同じページ内を
+   飛ぶアンカーリンク（nav > a）だったため4区画すべてが常に描画されていた。
+   role=tablist の Tabs（components/ui/tabs.tsx）に置き換え、選んだ区画だけを表示する。 */
+.match-section-tabswrap {
+  display: block !important;
 }
-.match-actionbar > nav > a {
+.match-actionbar .match-section-tabs {
+  display: flex !important;
+  gap: 8px;
+  height: auto !important;
+  padding: 0 !important;
+  background: transparent !important;
+}
+.match-actionbar .match-section-tabs [data-slot='tabs-trigger'] {
   display: flex;
   align-items: center;
   justify-content: center;
   min-width: 58px;
   min-height: 44px;
   font-size: 14px;
+  font-weight: 700;
   color: var(--accent-foreground);
   background: var(--accent);
   border-radius: 5px;
   padding: 7px 11px;
+  flex: none;
 }
-.match-actionbar > nav > a:hover {
+.match-actionbar .match-section-tabs [data-slot='tabs-trigger']:hover {
   background: color-mix(in srgb, var(--accent) 70%, var(--primary) 15%);
+}
+.match-actionbar .match-section-tabs [data-slot='tabs-trigger'][data-active] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.match-actionbar .match-section-tabs [data-slot='tabs-trigger']:after {
+  display: none;
 }
 .match-actionbar > .match-advance {
   position: static;
@@ -3324,18 +3410,37 @@ footer button {
   box-shadow: none;
   font-size: 14px;
 }
-#match-movie,
-#match-voice,
-#match-tactics,
-#match-bench {
-  scroll-margin-top: 100px;
+.pitch-panel {
+  margin-bottom: 22px;
 }
-.match-grid {
-  align-items: start;
+/* ユーザー要望（2026-09-26）: 戦術ボードの「習熟度D以上の候補がいない枠」の注意表示。
+   色だけに頼らず、アイコン＋文章で伝える。 */
+.thin-slots-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.thin-slots-warning svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--warning);
+}
+.bench-quickbar {
+  margin-bottom: 22px;
+}
+.bench-quickbar .bench-head {
+  margin-top: 0;
 }
 .cinema,
 .voice-panel,
-.match-grid,
 .match-view {
   min-width: 0;
 }
@@ -3365,11 +3470,11 @@ footer button {
     top: 0;
     border-radius: 0 0 9px 9px;
   }
-  .match-actionbar > nav {
+  .match-actionbar .match-section-tabs {
     width: 100%;
     gap: 6px;
   }
-  .match-actionbar > nav > a {
+  .match-actionbar .match-section-tabs [data-slot='tabs-trigger'] {
     min-width: 0;
     min-height: 44px;
     flex: 1;
@@ -3382,12 +3487,6 @@ footer button {
     min-width: 0;
     font-size: 14px;
     padding: 9px;
-  }
-  #match-movie,
-  #match-voice,
-  #match-tactics,
-  #match-bench {
-    scroll-margin-top: 115px;
   }
 }
 

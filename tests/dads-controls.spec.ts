@@ -102,6 +102,9 @@ test('主要な操作要素のタップ領域は44px以上（クラブタブ・�
 test('部員一覧の並び替えは4択なのでラジオボタンで、セレクトではない', async ({ page }) => {
   await startFresh(page);
   await page.getByRole('tab', { name: '選手・編成', exact: true }).click();
+  // T-13: 選手・編成タブは「戦術ボード」「部員一覧」のサブタブに分けたため、
+  // 部員一覧の中身を見るにはサブタブも切り替える。
+  await page.getByRole('tab', { name: '部員一覧', exact: true }).click();
 
   await expect(page.locator('.squad-sort select')).toHaveCount(0);
   const radios = page.locator('.squad-sort [role="radio"]');
@@ -117,6 +120,7 @@ test('部員一覧の並び替えは4択なのでラジオボタンで、セレ�
 test('部員一覧・リーグ成績の表はキーボード操作できるスクロール領域を持つ', async ({ page }) => {
   await startFresh(page);
   await page.getByRole('tab', { name: '選手・編成', exact: true }).click();
+  await page.getByRole('tab', { name: '部員一覧', exact: true }).click();
   const container = page.locator('[data-slot="table-container"]').first();
   await expect(container).toHaveAttribute('tabindex', '0');
   const label = await container.getAttribute('aria-label');

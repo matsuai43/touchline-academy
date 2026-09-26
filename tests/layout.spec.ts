@@ -59,6 +59,7 @@ test.describe('W6 横画面・アプリ的UI', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');
     await page.getByRole('tab', { name: '選手・編成', exact: true }).click();
+    await page.getByRole('tab', { name: '部員一覧', exact: true }).click();
     await expect(page.getByRole('heading', { name: /部員一覧/ })).toBeVisible();
     const portrait = await page.evaluate(() => ({
       doc: document.documentElement.scrollHeight,

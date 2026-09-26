@@ -32,6 +32,40 @@ import {
 } from './game.ts';
 import { squadOverall } from './squad.ts';
 import { strengthRatio } from './match-balance.ts';
+import {
+  buildDistrictWorld,
+  schoolsByTier,
+  pickStableSubset,
+  nearestSchool,
+  tierLabel,
+  districtRegion,
+  districtsInRegion,
+  districtsInSide,
+  isLeagueTier,
+  SCHOOL_TIERS,
+  type WorldSchool,
+  type SchoolTier,
+  type DistrictRegionInfo,
+} from './school-world.ts';
+import { regionalSchoolName } from './school-names.ts';
+
+// V4-4: 学校の世界（lib/school-world.ts）・地域色のある校名（lib/school-names.ts）を
+// 再輸出する。両ファイルは lib/competition.ts に一切依存しない独立モジュールなので、
+// UI・将来のV4-5/6/7からは基本的にこのファイル経由で使えるようにしてある
+// （lib/school-world.ts を直接importしても構わない）。
+export {
+  tierLabel,
+  districtRegion,
+  districtsInRegion,
+  districtsInSide,
+  isLeagueTier,
+  SCHOOL_TIERS,
+  SCHOOL_COUNT,
+  type WorldSchool,
+  type SchoolTier,
+  type DistrictRegionInfo,
+  type RegionSide,
+} from './school-world.ts';
 
 // ---------------------------------------------------------------------------
 // 決定的な擬似乱数（lib/squad.ts・lib/school-life.ts の h32/hf と同じ考え方。
@@ -56,10 +90,6 @@ function strHash(str: string): number {
   for (let i = 0; i < str.length; i++) h = (Math.imul(h, 31) + str.charCodeAt(i)) >>> 0;
   return h >>> 0;
 }
-function pickFrom<T>(arr: readonly T[], u: number): T {
-  return arr[Math.min(arr.length - 1, Math.floor(u * arr.length))];
-}
-
 // ---------------------------------------------------------------------------
 // 都道府県（48地区。東京は東西に分割）
 // ---------------------------------------------------------------------------
@@ -169,32 +199,67 @@ export function districtById(id: DistrictId): District {
 }
 
 // ---------------------------------------------------------------------------
-// 対戦校・ユースチームの架空名生成（実在校名を避けた決定的生成）
+// V4-4: 対戦校・ユースチームの名前は、すべて「学校の世界」（lib/school-world.ts）から
+// 取る（地域色のある実名候補は lib/school-names.ts）。以前はここで全国共通の
+// 30語×8語尾から毎回その場限りの架空校名を作っていたが、それだと「あの県1部の強豪」
+// のような同一校との再戦が生まれず、どの県でも同じ雰囲気になってしまっていた
+// （DESIGN_V4 0章・2.4章）。
+//
+// getDistrictSchools(s, districtId) が、指定県の24校（自県は保存済み・他県はその場で
+// 同じ種から決定的に再生成）を返す。makeClubs・createCupBracket・cupFixture・
+// 練習試合の対戦相手生成は、すべてこの世界からの学校を使う。
 // ---------------------------------------------------------------------------
-const SCHOOL_STEMS = [
-  '桜台', '若葉', '緑丘', '双葉', '光陵', '陽明', '白鷺', '東雲', '西風', '南栄',
-  '北斗', '明和', '清風', '翠明', '曙丘', '夕凪', '花園', '緑風', '蒼空', '春日野',
-  '秋桜', '冬木', '雪見', '若竹', '松風', '杉並木', '桐生台', '柏木', '朝霧', '群青',
-];
-const SCHOOL_SUFFIXES = ['高校', '学園', '学院', '実業', '工業', '商業', '総合', '国際'];
-const YOUTH_STEMS = [
-  '潮', '疾風', '蒼', '陽炎', '紫電', '碧', '蒼穹', '旭', '暁', '群青', '彗星', '疾走', '翔', '煌', '蒼海', '天翔',
-];
-const YOUTH_SUFFIXES = ['FCユース', 'ジュニアユース', 'SCユース', 'アカデミー'];
-
-function buildSchoolName(seedParts: number[]): string {
-  return `${pickFrom(SCHOOL_STEMS, hf(...seedParts, 1))}${pickFrom(SCHOOL_SUFFIXES, hf(...seedParts, 2))}`;
+function districtStrengthOf(districtId: DistrictId): number {
+  return districtById(districtId).strength;
 }
-function buildYouthName(seedParts: number[]): string {
-  return `${pickFrom(YOUTH_STEMS, hf(...seedParts, 1))}${pickFrom(YOUTH_SUFFIXES, hf(...seedParts, 2))}`;
+/** getDistrictSchools() の内部実装。comp を直接受け取る（readCompetition() を呼ばない）ので、
+ *  hydrateCompetition() 自身の中（＝comp.world がまだ整っていない可能性がある最中）からは
+ *  絶対にこちらを使わない。呼べるのは comp.world が整った後の通常の読み取りパスのみ。 */
+function districtSchoolsOf(s: State, comp: CompState, districtId: DistrictId): WorldSchool[] {
+  if (comp.world.homeDistrictId === districtId) return comp.world.homeSchools;
+  return buildDistrictWorld(s.seed, districtId, districtStrengthOf(districtId), s.season);
 }
-/** 単発の架空校名（練習試合の相手など、一覧の重複を気にしなくてよい場面向け）。 */
-export function districtSchoolName(districtId: DistrictId, salt: number): string {
-  return buildSchoolName([strHash(districtId), salt, 999]);
+/** 指定県の学校の世界（24校）。自県（comp.world.homeDistrictId）なら保存済みの
+ *  （＝季ごとに強さが少しずつ揺れた）ものを返し、他県はその場で同じ種から決定的に
+ *  作る（保存はしない＝セーブが重くならない。DESIGN_V4 2.3章）。 */
+export function getDistrictSchools(s: State, districtId: DistrictId): WorldSchool[] {
+  return districtSchoolsOf(s, readCompetition(s), districtId);
 }
-/** 単発の架空ユースチーム名。 */
-export function districtYouthName(districtId: DistrictId, salt: number): string {
-  return buildYouthName([strHash(districtId), salt, 998]);
+/** id（`${districtId}-${idx}`形式）から学校を1件引く。見つからなければ null。 */
+export function schoolById(s: State, id: string): WorldSchool | null {
+  const idx = id.lastIndexOf('-');
+  if (idx < 0) return null;
+  const districtId = id.slice(0, idx);
+  return getDistrictSchools(s, districtId).find((sc) => sc.id === id) ?? null;
+}
+/** 指定階層の候補校プール。県2部・県1部は自県のみ、地域リーグは同じ地域（9地域）の
+ *  他県も、全国リーグは同じ EAST/WEST の他県も候補になる（DESIGN_V4 2.2章）。
+ *  comp は既に comp.world が整っている前提（hydrateCompetition() 完了後、または
+ *  hydrateWorld() 呼び出し直後）で呼ぶこと。 */
+function tierPool(s: State, comp: CompState, tier: LeagueTier): WorldSchool[] {
+  if (tier === 'pref2' || tier === 'pref1') {
+    return schoolsByTier(districtSchoolsOf(s, comp, comp.districtId), tier);
+  }
+  const info = districtRegion(comp.districtId);
+  const districtIds = tier === 'regional' ? districtsInRegion(info.region) : districtsInSide(info.side);
+  return districtIds.flatMap((id) => schoolsByTier(districtSchoolsOf(s, comp, id), tier));
+}
+/** tierPool が手薄（24校の階層配分の丸めや小さな地域のせいで7校に満たない）場合の
+ *  救済: 隣の階層の学校を補充候補として足す（見た目は階層が少しズレるが、対戦相手が
+ *  居ないよりはるかにまし。実運用ではほぼ発生しない）。 */
+function tierPoolWithFallback(s: State, comp: CompState, tier: LeagueTier, minCount: number): WorldSchool[] {
+  let pool = tierPool(s, comp, tier);
+  if (pool.length >= minCount) return pool;
+  const fallbackOrder: LeagueTier[] =
+    tier === 'pref2' ? ['pref1'] :
+    tier === 'pref1' ? ['pref2'] :
+    tier === 'regional' ? ['pref1', 'national'] :
+    ['regional'];
+  for (const fb of fallbackOrder) {
+    if (pool.length >= minCount) break;
+    pool = [...pool, ...tierPool(s, comp, fb)];
+  }
+  return pool;
 }
 
 // ---------------------------------------------------------------------------
@@ -208,13 +273,6 @@ export const tierInfo: Record<LeagueTier, { name: string }> = {
   regional: { name: '地域リーグ' },
   national: { name: '全国リーグ' },
 };
-/** 難易度帯（県2部40-55/県1部55-68/地域66-80/全国78-93）。地区の強度係数を掛けて使う。 */
-const TIER_BAND: Record<LeagueTier, [number, number]> = {
-  pref2: [40, 55],
-  pref1: [55, 68],
-  regional: [66, 80],
-  national: [78, 93],
-};
 export function tierBelow(t: LeagueTier): LeagueTier | null {
   const i = LEAGUE_TIERS.indexOf(t);
   return i > 0 ? LEAGUE_TIERS[i - 1] : null;
@@ -227,6 +285,12 @@ export type LeagueClub = {
    *  fixture の style/strength 決定に軽い補正として反映する。 */
   youth: boolean;
   strength: number;
+  // V4-4: 学校の世界（lib/school-world.ts）から選ばれた実体の情報。id は WorldSchool.id と
+  // 一致する（＝getDistrictSchools/schoolById で本体を引ける）。旧セーブのクラブ（世界導入前に
+  // 生成されたもの）には無いため任意（hydrateCompetition は補わず、次の季生成から自然に付く）。
+  schoolId?: string;
+  districtId?: DistrictId;
+  tier?: SchoolTier;
 };
 export type LeagueScheduleEntry = { week: number; clubIndex: number; leg: 0 | 1 };
 /** 自校が実際に行った1試合の記録（他校同士の試合は結果を保存せず、必要な時に
@@ -294,6 +358,10 @@ export type CupTeam = {
   // 無ければ teamFormation() が id・strength・style から決定的に補う。
   formation?: Formation;
   districtId: DistrictId;
+  // V4-4: 学校の世界から名前を借りた際の所属階層（表示の「所属の札」用）。strength は
+  // 既存のカップ戦独自の帯（QUALIFIER_BAND/NATIONAL_BAND）で決めるため、world 側の
+  // strength とは別物（tier はあくまで表示用のラベル）。無ければ chip は「所属不明」扱い。
+  tier?: SchoolTier;
 };
 /** CupTeam.formation が未設定でも常に布陣を返す（旧セーブのブラケット用フォールバック）。
  *  team.id・strength・style は対戦を通じて変わらないため、毎回呼んでも同じ値になる
@@ -353,6 +421,17 @@ export type CompHistoryEntry = {
   wcNationalRounds: number;
 };
 
+/** V4-4: 学校の世界のうち、セーブに保存する分（自県の24校だけ。DESIGN_V4 2.3章）。
+ *  他県の学校は getDistrictSchools() が必要な時に同じ種から作る（保存しない）。 */
+export type SchoolWorldState = {
+  schema: 1;
+  /** homeSchools がどの県のものか（comp.districtId とずれたら hydrateWorld() が作り直す）。 */
+  homeDistrictId: DistrictId;
+  /** homeSchools の強さがどの season 向けに計算されたか。 */
+  homeSeason: number;
+  homeSchools: WorldSchool[];
+};
+
 export type CompState = {
   schema: 1;
   districtId: DistrictId;
@@ -366,43 +445,39 @@ export type CompState = {
   ih: CupState;
   wc: CupState;
   history: CompHistoryEntry[];
+  /** V4-4: 学校の世界。hydrateCompetition() が必ず決定的に埋める。 */
+  world: SchoolWorldState;
 };
 
 // ---------------------------------------------------------------------------
 // クラブ生成・日程生成
 // ---------------------------------------------------------------------------
 function makeClubs(
-  seedNum: number,
-  district: District,
+  s: State,
+  comp: CompState,
   tier: LeagueTier,
-  season: number,
   teamTag: 'A' | 'B',
 ): LeagueClub[] {
-  const [bandMin, bandMax] = TIER_BAND[tier];
-  // ユースチームの混在比率: 階層が上がるほど増える（県2部0・県1部1・地域2・全国3、7クラブ中）。
-  const youthCount = tier === 'pref2' ? 0 : tier === 'pref1' ? 1 : tier === 'regional' ? 2 : 3;
-  const used = new Set<string>();
-  const clubs: LeagueClub[] = [];
-  for (let i = 0; i < 7; i++) {
-    const isYouth = i < youthCount;
-    const base = [seedNum, strHash(district.id), strHash(tier), season, strHash(teamTag), i];
-    let name = '';
-    for (let salt = 0; salt < 40; salt++) {
-      name = isYouth ? buildYouthName([...base, salt]) : buildSchoolName([...base, salt]);
-      if (!used.has(name)) break;
-    }
-    used.add(name);
-    const jitter = hf(...base, 55);
+  // V4-4: 対戦相手は「学校の世界」（lib/school-world.ts）から選ぶ。県2部・県1部は自県、
+  // 地域リーグ・全国リーグは同じ地域／EAST・WESTの他県も含む（DESIGN_V4 2.2・2.3章）。
+  // 選出は season をキーに含めない（pickStableSubset）ので、階層・県が変わらない限り
+  // 毎季まったく同じ7校になる＝「あの県1部の強豪」との再戦が生まれる。
+  const pool = tierPoolWithFallback(s, comp, tier, 7);
+  const picked = pickStableSubset(pool, 7, [s.seed, comp.districtId, tier, teamTag]);
+  return picked.map((school) => {
     // ユースは技術がやや高くフィジカルは同等という味付け: 総合力に軽いプラス補正。
-    const youthBonus = isYouth ? 1.03 : 1;
-    const raw = (bandMin + (bandMax - bandMin) * jitter) * youthBonus;
-    // 3.2: カップ戦の全国大会と同様、リーグも全国階層には自県係数を掛けず、
-    // それ以外の階層では効きを半分に弱める。
-    const districtMult = tier === 'national' ? 1 : 1 + (district.strength - 1) * 0.5;
-    const strengthVal = clamp(Math.round(raw * districtMult), 20, 99);
-    clubs.push({ id: `${district.id}-${tier}-${teamTag}-${i}`, name, youth: isYouth, strength: strengthVal });
-  }
-  return clubs;
+    const youthBonus = school.isYouth ? 1.03 : 1;
+    const strengthVal = clamp(Math.round(school.strength * youthBonus), 20, 99);
+    return {
+      id: school.id,
+      name: school.name,
+      youth: school.isYouth,
+      strength: strengthVal,
+      schoolId: school.id,
+      districtId: school.districtId,
+      tier: school.tier,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -868,11 +943,11 @@ function advanceCompetitionSeason(s: State, comp: CompState): void {
   comp.ih = freshCup();
   comp.wc = freshCup();
   const district = districtById(comp.districtId);
-  comp.ih.qualifier = createCupBracket(s, district, 'ih', false);
-  comp.ih.national = createCupBracket(s, district, 'ih', true);
-  comp.wc.qualifier = createCupBracket(s, district, 'wc', false);
-  comp.wc.national = createCupBracket(s, district, 'wc', true);
-  comp.teamA.clubs = makeClubs(s.seed, district, comp.teamA.tier, s.season, 'A');
+  comp.ih.qualifier = createCupBracket(s, comp, district, 'ih', false);
+  comp.ih.national = createCupBracket(s, comp, district, 'ih', true);
+  comp.wc.qualifier = createCupBracket(s, comp, district, 'wc', false);
+  comp.wc.national = createCupBracket(s, comp, district, 'wc', true);
+  comp.teamA.clubs = makeClubs(s, comp, comp.teamA.tier, 'A');
   // この季の総当たり組み合わせを決める乱数状態をここで凍結する（s.seed はこの後も
   // rand() 呼び出しのたびに進み続けるため、後で他校同士の試合を再現する時は必ず
   // この値を使う。s.seed を直接使い回さない）。
@@ -884,7 +959,7 @@ function advanceCompetitionSeason(s: State, comp: CompState): void {
   if (comp.teamA.tier !== 'pref2' && bTeamEligible(s)) {
     const bTier = plannedBTier ?? tierBelow(comp.teamA.tier)!;
     const teamB = emptyTeamState(bTier);
-    teamB.clubs = makeClubs(s.seed, district, bTier, s.season, 'B');
+    teamB.clubs = makeClubs(s, comp, bTier, 'B');
     // AとBの対戦相手・日程は互いに独立な乱数系列にする（Aの scheduleSeed をそのまま使うと
     // 同じ並び順・週割り当てが再現されてしまうため、固定ソルトで混ぜて別系列にする。
     // s.seed 自体は消費しないので、Aチームの再現性には一切影響しない）。
@@ -930,6 +1005,31 @@ function migrateLegacyFixture(s: State): void {
   }
 }
 
+function emptyWorldState(): SchoolWorldState {
+  return { schema: 1, homeDistrictId: '', homeSeason: -1, homeSchools: [] };
+}
+/** V4-4: comp.world を comp.districtId・s.season と整合させる（ずれていれば作り直す）。
+ *  homeSchools の再生成は決定的なハッシュ計算だけなので、季をまたぐたびに毎回やり直しても
+ *  軽い（＝インクリメンタルな「前季からの差分」ではなく、常に s.seed・県ID・season から
+ *  フルに再計算する。どの季から呼んでも同じ結果になるので、旧セーブ・季飛びにも強い）。
+ *  hydrateCompetition() の中（advanceCompetitionSeason より前）で必ず呼ぶこと。 */
+function hydrateWorld(s: State, comp: CompState): void {
+  if (
+    !comp.world ||
+    comp.world.schema !== 1 ||
+    !Array.isArray(comp.world.homeSchools) ||
+    comp.world.homeDistrictId !== comp.districtId ||
+    comp.world.homeSeason !== s.season
+  ) {
+    comp.world = {
+      schema: 1,
+      homeDistrictId: comp.districtId,
+      homeSeason: s.season,
+      homeSchools: buildDistrictWorld(s.seed, comp.districtId, districtStrengthOf(comp.districtId), s.season),
+    };
+  }
+}
+
 export function hydrateCompetition(s: State): void {
   migrateLegacyFixture(s);
   const v = withComp(s);
@@ -944,9 +1044,11 @@ export function hydrateCompetition(s: State): void {
       ih: freshCup(),
       wc: freshCup(),
       history: [],
+      world: emptyWorldState(),
     };
   }
   const comp = v.competition;
+  hydrateWorld(s, comp);
   // T4.1: 旧セーブ（results フィールド導入前）の補完。「自校の結果は記録があればそれを
   // 使い、無ければ0から」の方針どおり、無ければ空配列を補うだけでよい（他校同士の試合は
   // weekPairings()/clubVsClubGoals() から常に決定的に再現できるため、保存する必要が無い）。
@@ -976,6 +1078,25 @@ export function validateCompetition(s: State): void {
   if (!DISTRICTS.some((d) => d.id === comp.districtId)) throw Error('都道府県データが不正です。');
   if (!num(comp.nextChoiceSeason, 1, 100000)) throw Error('赴任先データが不正です。');
   if (!num(comp.seasonGenerated, 0, 100000)) throw Error('大会データが不正です。');
+  // V4-4: 学校の世界。
+  if (!comp.world || comp.world.schema !== 1 || !Array.isArray(comp.world.homeSchools))
+    throw Error('学校の世界データが不正です。');
+  if (comp.world.homeSchools.length > 0 && !DISTRICTS.some((d) => d.id === comp.world.homeDistrictId))
+    throw Error('学校の世界データが不正です。');
+  for (const sc of comp.world.homeSchools) {
+    if (
+      !sc ||
+      typeof sc.id !== 'string' ||
+      typeof sc.name !== 'string' ||
+      sc.name.length > 60 ||
+      !SCHOOL_TIERS.includes(sc.tier) ||
+      !num(sc.strength, 1, 99) ||
+      !num(sc.tradition, 1, 5) ||
+      !TACTIC_LIST.includes(sc.tactic) ||
+      typeof sc.isYouth !== 'boolean'
+    )
+      throw Error('学校の世界データが不正です。');
+  }
   const checkTeam = (team: TeamLeagueState, label: string) => {
     if (!LEAGUE_TIERS.includes(team.tier)) throw Error(`${label}の階層が不正です。`);
     if (!Array.isArray(team.clubs) || team.clubs.length !== 7)
@@ -1120,6 +1241,11 @@ export type CompFixture = {
   style: Tactic;
   // T-4: 相手の布陣。style と整合する候補（STYLE_FORMATIONS）から決定的に選ぶ。
   formation: Formation;
+  // V4-4: 学校の世界から相手を借りられた場合の所属情報（所属の札の表示用）。既存の
+  // Fixture 型（lib/game.ts）には無いフィールドなので必ず任意にする（構造的部分型の
+  // 代入には影響しない。余分なプロパティは無視されるだけで型エラーにはならない）。
+  opponentDistrictId?: DistrictId;
+  opponentTier?: SchoolTier;
 };
 
 const TACTIC_LIST: Tactic[] = ['balanced', 'possession', 'counter', 'press'];
@@ -1154,7 +1280,13 @@ function emptyCupMatch(homeId: string | null = null, awayId: string | null = nul
   return { homeId, awayId, winnerId: null, home: null, away: null, penalties: null };
 }
 
-function createCupBracket(s: State, district: District, cupKey: 'ih' | 'wc', national: boolean): CupBracket {
+function createCupBracket(
+  s: State,
+  comp: CompState,
+  district: District,
+  cupKey: 'ih' | 'wc',
+  national: boolean,
+): CupBracket {
   const count = national ? 32 : 16;
   const salt = strHash(cupKey) + (national ? 3100 : 1100);
   const districts = national
@@ -1162,19 +1294,26 @@ function createCupBracket(s: State, district: District, cupKey: 'ih' | 'wc', nat
       .sort((a, b) => hf(s.seed, s.season, salt, strHash(a.id)) - hf(s.seed, s.season, salt, strHash(b.id)))
       .slice(0, count - 1)]
     : Array.from({ length: count }, () => district);
+  // V4-4: 名前・所属階層は学校の世界から借りる（実際の勝敗に使う strength/raw は従来どおり）。
+  const usedIds = new Set<string>();
   const teams: CupTeam[] = districts.map((d, i) => {
     const base = [s.seed, s.season, salt, i];
     const raw = national
       ? 68 + hf(...base, 1) * 19 + (d.strength - 1) * 12
       : (45 + hf(...base, 1) * 20) * (1 + (district.strength - 1) * 0.5);
-    const style = pickTactic(hf(...base, 2));
+    const strengthVal = clamp(Math.round(raw), 20, 99);
+    const pool = districtSchoolsOf(s, comp, d.id);
+    const picked = nearestSchool(pool, strengthVal, [s.seed, s.season, salt, i], usedIds);
+    if (picked) usedIds.add(picked.id);
+    const style = picked?.tactic ?? pickTactic(hf(...base, 2));
     return {
       id: `${cupKey}-${national ? 'n' : 'q'}-${i}`,
-      name: districtSchoolName(d.id, salt + s.season * 101 + i),
-      strength: clamp(Math.round(raw), 20, 99),
+      name: picked?.name ?? regionalSchoolName(d.id, [...base, 9999]),
+      strength: strengthVal,
       style,
       formation: pickFormation(hf(...base, 3), style),
       districtId: d.id,
+      tier: picked?.tier,
     };
   });
   // Slot 0 is the local district representative; the qualifier contains the player's school.
@@ -1461,6 +1600,8 @@ function bracketFixture(s: State, bracket: CupBracket, kind: CompFixtureKind, ro
     opponent: opponent?.name ?? '勝者未定',
     style: opponent?.style ?? 'balanced',
     formation: opponent ? teamFormation(opponent) : '4-4-2',
+    opponentDistrictId: opponent?.districtId,
+    opponentTier: opponent?.tier,
   };
 }
 
@@ -1484,15 +1625,24 @@ function cupFixture(
   // 県予選は係数を掛けるが、そのままでは効きすぎるので半分に弱める。
   const districtMult = isQualifier ? 1 + (district.strength - 1) * 0.5 : 1;
   const strengthVal = clamp(Math.round(base * districtMult), 20, 99);
-  const style = pickTactic(hf(s.seed, s.season, strHash(kind), round, 8182));
+  // V4-4: 名前・戦術は学校の世界から借りる（strength は上のカップ戦独自の帯のまま）。
+  // 全国大会の相手（isQualifier=false）は自県に限らず、他県から探す方が「代表校」らしい。
+  const keyParts = [s.seed, s.season, strHash(kind), round];
+  const pool = isQualifier
+    ? districtSchoolsOf(s, comp, comp.districtId)
+    : districtsInSide(districtRegion(comp.districtId).side).flatMap((id) => districtSchoolsOf(s, comp, id));
+  const picked = nearestSchool(pool, strengthVal, [...keyParts, 'cupfixture']);
+  const style = picked?.tactic ?? pickTactic(hf(s.seed, s.season, strHash(kind), round, 8182));
   return {
     label: `${cupName}${stagePrefix}${label}`,
     kind,
     round,
     strength: strengthVal,
-    opponent: districtSchoolName(comp.districtId, strHash(kind) + round * 97 + s.season),
+    opponent: picked?.name ?? regionalSchoolName(comp.districtId, [...keyParts, 9998]),
     style,
     formation: pickFormation(hf(s.seed, s.season, strHash(kind), round, 8183), style),
+    opponentDistrictId: picked?.districtId,
+    opponentTier: picked?.tier,
   };
 }
 
@@ -1544,19 +1694,27 @@ export function competitionFixture(s: State, week: number): CompFixture | null {
       opponent: club.name,
       style,
       formation: pickFormation(hf(s.seed, s.season, week, 6163), style),
+      opponentDistrictId: club.districtId,
+      opponentTier: club.tier,
     };
   }
   if (FRIENDLY_WEEKS.includes(week)) {
     const jitter = hf(s.seed, s.season, week, 7171);
-    const style = pickTactic(hf(s.seed, s.season, week, 7172));
+    const strengthVal = clamp(Math.round(strengthOf(s) - 4 + jitter * 8), 20, 99);
+    // V4-4: 練習試合の相手も学校の世界（自県）から名前・戦術を借りる。
+    const pool = districtSchoolsOf(s, comp, comp.districtId);
+    const picked = nearestSchool(pool, strengthVal, [s.seed, s.season, week, 'friendly']);
+    const style = picked?.tactic ?? pickTactic(hf(s.seed, s.season, week, 7172));
     return {
       label: '練習試合',
       kind: 'friendly',
       round: 0,
-      strength: clamp(Math.round(strengthOf(s) - 4 + jitter * 8), 20, 99),
-      opponent: districtSchoolName(comp.districtId, s.season * 100 + week),
+      strength: strengthVal,
+      opponent: picked?.name ?? regionalSchoolName(comp.districtId, [s.seed, s.season, week, 9997]),
       style,
       formation: pickFormation(hf(s.seed, s.season, week, 7173), style),
+      opponentDistrictId: picked?.districtId,
+      opponentTier: picked?.tier,
     };
   }
   return null;

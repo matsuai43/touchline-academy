@@ -11,6 +11,7 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import { Portrait } from './development-ui';
+import { FatigueMeter } from './fatigue-meter';
 import { personalities } from '@/lib/development';
 import { type State, type Action, type Player, type Position, type Stat } from '@/lib/game';
 import {
@@ -366,9 +367,9 @@ export function SquadPanel({
                     <MoodBadge value={ps.mood} size="sm" />
                   </TableCell>
                   <TableCell>
-                    <span className={p.fatigue > 65 ? 'danger-text' : ''}>
-                      {Math.round(p.fatigue)}
-                    </span>
+                    {/* V4-1(4-5章): 部員一覧・戦術ボード・交代パネルで同じ疲労ゲージ部品
+                        （app/fatigue-meter.tsx）を使う。数字だけでなく文字でも段階を示す。 */}
+                    <FatigueMeter value={p.fatigue} size="sm" />
                   </TableCell>
                   <TableCell>
                     {/* 能力ランクがA〜Gの英字になったため、単独の1文字「A」「B」だけの

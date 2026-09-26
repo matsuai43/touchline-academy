@@ -601,25 +601,31 @@ function makePlayer(s: State, year: number, pos: Position): Player {
   return p;
 }
 // T2: おまかせ編成4方針それぞれのスコア（値が高いほどそのスロットに起用したい）。
-// 'overall'はeffective()そのもの（習熟度・疲労・調子込みの実効能力）で、既存の
-// autoLineup()の挙動と完全に一致する（後方互換）。
+// 'overall'はeffective()（習熟度・疲労・調子込みの実効能力）に、V4-1で追加した
+// 疲労55超の減点（fatiguePenalty、下記）を掛けたもの。
 // 育成重視の編成で起用を許す最低の習熟度（ランクD）。
 export const GROWTH_MIN_PROF = 50;
 function policyScore(s: State, p: Player, slot: DetailPos, policy: LineupPolicy): number {
   const ps = s.v3?.squad?.players[p.id];
   const eff = effective(s, p, slot);
-  if (policy === 'overall') return eff;
+  // V4-1(5.2): おまかせ編成は疲労55を超えると起用スコアを大きく減点する（全方針共通）。
+  // effective()自体（試合の実効能力・strength()の算出）は変えず、「誰を選ぶか」の
+  // スコアにだけ効かせる。総合力の差が小さい新鮮な控えほど、疲れた主力より
+  // 選ばれやすくなる。
+  const fatiguePenalty = Math.max(0, 1 - Math.max(0, p.fatigue - 55) * 0.012);
+  const score = eff * fatiguePenalty;
+  if (policy === 'overall') return score;
   if (policy === 'fit') {
     // 適性ポジション重視: 各枠の習熟度が高い選手を優先し、習熟度60未満は避ける。
     const prof = ps ? (ps.prof[slot] ?? 0) : 0;
-    return (prof >= MASTERY_THRESHOLD ? 100000 : 0) + prof * 10 + eff * 0.01;
+    return (prof >= MASTERY_THRESHOLD ? 100000 : 0) + prof * 10 + score * 0.01;
   }
   if (policy === 'mood') {
     // 調子重視: 調子と疲労を強く重み付けし、不調・高疲労を外す。
     const lv = ps ? moodLevel(ps.mood) : 'normal';
     const moodBias = { excellent: 1.5, good: 1.15, normal: 0.9, poor: 0.5, bad: 0.15 }[lv];
     const fatigueBias = clamp(1 - p.fatigue / 60, 0.1, 1);
-    return eff * moodBias * fatigueBias;
+    return score * moodBias * fatigueBias;
   }
   // 育成重視: 下級生・素質の高い選手・習得途中のポジションの選手に出場機会を
   // 与える。ただし現実的な起用に留めるため、その枠の習熟度が
@@ -632,7 +638,7 @@ function policyScore(s: State, p: Player, slot: DetailPos, policy: LineupPolicy)
   const talentBonus = 0.8 + p.talent * 0.3;
   // 習得途中（D〜Cの手前）だけを少し優遇する。習熟度の低い選手ほど有利になる形にはしない。
   const learningBonus = prof >= MASTERY_THRESHOLD ? 1 : 1.08;
-  return eff * yearBonus * talentBonus * learningBonus;
+  return score * yearBonus * talentBonus * learningBonus;
 }
 // T2: ベンチ9人も同じ方針の裏返し。系統(GK/DF/MF/FW)ごとにAチームの人数が
 // フォーメーションの必要数を上回るのに、その系統の選手が1人もベンチに
@@ -862,7 +868,10 @@ function advanceTrainingDay(s: State, tr: Training): { injured: boolean } {
         log(s, `${p.name}が筋肉に張り。数日の調整が必要です。`);
       }
     }
-    p.fatigue = clamp(p.fatigue + (isRest ? -15 : t.fatigue / 6 - 3));
+    // V4-1(5.2): 回復を疲れに比例させる（疲れた選手ほど戻りやすく、際限なく
+    // 積み上がらない）。練習日 3→3+疲労×0.05、休養日 15→15+疲労×0.15。
+    const recovery = isRest ? 15 + p.fatigue * 0.15 : 3 + p.fatigue * 0.05;
+    p.fatigue = clamp(p.fatigue + (isRest ? -recovery : t.fatigue / 6 - recovery));
   }
   s.cohesion = clamp(
     s.cohesion + (tr === 'possession' ? 4 : isRest ? -1 : 1) / 6,
@@ -1258,10 +1267,12 @@ function grantMatchPositionExperience(s: State, profMult: Map<number, number>): 
     if (minutes > 0) gainProficiency(s, cur, slot, 8 * (minutes / 90) * (profMult.get(cur) ?? 1));
   }
 }
+// V4-1(5.2): 1区間の疲労を、スタミナで全戦術に効かせる（旧仕様はハイプレスのみ）。
+// 5 × (1 + (50−スタミナ)/150)。ハイプレスはさらに ×1.5。
 function matchStaminaCost(s: State, p: Player, tactic: Tactic): number {
-  if (tactic !== 'press') return 1;
   const stamina = s.v3.squad.players[p.id]?.stamina ?? 45;
-  return clamp(1 + (45 - stamina) / 100, 0.7, 1.4);
+  const base = 5 * (1 + (50 - stamina) / 150);
+  return tactic === 'press' ? base * 1.5 : base;
 }
 function simulateSegment(s: State) {
   const m = s.match!;
@@ -1318,7 +1329,7 @@ function simulateSegment(s: State) {
     if (outgoing && incoming) {
       const elapsed = Math.max(0, (m.minute - entry.minute) / 15);
       const projectedFatigue = clamp(outgoing.fatigue + elapsed *
-        (m.tactic === 'press' ? 8 : 5) * matchStaminaCost(s, outgoing, m.tactic) * playerFatigueMult(s, outgoing.id));
+        matchStaminaCost(s, outgoing, m.tactic) * playerFatigueMult(s, outgoing.id));
       savedFatigueRating += overall(incoming) * (projectedFatigue - incoming.fatigue) * 0.012 / 11;
     }
   }
@@ -1441,13 +1452,12 @@ function simulateSegment(s: State) {
     const staminaCost = matchStaminaCost(s, p, m.tactic);
     p.fatigue = clamp(
       p.fatigue +
-        (m.tactic === 'press' ? 8 : 5) * staminaCost *
-          playerFatigueMult(s, p.id) +
+        staminaCost * playerFatigueMult(s, p.id) +
         (m.mentality === 'attack' ? 1 : 0) +
         command.fatigue +
         (m.details.commands.player === p.id &&
         m.details.commands.role === 'attack'
-          ? 2
+          ? 1
           : 0),
     );
   }

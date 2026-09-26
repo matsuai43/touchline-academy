@@ -1,0 +1,45 @@
+# V4 開発の引き継ぎ（2026-09-27 中断時点）
+
+作成: Claude Opus 5.5（ディレクター）。ユーザーの指示「このフェーズでの開発は終了。キリの良いタイミングで中断して引継ぎの準備」により中断。
+
+## 1. どこに何があるか
+- 設計書: `DESIGN_V4.md`（確定版。9章の決定、10.5〜10.7 の範囲、11章の実装順）。
+- 詳細な引き継ぎ: `HANDOFF_V4-1.md`（交代画面・疲労）、`HANDOFF_V4-4.md`（学校の世界）。各担当エージェントが中断時に書いたもの。
+- Git:
+  - `main` = `d2a7aac`（設計書まで）。**本番（Cloudflare）は `ced8dc0` のまま。V4 は一切 push していない。**
+  - 作業途中のコードはブランチ **`v4-wip`** にコミット済み（push していない）。再開時は `git switch v4-wip` から。
+- Git コマンドは `git -c safe.directory='*' ...` が必要（所有者の不一致のため）。
+
+## 2. 進捗（11章の段階ごと）
+| 段階 | 状態 |
+|---|---|
+| V4-1 交代画面・疲労 | 実装ほぼ完了。残り: 交代画面の Playwright テスト（`tests/match-ui.spec.ts` が旧2列の `.sub-column` を参照）の書き直し、lint・build・ブラウザテスト未実施、週間メニューの疲労の目安表示（`dailyFatigueDelta`）が旧式のまま |
+| V4-4 学校の世界 | 中核（`lib/school-names.ts`・`lib/school-world.ts`・`lib/competition.ts` の世界化）は実装済み・型チェック通過。残り: 所属の札の画面表示（`app/competition-ui.tsx`）、「登場する学校はすべて架空です」とリーグ階層の説明、`tests/school-world.test.ts`、CSS（`app/globals.css` の V4-4 マーカー内） |
+| V4-2, V4-3, V4-5〜V4-8 | 未着手 |
+
+## 3. 中断時点のテスト（`npm test`、ブランチ v4-wip）
+229件中 **225件成功・4件失敗**（実行 約4分）:
+1. `T-10: chosen kickers, one-kick progress and resume…`（extra-time.test.ts）
+2. `T-10: sudden death waits for both teams…`（extra-time.test.ts）
+3. `manager care applies once per week at week-end…`（development.test.ts。疲労の回復式の変更で期待値「ケアの−4」がずれた可能性）
+4. `v3.5: match results … are stable for fixed seeds`（match-stats.test.ts。疲労の式の変更で試合結果が変わった可能性）
+
+**再開時の最初の作業**: 4件の原因を切り分ける。疲労の式の変更による「意図どおりの変化」なら、テストの意図を保って期待値を更新する。
+学校の世界の生成が `rand(s)`／`s.seed` の消費を変えていないこと（ハッシュのみ使用）も確かめる。
+
+## 4. ディレクターとしての要確認事項
+- **V4-1 担当が `tests/balance.test.ts` の「7季目の A の人数の下限」を 1 → 0.5 に緩めた。** v3.5 の目標値（5〜8季目に A が1〜5人）に関わるため、
+  緩めずに済む形（疲労の定数の調整など）を先に検討すること。同テストの T-3 の人工スタミナ値の変更（30→0）も、意図が保たれているか確認する。
+- V4-4 担当の報告では、全国・地域の候補校を探すたびに他県の学校の世界を作り直す（`tierPool` がメモ化されていない）。今回の全体テストは通ったが、実行時間が延びている可能性があるので、メモ化を検討する。
+- V4-1 担当が担当外の `app/squad-ui.tsx`（部員一覧の疲労の欄）を編集した。設計の意図どおりなので問題はないが、把握しておく。
+
+## 5. 再開の手順（おすすめ）
+1. `git switch v4-wip` → `npm test` で上の4件を直す → `npm run typecheck` → `npm run lint`。
+2. V4-1 の残り（Playwright の書き直し）→ `npm run build`（Windows では成功後に libuv の表示で終了コード1になる。`dist/client/index.html` の有無で判断）→ `npx playwright test`。
+3. V4-4 の残り（画面表示・テスト）。
+4. 幅390px・1280px、ライト・ダークで画面を確認 → ユーザーの確認後に `main` へ統合して push。
+5. 以降は `DESIGN_V4.md` 11章の順（V4-2 → V4-3 → V4-5 → V4-6 → V4-7 → V4-8）。
+
+## 6. 運用上の注意
+- 5時間枠の 90% で作業を止める（ユーザー指示）。並行で2体動かすと5分で約9ポイント消費した。並行は1〜2体まで。
+- 公開 URL に "matsusipec" を含めない。extra usage のクレジットは使わない。

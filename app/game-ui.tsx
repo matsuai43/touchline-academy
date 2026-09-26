@@ -20,6 +20,7 @@ import { LifeEventPanel } from './life-ui';
 import { AudioSettingsPanel } from './audio-ui';
 import { playScene, playSfx, primeAudio } from '@/lib/audio';
 import { MatchView, Metric, Meter, Choices, Pitch } from './match-ui';
+import { FatigueMeter } from './fatigue-meter';
 import { CompetitionStatusSection, CompetitionTournamentSection } from './competition-ui';
 import { readCompetition, competitionFixture } from '@/lib/competition';
 import { EventStills, type EventStillsChoice, type EventStillsResult } from './event-scenes';
@@ -86,6 +87,7 @@ import {
   formationHint,
   type State,
   type Action,
+  type Player,
   type Training,
   type Formation,
   type LineupPolicy,
@@ -428,8 +430,21 @@ export default function Game() {
   const focus = s.players.find((p) => p.id === s.focus),
     player = s.players.find((p) => p.id === selected),
     // S4: ポジション練習の対象（選手＋ポジション）。
-    positionFocusPlayer = s.players.find((p) => p.id === s.positionFocus?.id),
-    fatigue = s.players.reduce((a, p) => a + p.fatigue, 0) / s.players.length;
+    positionFocusPlayer = s.players.find((p) => p.id === s.positionFocus?.id);
+  // V4-1(5.1): 「平均疲労」は部員全員（試合に出ない部員は休養日で0に戻る）の平均だと
+  // 先発の疲れが薄まって見えるため、「先発の平均疲労」＋「要注意n人（疲労65以上）」＋
+  // 最も疲れている先発名に置き換える。
+  const starters = s.lineup
+    .map((id) => s.players.find((p) => p.id === id))
+    .filter((p): p is Player => !!p);
+  const starterFatigue = starters.length
+    ? starters.reduce((a, p) => a + p.fatigue, 0) / starters.length
+    : 0;
+  const tiredStarters = starters.filter((p) => p.fatigue >= 65);
+  const mostTiredStarter = starters.reduce<Player | null>(
+    (worst, p) => (!worst || p.fatigue > worst.fatigue ? p : worst),
+    null,
+  );
   // W2配線: 予定表・シーズン状況はすべて lib/competition.ts の大会データ（s.v3.competition）から
   // 導出する。旧 s.qualified/s.alive/s.summerAlive は試合結果の反映先ではなくなったため、表示にも使わない。
   const comp = readCompetition(s);
@@ -455,7 +470,7 @@ export default function Game() {
     (comp.ih.qualified && comp.ih.alive) || (comp.wc.qualified && comp.wc.alive);
   const coachTip = s.pending
     ? '試合の前に編成を確認。疲労の少ない選手を起用しましょう。'
-    : fatigue > 55
+    : starterFatigue > 55
       ? '疲労がたまっています。休養を入れて、けがと能力低下を防ぎましょう。'
       : s.week < 7
         ? 'まずは総合練習で基礎づくり。4週目に最初の練習試合です。'
@@ -982,11 +997,22 @@ export default function Game() {
                         </div>
                         <Meter label="チーム連携" value={s.cohesion} />
                         <Meter label="士気" value={s.morale} />
-                        <Meter
-                          label="平均疲労"
-                          value={fatigue}
-                          warn={fatigue > 55}
-                        />
+                        {/* V4-1(5.1): 部員全員の平均ではなく「先発の平均疲労」に変え、
+                            要注意人数（疲労65以上）と最も疲れている先発名を添える。 */}
+                        <div className="starter-fatigue-block">
+                          <FatigueMeter value={starterFatigue} label="先発の平均疲労" />
+                          <div className="starter-fatigue-detail">
+                            <span className={tiredStarters.length ? 'danger-text' : 'muted'}>
+                              要注意 {tiredStarters.length}人（疲労65以上）
+                            </span>
+                            {mostTiredStarter && (
+                              <span className="muted">
+                                最も疲れている先発：{mostTiredStarter.name}（
+                                {Math.round(mostTiredStarter.fatigue)}）
+                              </span>
+                            )}
+                          </div>
+                        </div>
                         <div className="status-foot">
                           <span>
                             学校の評判 <b>{Math.round(s.reputation)}</b>
@@ -1166,6 +1192,17 @@ export default function Game() {
                         </output>
                       );
                     })()}
+                    {/* V4-1(5.1): 先発に疲労65以上の選手がいれば、上の習熟度警告と同じ形で
+                        知らせる。 */}
+                    {tiredStarters.length > 0 && (
+                      <output className="thin-slots-warning fatigue-board-warning">
+                        <TriangleAlert size={16} aria-hidden="true" />
+                        <span>
+                          先発に疲労65以上の選手が{tiredStarters.length}人います（
+                          {tiredStarters.map((p) => p.name).join('、')}）。交代や休養を検討しましょう。
+                        </span>
+                      </output>
+                    )}
                     <Pitch s={s} onPick={(p) => setSelected(p.id)} />
                     <p className="muted instruction">
                       選手を押すと能力と起用先を変更できます。起用先は詳細ポジション（例:
@@ -1424,7 +1461,7 @@ export default function Game() {
               </DialogDescription>
               <IdentityDetails player={player} />
               <div className="profile-summary">
-                <Metric label="疲労" value={Math.round(player.fatigue)} />
+                <FatigueMeter value={player.fatigue} label="疲労" />
                 <div className="metric">
                   <span>成長の素質</span>
                   <strong className="profile-potential-value">

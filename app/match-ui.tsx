@@ -13,16 +13,16 @@ import { Portrait } from './development-ui';
 import { MatchCommands, VoicePanel } from './development-ui';
 import MatchCinema from './match-cinema';
 import { MatchResult } from './match-result';
-import { RankBadge, PositionBadge } from './ability-sheet';
+import { RankBadge, PositionBadge, MoodBadge } from './ability-sheet';
+import { FatigueMeter } from './fatigue-meter';
 import { playSfx } from '@/lib/audio';
 import { rankOf } from '@/lib/ability-rank';
+import { matchRatings } from '@/lib/match-rating';
 import {
   detailInfo,
   formationSlots,
   isBenchPlayer,
   basePos,
-  moodLevel,
-  MOOD_LABEL,
   type DetailPos,
 } from '@/lib/squad';
 import {
@@ -32,6 +32,7 @@ import {
   clamp,
   tactics,
   MATCH_MAX_SUBS,
+  GROWTH_MIN_PROF,
   fixtureFormation,
   type State,
   type Action,
@@ -219,17 +220,11 @@ function conditionHash(seed: number, id: number, salt: number) {
   x ^= x >>> 16;
   return (x >>> 0) / 4294967296;
 }
+// 「交代推奨」の判定にのみ使う、決定的な今日の出来の揺らぎ（表示はしない）。
 function conditionScore(s: State, p: Player): number {
   const minute = s.match?.minute ?? 0;
   const h = conditionHash(s.seed, p.id, minute);
   return clamp(Math.round(62 - p.fatigue * 0.55 + (h - 0.5) * 34), 0, 100);
-}
-function conditionLabel(score: number): string {
-  if (score >= 75) return '絶好調';
-  if (score >= 58) return '好調';
-  if (score >= 40) return '普通';
-  if (score >= 25) return 'やや不調';
-  return '不振';
 }
 
 // ---------------------------------------------------------------------------
@@ -247,12 +242,11 @@ function profFor(s: State, id: number, slot: DetailPos): number {
   if (!p) return 10;
   return p.pos === basePos(slot) ? 40 : 10;
 }
-// T2（別エージェント）が lib/squad.ts に追加した「調子」（0〜100、mood）。
-// 値が無い（旧セーブ移行前など）ときは何も返さず、表示側はそのまま出さない。
-function moodLabelFor(s: State, id: number): string | null {
+// T2（別エージェント）が lib/squad.ts に追加した「調子」（0〜100、mood）。旧セーブ移行前
+// など値が無いときは undefined のままにし、MoodBadge を出さない。
+function moodOf(s: State, id: number): number | undefined {
   const ps = s.v3.squad.players[id];
-  if (!ps || typeof ps.mood !== 'number' || !Number.isFinite(ps.mood)) return null;
-  return MOOD_LABEL[moodLevel(ps.mood)];
+  return typeof ps?.mood === 'number' && Number.isFinite(ps.mood) ? ps.mood : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +259,9 @@ function moodLabelFor(s: State, id: number): string | null {
 // スクロールする作りだったため、4区画すべてが常に描画され縦に長くなっていた。ここでは
 // 選択した区画だけを表示するタブに変える（交代の実際の選択はこれまでどおりダイアログ）。
 type MatchSection = 'movie' | 'voice' | 'tactics' | 'bench';
+
+// V4-1(4章): 下げる選手のポジション表示は GK→DF→MF→FW の順に並べる基準。
+const POS_ORDER: Record<'GK' | 'DF' | 'MF' | 'FW', number> = { GK: 0, DF: 1, MF: 2, FW: 3 };
 
 type PendingReservation = { outgoing: number; incoming: number; index: number };
 function SubstitutionDialog({
@@ -341,13 +338,82 @@ function SubstitutionDialog({
       onOpenChange(false);
     }
   };
+  // V4-1(4章): 交代パネルを「下げる選手を選ぶ→入れる選手を選ぶ」の2段階・1列の流れに
+  // 変える（旧2列レイアウトは幅375pxで詰まって読みにくかった）。評価点は matchRatings()
+  // （出場した選手のみ）から拾い、出ていない選手には表示しない。
+  const ratings = matchRatings(s);
+  const ratingOf = (id: number) => ratings.find((r) => r.id === id)?.rating ?? null;
+  const outRows = roster(s)
+    .map((p, i) => {
+      const slot = dslots[i];
+      const cond = conditionScore(s, p);
+      return {
+        p,
+        i,
+        slot,
+        recommend: cond < 40 || p.fatigue > 72,
+      };
+    })
+    .sort((a, b) => {
+      const reservedDiff = Number(reservedOutIds.has(b.p.id)) - Number(reservedOutIds.has(a.p.id));
+      if (reservedDiff) return -reservedDiff; // 予約済みは下げない（先頭にまとめない）
+      const recDiff = Number(b.recommend) - Number(a.recommend);
+      if (recDiff) return recDiff; // 交代推奨を先頭に
+      return POS_ORDER[basePos(a.slot)] - POS_ORDER[basePos(b.slot)] || a.i - b.i;
+    });
+  const benchRows = s.players
+    .filter((p) => isBenchPlayer(s, p.id))
+    .map((p) => ({ p, prof: outSlot ? profFor(s, p.id, outSlot) : 0 }))
+    .sort((a, b) => b.prof - a.prof);
+  const benchFit = benchRows.filter((r) => r.prof >= GROWTH_MIN_PROF);
+  const benchUnfit = benchRows.filter((r) => r.prof < GROWTH_MIN_PROF);
+  const renderBenchRow = ({ p, prof }: { p: Player; prof: number }) => {
+    const reserved = reservedInIds.has(p.id);
+    const locked = m.used.includes(p.id) || capReached || !!p.injury || reserved;
+    const mood = moodOf(s, p.id);
+    return (
+      <button
+        key={p.id}
+        type="button"
+        className={`sub-pick sub-in-row ${incoming === p.id ? 'selected' : ''}`}
+        aria-disabled={locked}
+        aria-pressed={incoming === p.id}
+        onClick={() => setIncoming(p.id)}
+      >
+        <span className="sub-pick-rank">
+          <span className="sub-pick-rank-label">習熟度</span>
+          <RankBadge value={prof} label={outSlot ? detailInfo[outSlot].name : undefined} size="lg" />
+        </span>
+        <span className="sub-pick-body">
+          <b className="sub-pick-name">{p.name}</b>
+          <span className="sub-pick-meta">
+            {outSlot ? `${detailInfo[outSlot].name}に入った場合の習熟度 ${rankOf(prof).letter}` : p.pos}
+            {reserved
+              ? '・予約済み'
+              : m.used.includes(p.id)
+                ? '・交代済'
+                : p.injury
+                  ? '・調整中'
+                  : ''}
+          </span>
+          {!reserved && !m.used.includes(p.id) && !p.injury && (
+            <span className="sub-pick-status">
+              <FatigueMeter value={p.fatigue} size="sm" />
+              {mood != null && <MoodBadge value={mood} size="sm" />}
+              <span className="sub-overall-chip">総合 {overall(p)}</span>
+            </span>
+          )}
+        </span>
+      </button>
+    );
+  };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="game-dialog sub-dialog">
         <DialogTitle>交代する選手を選ぶ</DialogTitle>
         <DialogDescription>
-          下げる選手を選ぶと、ベンチの各選手にそのポジションでの習熟度ランクが適性の高い順に表示されます。
-          組ができたら「予約に追加」、続けて次の組も選べます。最後に「まとめて確定」でまとめて交代します。
+          まず下げる選手を選び、続けて入れる選手を選びます。組ができたら「予約に追加」、
+          続けて次の組も選べます。最後に「まとめて確定」でまとめて交代します。
         </DialogDescription>
         {/* M2: 習熟度ランク（A〜G）が能力ランクと同じ見た目のため区別できないというユーザー
             要望への対応。バッジには常に「習熟度」の文字ラベルを添え、画面上部にランクの
@@ -358,14 +424,6 @@ function SubstitutionDialog({
           <br />
           ピッチ上の選手は「今いる枠への慣れ」、ベンチの選手は「下げる選手の枠に入った場合の慣れ」を表示します。
         </p>
-        {/* 交代時に下げる選手のポジションが分からなくなる不具合の修正: 下げる選手を
-            選んだ時点で、ダイアログ上部にそのポジションつきで明示する。 */}
-        {outPlayer && (
-          <p className="sub-outgoing-banner">
-            <b>{outPlayer.name}</b>
-            {outSlot ? `（${detailInfo[outSlot].name}）` : ''}を下げる
-          </p>
-        )}
         <div className="subs-counter-row">
           <span className="subs-counter">
             交代 {m.subs} / {MATCH_MAX_SUBS}
@@ -373,21 +431,23 @@ function SubstitutionDialog({
           </span>
           {capReached && <span className="muted">交代枠を使い切りました。</span>}
         </div>
+        {/* V4-1(4章-3): 予約した交代は「下げる ⇄ 入れる」のカードで一覧し、まとめて確定する。 */}
         {reservations.length > 0 && (
           <ul className="sub-reserved-list" aria-label="予約中の交代">
             {reservations.map((r, i) => {
               const out = s.players.find((p) => p.id === r.outgoing);
               const inn = s.players.find((p) => p.id === r.incoming);
-              // 交代時にポジションが分からなくなる不具合の修正: 予約リストの各行にも
-              // 「枠のポジション名：下げる選手 → 入れる選手（入れる選手の習熟度）」を出す。
               const slot = dslots[r.index];
               const prof = profFor(s, r.incoming, slot);
               return (
                 <li key={`${r.outgoing}-${r.incoming}`} className="sub-reserved-row">
-                  <span>
-                    <b>{detailInfo[slot].name}</b>：<b>{out?.name ?? '?'}</b> →{' '}
-                    <b>{inn?.name ?? '?'}</b>
-                    （習熟度 {rankOf(prof).letter}）
+                  <span className="sub-reserved-body">
+                    <span className="sub-reserved-slot">{detailInfo[slot].name}</span>
+                    <span className="sub-reserved-swap">
+                      下げる：<b>{out?.name ?? '?'}</b>
+                      <ArrowRightLeft size={13} aria-hidden="true" className="sub-reserved-arrow" />
+                      入れる：<b>{inn?.name ?? '?'}</b>（習熟度 {rankOf(prof).letter}）
+                    </span>
                   </span>
                   <button
                     type="button"
@@ -402,16 +462,14 @@ function SubstitutionDialog({
             })}
           </ul>
         )}
-        <div className="sub-columns">
-          <div className="sub-column">
-            <h3>ピッチ上の選手</h3>
+        {outgoing == null ? (
+          <div className="sub-step sub-step-out">
+            <h3 className="sub-step-title">1. 下げる選手を選ぶ</h3>
             <div className="sub-list">
-              {roster(s).map((p, i) => {
-                const cond = conditionScore(s, p);
-                const recommend = cond < 40 || p.fatigue > 72;
-                const slot = dslots[i];
+              {outRows.map(({ p, slot, recommend }) => {
                 const reserved = reservedOutIds.has(p.id);
-                const mood = moodLabelFor(s, p.id);
+                const mood = moodOf(s, p.id);
+                const rating = ratingOf(p.id);
                 // 交代時にポジションが分からなくなる不具合の修正:
                 // 今いる枠のポジション名を、習熟度ランクとは別に見出しとして出す。
                 const subbedIn = !m.original.includes(p.id);
@@ -419,7 +477,7 @@ function SubstitutionDialog({
                   <button
                     key={p.id}
                     type="button"
-                    className={`sub-pick ${outgoing === p.id ? 'selected' : ''}`}
+                    className={`sub-pick sub-out-row ${outgoing === p.id ? 'selected' : ''}`}
                     aria-disabled={capReached || reserved}
                     aria-pressed={outgoing === p.id}
                     onClick={() => {
@@ -428,95 +486,64 @@ function SubstitutionDialog({
                         setIncoming(null);
                     }}
                   >
-                    <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
-                    <span className="sub-pick-rank">
-                      <span className="sub-pick-rank-label">習熟度</span>
-                      <RankBadge value={profFor(s, p.id, slot)} label={detailInfo[slot].name} size="lg" />
+                    <span className="sub-pos-col">
+                      <PositionBadge detail={slot} />
                     </span>
                     <span className="sub-pick-body">
                       <span className="sub-pick-toprow">
                         <b className="sub-pick-name">{p.name}</b>
-                        <PositionBadge detail={slot} />
                         {subbedIn && <span className="sub-in-tag">交代出場</span>}
+                        {reserved && <span className="sub-recommend">予約済み</span>}
+                        {!reserved && recommend && <span className="sub-recommend">交代推奨</span>}
                       </span>
-                      <span className="sub-pick-meta">
-                        疲労 {Math.round(p.fatigue)}
-                        {mood ? ` ・ ${mood}` : ''} ・ {conditionLabel(cond)}
+                      <span className="sub-pick-status">
+                        <FatigueMeter value={p.fatigue} size="sm" />
+                        {mood != null && <MoodBadge value={mood} size="sm" />}
+                        {rating != null && (
+                          <span className="sub-rating-chip">評価 {rating.toFixed(1)}</span>
+                        )}
                       </span>
                     </span>
-                    {reserved && <span className="sub-recommend">予約済み</span>}
-                    {!reserved && recommend && <span className="sub-recommend">交代推奨</span>}
                   </button>
                 );
               })}
             </div>
           </div>
-          <div className="sub-column">
-            <h3>ベンチ</h3>
-            <div className="sub-list">
-              {/* S3: 交代投入できるのはベンチ入り(9人)の選手のみ。ベンチ外は一覧に出さない。
-                  下げる選手が決まっている間は、そのスロットでの習熟度が高い順に並べる。 */}
-              {s.players
-                .filter((p) => isBenchPlayer(s, p.id))
-                .map((p) => ({ p, prof: outSlot ? profFor(s, p.id, outSlot) : null }))
-                .sort((a, b) => (b.prof ?? 0) - (a.prof ?? 0))
-                .map(({ p, prof }) => {
-                  const reserved = reservedInIds.has(p.id);
-                  const locked =
-                    m.used.includes(p.id) ||
-                    capReached ||
-                    !!p.injury ||
-                    outgoing == null ||
-                    reserved;
-                  const mood = moodLabelFor(s, p.id);
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className={`sub-pick ${incoming === p.id ? 'selected' : ''}`}
-                      aria-disabled={locked}
-                      aria-pressed={incoming === p.id}
-                      onClick={() => setIncoming(p.id)}
-                    >
-                      <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
-                      {prof != null && (
-                        <span className="sub-pick-rank">
-                          <span className="sub-pick-rank-label">習熟度</span>
-                          <RankBadge
-                            value={prof}
-                            label={outSlot ? detailInfo[outSlot].name : undefined}
-                            size="lg"
-                          />
-                        </span>
-                      )}
-                      <span className="sub-pick-body">
-                        {/* 交代時にポジションが分からなくなる不具合の修正:
-                            「どの枠に入るのか」を文字でも明示する。 */}
-                        <b className="sub-pick-name">{p.name}</b>
-                        <span className="sub-pick-meta">
-                          {outSlot
-                            ? `${detailInfo[outSlot].name}に入った場合の習熟度 ${rankOf(prof ?? 0).letter}`
-                            : p.pos}{' '}
-                          {reserved
-                            ? '・予約済み'
-                            : m.used.includes(p.id)
-                              ? '・交代済'
-                              : p.injury
-                                ? '・調整中'
-                                : `・疲労 ${Math.round(p.fatigue)}${mood ? ` ・ ${mood}` : ''}`}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-            </div>
-            {outgoing == null && (
-              <p className="muted sub-hint">
-                先に「ピッチ上の選手」から下げる選手を選んでください。
+        ) : (
+          <div className="sub-step sub-step-in">
+            {/* 交代時に下げる選手のポジションが分からなくなる不具合の修正: 下げる選手を
+                選んだ時点で、ダイアログ上部にそのポジションつきで明示する。 */}
+            {outPlayer && (
+              <p className="sub-outgoing-banner">
+                <b>{outPlayer.name}</b>
+                {outSlot ? `（${detailInfo[outSlot].name}）` : ''}を下げる
+                <button
+                  type="button"
+                  className="link-button sub-change-out"
+                  onClick={() => {
+                    setOutgoing(null);
+                    setIncoming(null);
+                  }}
+                >
+                  下げる選手を変える
+                </button>
               </p>
             )}
+            <h3 className="sub-step-title">2. 入れる選手を選ぶ（習熟度が高い順）</h3>
+            <div className="sub-list">
+              {benchFit.map(renderBenchRow)}
+              {benchUnfit.length > 0 && (
+                <>
+                  <p className="sub-unfit-label">不慣れ（習熟度D未満）</p>
+                  {benchUnfit.map(renderBenchRow)}
+                </>
+              )}
+              {benchRows.length === 0 && (
+                <p className="muted sub-hint">ベンチに入れられる選手がいません。</p>
+              )}
+            </div>
           </div>
-        </div>
+        )}
         {(outPlayer || inPlayer) && (
           <div className="sub-confirm">
             <p>
@@ -564,32 +591,6 @@ function SubstitutionDialog({
             </output>
           )}
         </div>
-        <style>{`
-          .sub-pick { flex-wrap: wrap; }
-          .sub-pick-rank { flex-shrink: 0; display: flex; flex-direction: column;
-            align-items: center; gap: 2px; }
-          .sub-pick-rank-label { font-size: 12px; font-weight: 700; color: var(--muted-foreground); }
-          .sub-rank-legend { margin: 10px 0 0; padding: 10px 12px; font-size: 12px; line-height: 1.5;
-            color: var(--muted-foreground); background: var(--accent); border: 1px solid var(--border);
-            border-radius: 8px; }
-          .sub-rank-legend b { color: var(--foreground); }
-          .sub-outgoing-banner { margin: 2px 0 0; font-size: 14px; }
-          .sub-pick-toprow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-          .sub-in-tag { font-size: 12px; font-weight: 700; padding: 2px 6px; border-radius: 999px;
-            background: var(--accent); color: var(--accent-foreground); border: 1px solid var(--border);
-            white-space: nowrap; }
-          .sub-reserved-list { list-style: none; margin: 10px 0 0; padding: 0;
-            display: flex; flex-direction: column; gap: 6px; }
-          .sub-reserved-row { display: flex; align-items: center; justify-content: space-between;
-            gap: 10px; min-height: 40px; padding: 6px 10px; border-radius: 7px;
-            border: 1px solid var(--border); background: var(--accent); font-size: 13px; }
-          .sub-reserved-remove { min-width: 32px; min-height: 32px; flex-shrink: 0; }
-          .sub-confirm-all { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
-          .sub-confirm-all > button { width: 100%; min-height: 46px; }
-          @media (max-width: 640px) {
-            .sub-pick-rank .rank-badge.rank-lg { font-size: 22px; padding: 4px 9px; min-width: 36px; }
-          }
-        `}</style>
       </DialogContent>
     </Dialog>
   );

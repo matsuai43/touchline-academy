@@ -4,6 +4,7 @@ import {
   fixtureFormation,
   FORMATION_WEAK_LANE,
   FORMATION_STRONG_LANE,
+  stats,
 } from './game.ts';
 import { PLAY_STYLES } from './squad.ts';
 import { applyStatGrowth } from './growth.ts';
@@ -421,17 +422,28 @@ export function handleDevelopment(s: State, a: DevelopmentAction): boolean {
             : ev.kind === 'challenge'
               ? 'shoot'
               : 'mental';
-        applyStatGrowth(s, p, stat, 1.2);
+        const gained = applyStatGrowth(s, p, stat, 1.2);
         p.identity.trust = cap(p.identity.trust + 3);
-        if (ev.kind === 'tracking')
+        // 守備の頑張り（戻り・カバー）は献身性、挑戦と疲労への声かけは勇気が伸びる。
+        if (ev.kind === 'tracking' || ev.kind === 'effort')
           p.identity.workRate = cap(p.identity.workRate + 4);
         else p.identity.courage = cap(p.identity.courage + 3);
-        result =
-          a.voice === 'correct'
-            ? '「戻る責任を果たそう」と厳しく伝えた。守備と献身性が成長。'
-            : a.voice === 'praise'
-              ? '挑戦を認めた。自信と技術が育った。'
-              : '疲労を理解して励ました。信頼と精神力が育った。';
+        // 場面ごとに正しい文言を出し、実際に伸びた量を示す（上限に近くて伸びなければそう伝える）。
+        const statName = stats[stat];
+        const growth =
+          gained >= 0.05
+            ? `${statName} +${Math.round(gained * 10) / 10}、信頼 +3`
+            : `信頼 +3（${statName}は伸びしろの上限に近く、今回は伸びなかった）`;
+        const opening =
+          ev.kind === 'tracking'
+            ? '「戻る責任を果たそう」と厳しく伝えた。'
+            : ev.kind === 'challenge'
+              ? '挑戦を認めた。'
+              : ev.kind === 'effort'
+                ? '懸命な守備を認めた。'
+                : '疲労を理解して励ました。';
+        const trait = ev.kind === 'tracking' || ev.kind === 'effort' ? '献身性' : '勇気';
+        result = `${opening}${growth}。${trait}も育った。`;
       } else if (a.voice === 'correct') {
         p.identity.trust = cap(
           p.identity.trust - (p.identity.personality === 'sensitive' ? 6 : 3),

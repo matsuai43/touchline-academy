@@ -4933,32 +4933,43 @@ footer button::after,
 }
 
 /* U3: 1人1行の個人方針（ポジション札・名前学年・主な能力2つ・方針・先月の伸び・個別札）。
-   横スクロールはさせず、幅が足りなければ折り返す。 */
+   狭い画面では表だけ横スクロールし、選手の列を固定する。 */
+.policy-table-scroll {
+  overflow: auto;
+  max-height: 46vh;
+  border: 1px solid var(--border);
+}
+.policy-table-hint { font-size: 12px; }
+.game-dialog:has(.training-policy-panel) { width: min(1000px, calc(100vw - 32px)); max-width: calc(100vw - 32px); }
 .policy-row-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: 46vh;
-  overflow-y: auto;
+  min-width: 760px;
 }
 .policy-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  display: grid;
+  grid-template-columns: 180px 130px 210px minmax(180px, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px 0 0;
+  border-bottom: 1px solid var(--border);
   background: var(--card);
   min-width: 0;
 }
 .policy-row-head {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  align-self: stretch;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  padding: 4px 6px;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
 }
 .policy-row-pos {
@@ -4976,7 +4987,7 @@ footer button::after,
   color: inherit;
   font: inherit;
   text-align: left;
-  flex: 1 1 140px;
+  flex: 1 1 auto;
   min-width: 0;
 }
 .policy-row-name > span {
@@ -5004,17 +5015,17 @@ footer button::after,
   flex-wrap: wrap;
   gap: 6px;
 }
+.policy-row-ability { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
 .policy-row-controls {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px;
 }
 .policy-row-select {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  flex: 1 1 160px;
+  flex: 1 1 100px;
   min-width: 0;
 }
 .policy-row-select select {
@@ -5030,7 +5041,9 @@ footer button::after,
 }
 .policy-row-growth {
   font-size: 12px;
+  margin: 0;
 }
+.policy-row-clear { max-width: 78px; padding: 4px; font-size: 12px; }
 
 /* 6.3: 重点育成選手（1人・成長1.5倍）。既存の focus アクション・選手詳細と両方から指定できる。 */
 .policy-focus {
@@ -5062,3 +5075,49 @@ footer button::after,
   }
 }
 /* ===== /V4-2 ===== */
+
+/* V4-3: 試合の進行と状態を、スクロール中も確認できるようにする。 */
+.auto-league-setting { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.auto-league-setting input { width: 22px; height: 22px; }
+.match-view { padding-bottom: 100px; }
+.main-content:has(.match-view) { overflow: clip; }
+.match-view .match-actionbar { position: static; backdrop-filter: none; }
+.match-view > .scoreboard { position: sticky; top: 0; z-index: 20; padding: 10px; background: var(--card); }
+.match-view .score-row { margin: 6px 0; gap: 8px; }
+.match-view .score-row .club-emblem, .match-view .score-row small { display: none; }
+.match-view .score-row h2 { font-size: 14px; margin: 0; }
+.match-view .score > strong { font-size: 30px; letter-spacing: 0; }
+.match-view .score > strong > span { font-size: 20px; margin: 0 8px; }
+.match-view .score b { font-size: 14px; }
+.match-comparisons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.match-comparison { display: grid; grid-template-columns: auto 1fr auto; gap: 4px; font-size: 12px; text-align: center; }
+.comparison-bar { grid-column: 1 / -1; height: 5px; background: var(--muted-foreground); }
+.comparison-bar i { display: block; height: 100%; background: var(--primary); border-right: 2px solid var(--card); }
+.match-progress-controls { position: fixed; z-index: 30; bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; width: min(900px, calc(100% - 24px)); padding: 8px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; }
+.match-progress-controls button { min-height: 44px; flex: 1; justify-content: center; }
+.match-progress-controls .match-advance { position: static; margin: 0; width: auto; box-shadow: none; }
+.match-timeline { max-height: 220px; overflow: auto; padding: 12px 12px 12px 28px; font-size: 14px; }
+.match-timeline li { padding: 6px 0; }
+.pitch-condition { width: 54px; border-radius: 4px; padding: 2px; background: var(--card); color: var(--foreground); font-size: 12px; }
+.pitch.live .pitch-player > .portrait, .pitch.live .pitch-player > .number { display: none; }
+.pitch-condition .fatigue-meter-bar { gap: 2px; }
+.pitch-condition .fatigue-meter-status { display: none; }
+.pitch-condition .fatigue-meter-track { min-width: 16px; }
+.pitch.live { min-height: 450px; }
+@media (max-width: 640px) {
+  .match-comparisons { gap: 6px; }
+  .match-comparison { grid-template-columns: 1fr 1fr; }
+  .match-comparison > span:nth-child(2) { grid-row: 1; grid-column: 1 / -1; }
+  .match-progress-controls { gap: 4px; bottom: 4px; padding: 6px; }
+  .match-progress-controls button { font-size: 12px; padding: 6px 4px; }
+  .match-progress-controls svg { display: none; }
+  .pitch.live { min-height: 430px; }
+}
+@media (orientation: landscape) and (max-height: 560px) {
+  .main-content:has(.match-view) { overflow-y: auto; overflow-x: hidden; scroll-padding: 100px 0 80px; }
+  .match-view > .scoreboard { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: center; padding: 6px; }
+  .match-view .match-caption { display: none; }
+  .match-view .score-row h2 { font-size: 12px; }
+  .match-view .score > strong { font-size: 24px; }
+  .match-progress-controls { left: auto; right: 12px; transform: none; width: calc(100% - 170px); bottom: 4px; padding: 4px; }
+}

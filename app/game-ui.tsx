@@ -97,6 +97,7 @@ import {
   type Action,
   type Player,
   type Training,
+  type Tactic,
   type Formation,
   type LineupPolicy,
 } from '@/lib/game';
@@ -817,6 +818,16 @@ export default function Game() {
                       {formationHint(fixtureFormation(s.pending)) && (
                         <p>{formationHint(fixtureFormation(s.pending))}</p>
                       )}
+                      <label className="field">試合の戦術
+                        <select value={s.matchPlan.tactic} onChange={(e) => run({ type: 'matchPlan', ...s.matchPlan, tactic: e.target.value as Tactic })}>
+                          {(Object.keys(tactics) as Tactic[]).map((key) => <option key={key} value={key}>{tactics[key].name}</option>)}
+                        </select>
+                      </label>
+                      <label className="field">攻守の意識
+                        <select value={s.matchPlan.mentality} onChange={(e) => run({ type: 'matchPlan', ...s.matchPlan, mentality: e.target.value as 'safe' | 'normal' | 'attack' })}>
+                          <option value="safe">守備重視</option><option value="normal">標準</option><option value="attack">攻撃重視</option>
+                        </select>
+                      </label>
                     </div>
                     {/* V4-8: 幅375〜390pxで説明文とボタンが横並びに詰まって読みにくかったため、
                         ボタンをまとめて別の行（狭幅では文章の下）に回す。 */}
@@ -834,8 +845,9 @@ export default function Game() {
                           run({ type: 'start' });
                         }}
                       >
-                        試合へ進む <ArrowRight size={18} />
+                        自分で采配する <ArrowRight size={18} />
                       </button>
+                      <button className="secondary" onClick={() => { if (run({ type: 'start' })) run({ type: 'autoMatch' }); }}>おまかせで進める</button>
                     </div>
                   </section>
                 ) : null}
@@ -975,6 +987,7 @@ export default function Game() {
                         </button>
                       </div>
                     )}
+                    <label className="auto-league-setting"><input type="checkbox" checked={s.autoLeagueMatches} onChange={(e) => run({ type: 'autoLeagueMatches', on: e.target.checked })} />リーグ戦はおまかせで進める</label>
                     <details className="weekly-menu-editor">
                       <summary>週間メニューを編集</summary>
                       <p className="muted">

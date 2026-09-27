@@ -8,7 +8,6 @@
 // 判断により実装しない（DESIGN_V4 10.5）。
 import { useState } from 'react';
 import { ChevronRight, Sparkles } from 'lucide-react';
-import { Portrait } from './development-ui';
 import { RankBadge, growthKeyLabel } from './ability-sheet';
 import {
   detailInfo,
@@ -245,7 +244,6 @@ function PlayerPolicyRow({
           {p.pos}
         </span>
         <button type="button" className="policy-row-name" onClick={() => onOpenDetail(p.id)}>
-          <Portrait index={p.identity.portrait} name={p.name} size="tiny" />
           <span>
             {p.name}
             <small>{p.year}年</small>
@@ -255,7 +253,9 @@ function PlayerPolicyRow({
       </div>
       <div className="policy-row-abilities">
         {topAbilities(p, sq).map((a) => (
-          <RankBadge key={a.label} value={a.value} label={a.label} size="sm" />
+          <span className="policy-row-ability" key={a.label}>
+            {a.label} <RankBadge value={a.value} label={a.label} size="sm" />
+          </span>
         ))}
       </div>
       <div className="policy-row-controls">
@@ -397,11 +397,15 @@ export function TrainingPolicyPanel({
             ))}
           </div>
         </div>
+        <p className="muted policy-table-hint">横にスクロールすると方針と先月の伸びを確認できます。</p>
+        {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- 横スクロールをキーボードで操作するため */}
+        <section className="policy-table-scroll" aria-label="選手ごとの方針一覧" tabIndex={0}>
         <ul className="policy-row-list">
           {rows.map((p) => (
             <PlayerPolicyRow key={p.id} s={s} p={p} run={run} onOpenDetail={onSelectPlayer} />
           ))}
         </ul>
+        </section>
         {!rows.length && <p className="muted">条件に合う選手がいません。絞り込みを見直してください。</p>}
       </section>
 

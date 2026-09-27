@@ -238,6 +238,8 @@ export type State = {
   // （導入前）は validateSave() が既定値（'overall' / false）を補う。
   autoLineupPolicy: LineupPolicy;
   autoLineupOnMatch: boolean;
+  autoLeagueMatches: boolean;
+  matchPlan: { tactic: Tactic; mentality: Match['mentality'] };
   reputation: number;
   // T-11: 評判の「持続」を積み上げる指標（0〜100、季節ごとの評判のEMA）。
   // 新入生・スカウト候補の素質は「今の評判」ではなくこちらに連動させ、
@@ -716,6 +718,8 @@ export function newGame(
     formation: '4-3-3',
     autoLineupPolicy: 'overall',
     autoLineupOnMatch: false,
+    autoLeagueMatches: false,
+    matchPlan: { tactic: 'balanced', mentality: 'normal' },
     reputation: 15,
     repSustain: 15,
     cohesion: 45,
@@ -986,6 +990,36 @@ function resolveWeekOutcome(s: State) {
       ]);
   }
 }
+/** Pure coach decisions. These commands also work through the manual controls. */
+export function coachActions(s: State): Action[] {
+  const m = s.match;
+  if (!m || m.done || m.pk) return [];
+  const actions: Action[] = [];
+  if (m.minute >= 75 && m.home > m.away) actions.push({ type: 'mentality', mentality: 'safe' });
+  else if (m.minute >= 60 && m.home < m.away) actions.push({ type: 'mentality', mentality: 'attack' });
+  if (![60, 75].includes(m.minute)) return actions;
+  const available = s.players.filter((p) => isBenchPlayer(s, p.id) && !p.injury && !m.used.includes(p.id));
+  const positions = formationSlots(s.formation);
+  const outgoing = roster(s).map((p, index) => ({ p, index }))
+    .filter(({ p }) => p.fatigue >= 70 || p.injury > 0 || (s.v3.squad.players[p.id]?.mood ?? 50) < 40)
+    .sort((a, b) => Number(b.p.injury > 0) - Number(a.p.injury > 0) || b.p.fatigue - a.p.fatigue || a.index - b.index);
+  let remaining = MATCH_MAX_SUBS - m.subs;
+  for (const { p, index } of outgoing) {
+    if (remaining <= 0) break;
+    const slot = positions[index];
+    const candidates = available.filter((q) => (s.v3.squad.players[q.id]?.prof[slot] ?? 0) >= 50 &&
+      (p.injury > 0 || q.fatigue < p.fatigue || (s.v3.squad.players[q.id]?.mood ?? 50) > (s.v3.squad.players[p.id]?.mood ?? 50)))
+      .sort((a, b) => (overall(b) * positionFitMult(s.v3.squad.players[b.id], slot) - b.fatigue * 0.4) -
+        (overall(a) * positionFitMult(s.v3.squad.players[a.id], slot) - a.fatigue * 0.4) || a.id - b.id);
+    const incoming = candidates[0];
+    if (!incoming) continue;
+    actions.push({ type: 'swap', index, id: incoming.id });
+    available.splice(available.indexOf(incoming), 1);
+    remaining--;
+  }
+  return actions;
+}
+
 export type Action =
   | DevelopmentAction
   | SquadAction
@@ -1002,6 +1036,10 @@ export type Action =
   | { type: 'auto' }
   | { type: 'autoLineupPolicy'; policy: LineupPolicy }
   | { type: 'autoLineupOnMatch'; on: boolean }
+  | { type: 'autoLeagueMatches'; on: boolean }
+  | { type: 'matchPlan'; tactic: Tactic; mentality: Match['mentality'] }
+  | { type: 'autoMatch' }
+  | { type: 'nextHighlight' }
   | { type: 'focus'; id: number | null }
   | { type: 'positionFocus'; id: number | null; pos: DetailPos | null }
   | { type: 'upgrade' }
@@ -1054,6 +1092,8 @@ export function act(old: State, a: Action): State {
       finishDay(s);
       if (injured) break;
     }
+    if (s.autoLeagueMatches && (s.pending as Fixture | null)?.kind === 'league' && !s.event && !s.cupDraw && !s.v3.life.current)
+      return act(act(s, { type: 'start' }), { type: 'autoMatch' });
     return s;
   }
   if (a.type === 'setMenu') {
@@ -1074,6 +1114,30 @@ export function act(old: State, a: Action): State {
   if (a.type === 'autoLineupOnMatch') {
     s.autoLineupOnMatch = !!a.on;
     return s;
+  }
+  if (a.type === 'autoLeagueMatches') {
+    s.autoLeagueMatches = !!a.on;
+    return s;
+  }
+  if (a.type === 'matchPlan') {
+    if (!(a.tactic in tactics) || !['safe', 'normal', 'attack'].includes(a.mentality))
+      throw Error('試合の方針が不正です。');
+    s.matchPlan = { tactic: a.tactic, mentality: a.mentality };
+    return s;
+  }
+  if (a.type === 'autoMatch' || a.type === 'nextHighlight') {
+    if (!s.match || s.match.done) throw Error('進行できる試合がありません。');
+    let next = s;
+    do {
+      if (a.type === 'autoMatch')
+        for (const command of coachActions(next)) next = act(next, command);
+      const injuries = next.players.map((p) => p.injury);
+      next = act(next, { type: 'segment' });
+      const m = next.match!;
+      if (a.type === 'nextHighlight' && (m.pk || m.details.highlights.length > 0 ||
+        [45, 90, 105, 120].includes(m.minute) || next.players.some((p, i) => p.injury > injuries[i]))) break;
+    } while (!next.match!.done);
+    return next;
   }
   if (a.type === 'event') {
     if (!s.event) throw Error('イベントはありません。');
@@ -1138,8 +1202,8 @@ export function act(old: State, a: Action): State {
       shots: [0, 0],
       xg: [0, 0],
       logs: ['キックオフ。15分ごとに戦術と交代を指示できます。'],
-      tactic: 'balanced',
-      mentality: 'normal',
+      tactic: s.matchPlan?.tactic ?? 'balanced',
+      mentality: s.matchPlan?.mentality ?? 'normal',
       subs: 0,
       used: [...s.lineup],
       original: [...s.lineup],
@@ -1650,6 +1714,8 @@ export function validateSave(x: unknown): State {
   // T2: おまかせ編成の方針・自動適用（導入前のセーブ）は既定値で補う。
   if (s.autoLineupPolicy === undefined) s.autoLineupPolicy = 'overall';
   if (s.autoLineupOnMatch === undefined) s.autoLineupOnMatch = false;
+  if (s.autoLeagueMatches === undefined) s.autoLeagueMatches = false;
+  if (s.matchPlan === undefined) s.matchPlan = { tactic: 'balanced', mentality: 'normal' };
   // T4.2: 部費の収入履歴（導入前のセーブ）は空配列で補う。
   if (s.fundHistory === undefined) s.fundHistory = [];
   // T-11: 評判の持続（repSustain、導入前のセーブ）は「今の評判が定着している」ものとして
@@ -1694,7 +1760,10 @@ export function validateSave(x: unknown): State {
     s.players.length > ROSTER_MAX ||
     !FORMATIONS.includes(s.formation) ||
     !LINEUP_POLICIES.includes(s.autoLineupPolicy) ||
-    typeof s.autoLineupOnMatch !== 'boolean'
+    typeof s.autoLineupOnMatch !== 'boolean' ||
+    typeof s.autoLeagueMatches !== 'boolean' ||
+    !s.matchPlan || !(s.matchPlan.tactic in tactics) ||
+    !['safe', 'normal', 'attack'].includes(s.matchPlan.mentality)
   )
     throw Error('このセーブは対応していないか、壊れています。');
   for (const p of s.players) {

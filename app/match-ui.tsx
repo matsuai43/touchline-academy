@@ -137,6 +137,7 @@ export function Pitch({
   // T1修正: 試合中はスタメン(m.original)に無い=交代で入った選手を「交代出場」として
   // 見た目と読み上げの両方に残す。ライブでない（先発編成中）ときは常にfalse。
   const original = live ? s.match?.original : undefined;
+  const ratings = live ? new Map(matchRatings(s).map((r) => [r.id, r.rating])) : null;
   return (
     <div
       className={`pitch ${live ? 'live' : ''}`}
@@ -186,9 +187,9 @@ export function Pitch({
                 </span>
               )}
             </span>
-            <span className="energy">
+            {live ? <span className="pitch-condition"><FatigueMeter value={p.fatigue} size="sm" /><span>評価 {ratings?.get(p.id)?.toFixed(1) ?? '—'}</span></span> : <span className="energy">
               <i style={{ width: `${100 - p.fatigue}%` }} />
-            </span>
+            </span>}
           </button>
         );
       })}
@@ -659,6 +660,7 @@ function PenaltyShootoutView({ s, run }: { s: State; run: (a: Action) => State |
         <button type="button" className="primary pk-advance" onClick={() => run({ type: 'segment' })}>
           {pk.kicks.length ? '次のキックへ' : 'PK戦を始める'} <ArrowRight size={19} />
         </button>
+        <button type="button" className="secondary" onClick={() => run({ type: 'autoMatch' })}>ここからおまかせ</button>
       </section>
     </section>
   );
@@ -675,6 +677,7 @@ export function MatchView({
   const m = s.match!;
   const [matchSection, setMatchSection] = useState<MatchSection>('movie');
   const [subOpen, setSubOpen] = useState(false);
+  const [picked, setPicked] = useState<Player | null>(null);
   const [subInitial, setSubInitial] = useState<{
     outgoing: number | null;
     incoming: number | null;
@@ -728,25 +731,15 @@ export function MatchView({
             <small>{tactics[m.fixture.style].name} ・ {fixtureFormation(m.fixture)}</small>
           </div>
         </div>
-        <div className="match-stats">
-          <span>
-            シュート{' '}
-            <b>
-              {m.shots[0]} — {m.shots[1]}
-            </b>
-          </span>
-          <span>
-            得点期待値{' '}
-            <b>
-              {m.xg[0].toFixed(1)} — {m.xg[1].toFixed(1)}
-            </b>
-          </span>
-          <span>
-            ボール保持{' '}
-            <b>
-              {m.possession}% — {100 - m.possession}%
-            </b>
-          </span>
+        <div className="match-comparisons">
+          {([
+            ['シュート', m.shots[0], m.shots[1]],
+            ['得点期待値', +m.xg[0].toFixed(1), +m.xg[1].toFixed(1)],
+            ['ボール保持', m.possession, 100 - m.possession],
+          ] as const).map(([label, home, away]) => <div className="match-comparison" key={label}>
+            <span>{home}{label === 'ボール保持' ? '%' : ''}</span><span>{label}</span><span>{away}{label === 'ボール保持' ? '%' : ''}</span>
+            <span className="comparison-bar" aria-hidden="true"><i style={{ width: `${home + away ? home / (home + away) * 100 : 50}%` }} /></span>
+          </div>)}
         </div>
       </div>
           <Tabs
@@ -765,6 +758,7 @@ export function MatchView({
                 <TabsTrigger value="tactics">戦術</TabsTrigger>
                 <TabsTrigger value="bench">交代</TabsTrigger>
               </TabsList>
+              <div className="match-progress-controls">
               <button
                 className="primary match-advance"
                 onClick={() => {
@@ -786,23 +780,30 @@ export function MatchView({
                 {m.minute === 45 ? '後半の15分を進める' : m.minute === 90 ? '延長前半を進める' : m.minute === 105 ? '延長後半を進める' : '次の15分を進める'}{' '}
                 <ArrowRight size={19} />
               </button>
+              <button className="secondary" onClick={() => { run({ type: 'nextHighlight' }); setMatchSection('movie'); }}>次の山場まで</button>
+              <button className="secondary" onClick={() => run({ type: 'autoMatch' })}>ここからおまかせ</button>
+              </div>
             </div>
+            <TabsContent value="movie">
+              <MatchCinema key={`cinema-${m.minute}`} s={s} />
+            </TabsContent>
             <section className="panel pitch-panel">
               <div className="section-head">
                 <h2>タッチラインからの指示</h2>
                 <span className="formation-label">{s.formation}</span>
               </div>
-              <Pitch s={s} live onPick={(p) => openSub({ outgoing: p.id })} />
-              <div className="live-log" aria-live="polite">
-                {m.logs.slice(0, 5).map((l, i) => (
-                  <p
+              <Pitch s={s} live onPick={setPicked} />
+              <h3>試合の出来事</h3>
+              <ol className="live-log match-timeline" aria-live="polite">
+                {[...m.logs].reverse().filter((l) => !l.startsWith('キックオフ') && /GOAL|失点|交代|けが|負傷|HALF|同点|終了/.test(l)).map((l, i) => (
+                  <li
                     className={l.includes('GOAL') ? 'goal-log' : ''}
                     key={`${m.minute}-${i}`}
                   >
-                    {l}
-                  </p>
+                    <span aria-hidden="true">{l.includes('交代') ? '⇄' : /GOAL|失点/.test(l) ? '⚽' : '•'}</span> {l.startsWith('HALF') ? '45′ ' : ''}{l}
+                  </li>
                 ))}
-              </div>
+              </ol>
             </section>
             {/* T-14: 交代の起点（件数表示・「交代する選手を選ぶ」）は、既存のPlaywright
                 テストや実プレイの導線が「試合画面を開いたらすぐ操作できる」ことを前提に
@@ -825,9 +826,6 @@ export function MatchView({
                 <ArrowRightLeft size={17} /> 交代する選手を選ぶ
               </button>
             </section>
-            <TabsContent value="movie">
-              <MatchCinema key={`cinema-${m.minute}`} s={s} />
-            </TabsContent>
             <TabsContent value="voice">
               <VoicePanel s={s} run={run} />
             </TabsContent>
@@ -924,6 +922,16 @@ export function MatchView({
               </section>
             </TabsContent>
           </Tabs>
+          <Dialog open={!!picked} onOpenChange={(open) => { if (!open) setPicked(null); }}>
+            <DialogContent>
+              <DialogTitle>{picked?.name}</DialogTitle>
+              <DialogDescription>選手への指示を選んでください。</DialogDescription>
+              <button className="secondary" onClick={() => { if (picked) openSub({ outgoing: picked.id }); setPicked(null); }}>交代</button>
+              <button className="secondary" aria-disabled={m.details.moment?.playerId !== picked?.id || m.details.moment?.answered}
+                onClick={() => { if (m.details.moment?.playerId === picked?.id && !m.details.moment?.answered) { setMatchSection('voice'); setPicked(null); } }}>声かけ</button>
+              {m.details.moment?.playerId !== picked?.id || m.details.moment?.answered ? <p className="muted">声かけは、プレーの場面が届いた選手に行えます。</p> : null}
+            </DialogContent>
+          </Dialog>
           <SubstitutionDialog
             key={`sub-${subToken}`}
             s={s}

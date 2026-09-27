@@ -45,6 +45,7 @@ import {
   type SchoolTier,
 } from './school-world.ts';
 import { regionalSchoolName } from './school-names.ts';
+import { preparePromotion, promotionFixture, recordPromotion, advancePromotionWeek, wonPromotion, bTeamPromotion, validatePromotion, type PromotionState } from './promotion.ts';
 
 // V4-4: 学校の世界（lib/school-world.ts）・地域色のある校名（lib/school-names.ts）を
 // 再輸出する。両ファイルは lib/competition.ts に一切依存しない独立モジュールなので、
@@ -224,13 +225,14 @@ const WORLD_MEMO_MAX = 200;
  *  絶対にこちらを使わない。呼べるのは comp.world が整った後の通常の読み取りパスのみ。 */
 function districtSchoolsOf(s: State, comp: CompState, districtId: DistrictId): WorldSchool[] {
   if (comp.world.homeDistrictId === districtId) return comp.world.homeSchools;
-  const key = `${s.seed}|${districtId}|${s.season}`;
+  const worldSeed = comp.world.seed ?? s.seed;
+  const key = `${worldSeed}|${districtId}|${s.season}`;
   const cached = worldMemo.get(key);
-  if (cached) return cached;
-  const built = buildDistrictWorld(s.seed, districtId, districtStrengthOf(districtId), s.season);
+  if (cached) return cached.map((p) => ({ ...p, tier: comp.world.tierChanges?.[p.id] ?? p.tier }));
+  const built = buildDistrictWorld(worldSeed, districtId, districtStrengthOf(districtId), s.season);
   if (worldMemo.size >= WORLD_MEMO_MAX) worldMemo.clear();
   worldMemo.set(key, built);
-  return built;
+  return built.map((p) => ({ ...p, tier: comp.world.tierChanges?.[p.id] ?? p.tier }));
 }
 /** 指定県の学校の世界（24校）。自県（comp.world.homeDistrictId）なら保存済みの
  *  （＝季ごとに強さが少しずつ揺れた）ものを返し、他県はその場で同じ種から決定的に
@@ -263,6 +265,10 @@ function tierPool(s: State, comp: CompState, tier: LeagueTier): WorldSchool[] {
 function tierPoolWithFallback(s: State, comp: CompState, tier: LeagueTier, minCount: number): WorldSchool[] {
   let pool = tierPool(s, comp, tier);
   if (pool.length >= minCount) return pool;
+  if (tier === 'pref2') {
+    pool = [...pool, ...districtSchoolsOf(s, comp, comp.districtId).filter((p) => p.tier === 'pref3')];
+    if (pool.length >= minCount) return pool;
+  }
   const fallbackOrder: LeagueTier[] =
     tier === 'pref2' ? ['pref1'] :
     tier === 'pref1' ? ['pref2'] :
@@ -438,6 +444,8 @@ export type CompHistoryEntry = {
  *  他県の学校は getDistrictSchools() が必要な時に同じ種から作る（保存しない）。 */
 export type SchoolWorldState = {
   schema: 1;
+  seed?: number;
+  tierChanges?: Record<string, LeagueTier>;
   /** homeSchools がどの県のものか（comp.districtId とずれたら hydrateWorld() が作り直す）。 */
   homeDistrictId: DistrictId;
   /** homeSchools の強さがどの season 向けに計算されたか。 */
@@ -460,6 +468,8 @@ export type CompState = {
   history: CompHistoryEntry[];
   /** V4-4: 学校の世界。hydrateCompetition() が必ず決定的に埋める。 */
   world: SchoolWorldState;
+  /** Absent in older saves until their next season. */
+  promotion?: PromotionState;
 };
 
 // ---------------------------------------------------------------------------
@@ -476,7 +486,9 @@ function makeClubs(
   // 選出は season をキーに含めない（pickStableSubset）ので、階層・県が変わらない限り
   // 毎季まったく同じ7校になる＝「あの県1部の強豪」との再戦が生まれる。
   const pool = tierPoolWithFallback(s, comp, tier, 7);
-  const picked = pickStableSubset(pool, 7, [s.seed, comp.districtId, tier, teamTag]);
+  const key = [comp.world.seed ?? s.seed, comp.districtId, tier, teamTag];
+  const picked = pickStableSubset(pool.filter((p) => p.tier === tier), 7, key);
+  picked.push(...pickStableSubset(pool.filter((p) => p.tier !== tier), 7 - picked.length, key));
   return picked.map((school) => {
     // ユースは技術がやや高くフィジカルは同等という味付け: 総合力に軽いプラス補正。
     const youthBonus = school.isYouth ? 1.03 : 1;
@@ -864,7 +876,7 @@ function finalizeTeamA(s: State, comp: CompState, prevSeason: number): void {
   const rank = rows.findIndex((r) => r.isSelf) + 1;
   const tierIdx = LEAGUE_TIERS.indexOf(team.tier);
   let newTier = team.tier;
-  if (rank <= 2 && tierIdx < LEAGUE_TIERS.length - 1) newTier = LEAGUE_TIERS[tierIdx + 1];
+  if ((comp.promotion ? (team.tier === 'pref2' ? rank <= 2 : wonPromotion(comp, team.tier)) : rank <= 2) && tierIdx < LEAGUE_TIERS.length - 1) newTier = LEAGUE_TIERS[tierIdx + 1];
   else if (rank >= 7 && tierIdx > 0) newTier = LEAGUE_TIERS[tierIdx - 1];
   const promoted = LEAGUE_TIERS.indexOf(newTier) > tierIdx;
   const relegated = LEAGUE_TIERS.indexOf(newTier) < tierIdx;
@@ -933,7 +945,9 @@ function finalizeTeamB(
   const rank = rows.findIndex((r) => r.isSelf) + 1;
   const tierIdx = LEAGUE_TIERS.indexOf(team.tier);
   let naturalTier = team.tier;
-  if (rank <= 2 && tierIdx < LEAGUE_TIERS.length - 1) naturalTier = LEAGUE_TIERS[tierIdx + 1];
+  const canPromote = !comp.promotion ? rank <= 2 : team.tier === 'pref2' ? rank <= 2 :
+    rank === 1 && tierIdx + 1 < LEAGUE_TIERS.indexOf(newTierA) && bTeamPromotion(s, comp, bTeamStrength(s));
+  if (canPromote && tierIdx < LEAGUE_TIERS.length - 1) naturalTier = LEAGUE_TIERS[tierIdx + 1];
   else if (rank >= 7 && tierIdx > 0) naturalTier = LEAGUE_TIERS[tierIdx - 1];
   const ceilIdx = ceilTier ? LEAGUE_TIERS.indexOf(ceilTier) : -1;
   const naturalIdx = LEAGUE_TIERS.indexOf(naturalTier);
@@ -954,6 +968,23 @@ function advanceCompetitionSeason(s: State, comp: CompState): void {
   const prevSeason = comp.seasonGenerated;
   let plannedBTier: LeagueTier | null = null;
   if (prevSeason > 0 && comp.teamA.clubs.length) {
+    // Persist league movements for the schools whose competitions we have actually resolved.
+    if (comp.promotion) {
+      const rows = computeLeagueTable(s, comp, prevSeason).rows;
+      const tier = comp.teamA.tier;
+      const changes = comp.world.tierChanges ?? {};
+      rows.forEach((row, index) => {
+        if (row.isSelf) return;
+        if (tier === 'pref2' && index < 2) changes[row.teamId] = 'pref1';
+        if (tier !== 'pref2' && index >= 6) changes[row.teamId] = tierBelow(tier)!;
+      });
+      for (const stage of ['regional', 'national'] as const) for (const row of comp.promotion[stage]?.rounds[1] ?? []) {
+        if (row.winnerId && row.winnerId !== 'self') changes[row.winnerId] = stage;
+      }
+      comp.world.tierChanges = changes;
+      comp.world.homeSeason = 0;
+      hydrateWorld(s, comp);
+    }
     finalizeTeamA(s, comp, prevSeason);
     // Bの昇降格はAの新階層が決まった後で判定する（finalizeTeamA が comp.teamA.tier を
     // 既に更新済みなので、ここで参照する comp.teamA.tier は新階層）。
@@ -961,6 +992,7 @@ function advanceCompetitionSeason(s: State, comp: CompState): void {
   }
   comp.ih = freshCup();
   comp.wc = freshCup();
+  comp.promotion = { regional: null, national: null };
   const district = districtById(comp.districtId);
   comp.ih.qualifier = createCupBracket(s, comp, district, 'ih', false);
   comp.ih.national = createCupBracket(s, comp, district, 'ih', true);
@@ -1033,6 +1065,8 @@ function emptyWorldState(): SchoolWorldState {
  *  フルに再計算する。どの季から呼んでも同じ結果になるので、旧セーブ・季飛びにも強い）。
  *  hydrateCompetition() の中（advanceCompetitionSeason より前）で必ず呼ぶこと。 */
 function hydrateWorld(s: State, comp: CompState): void {
+  const worldSeed = comp.world?.seed ?? s.seed;
+  const tierChanges = comp.world?.tierChanges ?? {};
   if (
     !comp.world ||
     comp.world.schema !== 1 ||
@@ -1042,11 +1076,15 @@ function hydrateWorld(s: State, comp: CompState): void {
   ) {
     comp.world = {
       schema: 1,
+      seed: worldSeed,
+      tierChanges,
       homeDistrictId: comp.districtId,
       homeSeason: s.season,
-      homeSchools: buildDistrictWorld(s.seed, comp.districtId, districtStrengthOf(comp.districtId), s.season),
+      homeSchools: buildDistrictWorld(worldSeed, comp.districtId, districtStrengthOf(comp.districtId), s.season).map((p) => ({ ...p, tier: tierChanges[p.id] ?? p.tier })),
     };
   }
+  comp.world.seed ??= worldSeed;
+  comp.world.tierChanges ??= tierChanges;
 }
 
 export function hydrateCompetition(s: State): void {
@@ -1100,6 +1138,8 @@ export function validateCompetition(s: State): void {
   // V4-4: 学校の世界。
   if (!comp.world || comp.world.schema !== 1 || !Array.isArray(comp.world.homeSchools))
     throw Error('学校の世界データが不正です。');
+  if (!num(comp.world.seed, 0, 4294967295) || !comp.world.tierChanges || typeof comp.world.tierChanges !== 'object' ||
+      Object.values(comp.world.tierChanges).some((tier) => !LEAGUE_TIERS.includes(tier))) throw Error('学校の所属データが不正です。');
   if (comp.world.homeSchools.length > 0 && !DISTRICTS.some((d) => d.id === comp.world.homeDistrictId))
     throw Error('学校の世界データが不正です。');
   for (const sc of comp.world.homeSchools) {
@@ -1199,6 +1239,7 @@ export function validateCompetition(s: State): void {
   };
   checkCup(comp.ih, 'インターハイ');
   checkCup(comp.wc, '選手権');
+  if (comp.promotion !== undefined) validatePromotion(comp.promotion);
   if (!Array.isArray(comp.history) || comp.history.length > 20) throw Error('大会の履歴データが不正です。');
 }
 export function readCompetition(s: State): CompState {
@@ -1248,7 +1289,9 @@ export type CompFixtureKind =
   | 'ih_qualifier'
   | 'ih_national'
   | 'wc_qualifier'
-  | 'wc_national';
+  | 'wc_national'
+  | 'promotion_regional'
+  | 'promotion_national';
 /** lib/game.ts の Fixture と完全に同じ形（kind の型だけが広い）。統括側が Fixture.kind を
  *  拡張すれば、このままキャストなしで s.pending に代入できる。 */
 export type CompFixture = {
@@ -1590,6 +1633,8 @@ function completeCupRound(s: State, bracket: CupBracket, cupKey: 'ih' | 'wc', na
 /** Resolve rival cup games after each calendar week, even if the player's school is eliminated. */
 export function advanceCupWeek(s: State, week: number): void {
   const comp = readCompetition(s);
+  preparePromotion(s, comp);
+  advancePromotionWeek(s, comp, week);
   for (const [cupKey, cup] of [['ih', comp.ih], ['wc', comp.wc]] as const) {
     const qRound = (cupKey === 'ih' ? IH_QUALIFIER_WEEKS : WC_QUALIFIER_WEEKS).indexOf(week);
     if (qRound >= 0 && cup.qualifier) {
@@ -1669,6 +1714,9 @@ function cupFixture(
  *  対戦相手/強さ/戦術を組み立てていたロジックの両方を1つにまとめたもの。試合が無い週は null。 */
 export function competitionFixture(s: State, week: number): CompFixture | null {
   const comp = readCompetition(s);
+  preparePromotion(s, comp);
+  const playoff = promotionFixture(s, comp, week);
+  if (playoff) return playoff;
   const district = districtById(comp.districtId);
   if (IH_QUALIFIER_WEEKS.includes(week)) {
     if (!comp.ih.alive) return null;
@@ -1766,6 +1814,10 @@ export function resolveCompetitionMatch(s: State, m: ResolvableMatch): void {
   const comp = withComp(s).competition;
   if (!comp) return;
   const f = m.fixture;
+  if (f.kind === 'promotion_regional' || f.kind === 'promotion_national') {
+    recordPromotion(comp, m);
+    return;
+  }
   if (f.kind === 'league') {
     const team = comp.teamA;
     team.played++;

@@ -11,7 +11,7 @@
     "start": "node scripts/serve.mjs",
     "lint": "oxlint",
     "format": "oxfmt",
-    "test": "node --experimental-strip-types --test tests/game.test.ts tests/development.test.ts tests/squad.test.ts tests/audio.test.ts tests/school-life.test.ts tests/competition.test.ts tests/school-world.test.ts tests/match-2d.test.ts tests/event-scenes.test.ts tests/ability-rank.test.ts tests/position-mastery.test.ts tests/match-rating.test.ts tests/training-policy.test.ts tests/funds-history.test.ts tests/match-stats.test.ts tests/balance.test.ts tests/extra-time.test.ts tests/cup-draw.test.ts tests/lineup-policy.test.ts tests/fatigue.test.ts tests/match-progress.test.ts",
+    "test": "node --experimental-strip-types --test tests/game.test.ts tests/development.test.ts tests/squad.test.ts tests/audio.test.ts tests/school-life.test.ts tests/competition.test.ts tests/school-world.test.ts tests/match-2d.test.ts tests/event-scenes.test.ts tests/ability-rank.test.ts tests/position-mastery.test.ts tests/match-rating.test.ts tests/training-policy.test.ts tests/funds-history.test.ts tests/match-stats.test.ts tests/balance.test.ts tests/extra-time.test.ts tests/cup-draw.test.ts tests/lineup-policy.test.ts tests/fatigue.test.ts tests/match-progress.test.ts tests/promotion.test.ts",
     "typecheck": "tsc --noEmit",
     "test:browser": "playwright test"
   },

@@ -5077,6 +5077,14 @@ footer button::after,
 /* ===== /V4-2 ===== */
 
 /* V4-3: 試合の進行と状態を、スクロール中も確認できるようにする。 */
+.promotion-panel summary { min-height: 44px; cursor: pointer; font-weight: 700; }
+.league-ladder { padding-left: 24px; font-size: 14px; }
+.league-ladder li { padding: 8px; border-left: 3px solid var(--border); }
+.league-ladder li[aria-current] { border-color: var(--primary); background: var(--accent); }
+.promotion-bracket { margin-top: 16px; font-size: 14px; }
+.promotion-bracket ul { padding: 0; list-style: none; }
+.promotion-bracket li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.promotion-bracket li strong { flex-basis: 100%; }
 .auto-league-setting { display: flex; align-items: center; gap: 10px; min-height: 44px; }
 .auto-league-setting input { width: 22px; height: 22px; }
 .match-view { padding-bottom: 100px; }

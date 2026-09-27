@@ -137,7 +137,9 @@ export type Fixture = {
     | 'ih_qualifier'
     | 'ih_national'
     | 'wc_qualifier'
-    | 'wc_national';
+    | 'wc_national'
+    | 'promotion_regional'
+    | 'promotion_national';
   round: number;
   strength: number;
   opponent: string;
@@ -1845,6 +1847,8 @@ export function validateSave(x: unknown): State {
       'ih_national',
       'wc_qualifier',
       'wc_national',
+      'promotion_regional',
+      'promotion_national',
     ].includes(f.kind) &&
     num(f.round, 0, 4) &&
     num(f.strength, 1, 200) &&

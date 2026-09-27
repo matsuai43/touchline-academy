@@ -46,6 +46,7 @@ import {
 } from '@/lib/competition';
 // V4-8: TierChip は app/game-ui.tsx の試合日カードでも使うため app/tier-chip.tsx に切り出した。
 import { TierChip } from './tier-chip';
+import { PROMOTION_WEEKS } from '@/lib/promotion';
 
 function Stars({ count }: { count: number }) {
   return (
@@ -232,7 +233,7 @@ function LeagueStandingsSection({ state, which }: { state: State; which: 'A' | '
             {rows.map((row, i) => {
               const rank = i + 1;
               const zone: 'promotion' | 'relegation' | null =
-                rank <= 2 && promoActive ? 'promotion' : rank >= rows.length - 1 && relActive ? 'relegation' : null;
+                rank <= (comp.promotion && team.tier !== 'pref2' ? 1 : 2) && promoActive ? 'promotion' : rank >= rows.length - 1 && relActive ? 'relegation' : null;
               const rowClass = [
                 zone === 'promotion' ? 'lt-row-up' : '',
                 zone === 'relegation' ? 'lt-row-down' : '',
@@ -245,7 +246,7 @@ function LeagueStandingsSection({ state, which }: { state: State; which: 'A' | '
                   <TableCell className="font-medium">
                     <span className="lt-rank-cell">
                       {rank}
-                      {zone === 'promotion' && <ArrowUpCircle size={14} className="lt-icon-up" aria-label="昇格圏" />}
+                      {zone === 'promotion' && <ArrowUpCircle size={14} className="lt-icon-up" aria-label={comp.promotion && team.tier !== 'pref2' ? '参入戦出場圏' : '昇格圏'} />}
                       {zone === 'relegation' && (
                         <ArrowDownCircle size={14} className="lt-icon-down" aria-label="降格圏" />
                       )}
@@ -287,7 +288,7 @@ function LeagueStandingsSection({ state, which }: { state: State; which: 'A' | '
           {promoActive && (
             <span className="lt-zone-mark lt-zone-up">
               <ArrowUpCircle size={13} aria-hidden="true" />
-              昇格圏（上位2位）
+              {comp.promotion && team.tier !== 'pref2' ? '参入戦出場圏（1位）' : '昇格圏（上位2位）'}
             </span>
           )}
           {relActive && (
@@ -709,6 +710,38 @@ function CupTournament({ name, cup, cupKey }: { name: string; cup: CupState; cup
  * 「リーグ順位」「トーナメント」のサブタブに分けられるよう、中身を3つの部品に割った。
  * view を指定しなければ従来どおり全部まとめて表示する（既存の呼び出しとの後方互換）。
  */
+function PromotionPanel({ state }: { state: State }) {
+  const comp = readCompetition(state);
+  return <details className="panel promotion-panel">
+    <summary>昇格の条件と参入戦</summary>
+    <ol className="league-ladder">
+      {(['pref2', 'pref1', 'regional', 'national'] as const).map((tier) => <li key={tier} aria-current={comp.teamA.tier === tier ? 'step' : undefined}>
+        <b>{tierInfo[tier].name}{comp.teamA.tier === tier ? '（現在地）' : ''}</b>
+        <p>{tier === 'pref2' ? '1・2位が県1部へ自動昇格。降格なし。' : tier === 'pref1' ? '1位が地域参入戦へ。2勝で昇格、7・8位は県2部へ。' : tier === 'regional' ? '1位が全国参入戦へ（地域の強さで選ぶ8地域）。2勝で昇格、7・8位は県1部へ。' : '全国リーグ EAST / WEST。7・8位は地域リーグへ。'}</p>
+      </li>)}
+    </ol>
+    {!comp.promotion ? <p>このシーズンは旧ルール（上位2位が自動昇格）です。翌シーズンから参入戦に切り替わります。</p> : <>
+      <p>参入戦：{PROMOTION_WEEKS.map(weekCalendarLabel).join('・')}。地域参入戦は4校、全国参入戦は8校から2校が昇格します。</p>
+      <p className="muted">地域参入戦の不足枠は同じ地域の県1部の次点校で補充します。</p>
+      {(['regional', 'national'] as const).map((stage) => {
+        const b = comp.promotion![stage];
+        return <section key={stage} className="promotion-bracket">
+          <h3>{stage === 'regional' ? '地域' : '全国'}参入戦</h3>
+          {!b ? <p>リーグ終了後、2月第4週に組み合わせを発表します。</p> : b.rounds.map((round, index) => <div key={index}>
+            <h4>{index === 0 ? '1回戦' : '昇格決定戦'}</h4>
+            <ul>{round.map((match, i) => <li key={i}>
+              <span>{b.teams.find((p) => p.id === match.homeId)?.name ?? '勝者未定'}</span>
+              <b>{match.home === null ? '対' : `${match.home} - ${match.away}`}{match.penalties ? `（PK ${match.penalties}）` : ''}</b>
+              <span>{b.teams.find((p) => p.id === match.awayId)?.name ?? '勝者未定'}</span>
+              {index === 1 && match.winnerId && <strong>昇格：{b.teams.find((p) => p.id === match.winnerId)?.name}</strong>}
+            </li>)}</ul>
+          </div>)}
+        </section>;
+      })}
+    </>}
+  </details>;
+}
+
 export function CompetitionStatusSection({
   state,
   onChoosePrefecture,
@@ -760,6 +793,7 @@ export function CompetitionStatusSection({
       </details>
 
       <LeagueSection state={state} />
+      <PromotionPanel state={state} />
 
       {comp.history.length > 0 && (
         <section className="flex flex-col gap-2 rounded-xl border border-border/60 bg-card p-4 shadow-sm" aria-label="大会の歴史">

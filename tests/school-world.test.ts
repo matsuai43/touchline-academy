@@ -140,7 +140,7 @@ function forceMidTableAndAdvance(comp: CompState, s: { season: number }): void {
   s.season += 1;
 }
 
-void test('league opponents (comp.teamA.clubs) come from the school world and stay the same schools across seasons when tier and district are unchanged', () => {
+void test('league opponents retain their identities while promoted schools leave the division', () => {
   let found = false;
   for (let seed = 1; seed <= 80 && !found; seed++) {
     const s = newGame('据置検証高校', seed);
@@ -149,6 +149,7 @@ void test('league opponents (comp.teamA.clubs) come from the school world and st
     const tierBefore = comp.teamA.tier;
     const districtBefore = comp.districtId;
     const idsBefore = comp.teamA.clubs.map((c) => c.id).sort();
+    const namesBefore = new Map(comp.teamA.clubs.map((c) => [c.id, c.name]));
     assert.ok(idsBefore.length > 0, '前提: 初年度からクラブが生成されているはず');
     for (const c of comp.teamA.clubs) {
       assert.ok(c.schoolId, '対戦相手には学校の世界のIDが付与されているはず');
@@ -162,11 +163,10 @@ void test('league opponents (comp.teamA.clubs) come from the school world and st
 
     found = true;
     const idsAfter = comp2.teamA.clubs.map((c) => c.id).sort();
-    assert.deepEqual(
-      idsAfter,
-      idsBefore,
-      `seed ${seed}: 階層・所属県が変わっていないのに対戦相手の顔ぶれが変わっています`,
-    );
+    const retained = idsBefore.filter((id) => !comp2.world.tierChanges?.[id] || comp2.world.tierChanges[id] === tierBefore);
+    for (const id of retained) assert.ok(idsAfter.includes(id), `seed ${seed}: 昇降格していない学校${id}が消えた`);
+    for (const club of comp2.teamA.clubs) if (namesBefore.has(club.id)) assert.equal(club.name, namesBefore.get(club.id));
+    for (const id of idsBefore.filter((id) => !retained.includes(id))) assert.ok(!idsAfter.includes(id), '昇格校は旧階層から抜ける');
   }
   assert.ok(found, 'テストの前提: 中位成績で昇降格を回避できるseedが見つかりませんでした');
 });

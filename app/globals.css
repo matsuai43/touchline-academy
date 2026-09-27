@@ -5138,3 +5138,15 @@ html:has(.match-view) { scroll-padding-block: 220px 100px; }
 .representative-list summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
 .representative-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
 .representative-grid li { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 12px; }
+
+/* V4-7: the application is compact until opened, with readable school details. */
+.friendly-application summary { min-height: 44px; cursor: pointer; font-weight: 700; }
+.friendly-application summary > span { display: block; font-size: 12px; font-weight: 400; margin-top: 4px; }
+.friendly-application p { font-size: 12px; margin: 12px 0; }
+.friendly-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; border: 0; padding: 0; }
+.friendly-option { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 12px; cursor: pointer; }
+.friendly-option:has(input:checked) { outline: 2px solid var(--primary); outline-offset: -2px; }
+.friendly-choice-label, .friendly-rest { display: flex; gap: 10px; align-items: center; min-height: 44px; font-size: 14px; }
+.friendly-options input { width: 20px; height: 20px; flex-shrink: 0; }
+.friendly-rest { grid-column: 1 / -1; }
+@media (max-width: 640px) { .friendly-options { grid-template-columns: 1fr; } }

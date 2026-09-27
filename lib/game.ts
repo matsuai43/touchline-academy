@@ -1,3 +1,4 @@
+import { applyFriendlyRest } from './friendlies.ts';
 import {
   identityFor,
   newDevelopment,
@@ -127,6 +128,8 @@ export type Player = {
   appearances: number;
 };
 export type Fixture = {
+  friendlyXp?: number;
+  friendlyFatigue?: number;
   label: string;
   kind:
     | 'friendly'
@@ -982,6 +985,7 @@ function resolveWeekOutcome(s: State) {
   if (f) {
     s.pending = f;
   } else {
+    applyFriendlyRest(s, readCompetition(s));
     finishWeek(s);
     s.day = 0;
     if (s.week > 0 && s.week % 7 === 0)
@@ -1539,6 +1543,7 @@ function simulateSegment(s: State) {
     p.fatigue = clamp(
       p.fatigue +
         staminaCost * playerFatigueMult(s, p.id) +
+        (m.fixture.kind === 'friendly' ? (m.fixture.friendlyFatigue ?? 0) / 6 : 0) +
         (m.mentality === 'attack' ? 1 : 0) +
         command.fatigue +
         (m.details.commands.player === p.id &&
@@ -1851,6 +1856,8 @@ export function validateSave(x: unknown): State {
       'promotion_national',
     ].includes(f.kind) &&
     num(f.round, 0, 5) &&
+    (f.friendlyXp === undefined || num(f.friendlyXp, 0.7, 1.4)) &&
+    (f.friendlyFatigue === undefined || [0, 2, 4].includes(f.friendlyFatigue)) &&
     num(f.strength, 1, 200) &&
     typeof f.label === 'string' &&
     f.label.length < 100 &&

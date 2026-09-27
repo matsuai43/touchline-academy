@@ -33,6 +33,7 @@ import { EventStills, type EventStillsChoice, type EventStillsResult } from './e
 import { getEventScenePanels } from '@/lib/event-scenes';
 import { Progress } from '@/components/ui/progress';
 import { TrainingPolicyBanner, TrainingPolicyPanel } from './training-policy-ui';
+import { FriendlyApplication } from './friendly-ui';
 import { resolvePolicyView } from '@/lib/training-policy';
 
 import { useEffect, useRef, useState } from 'react';
@@ -854,6 +855,7 @@ export default function Game() {
                 {/* T-13: クラブハウスが縦に長かったため、以下をサブタブで分ける。
                     選んだサブタブは（スクロール位置記憶と同様）画面内の状態として
                     メインタブを行き来しても覚えている（clubSection は Game 本体の state）。 */}
+                <FriendlyApplication state={s} run={run} />
                 <SubTabs
                   value={clubSection}
                   onChange={setClubSection}

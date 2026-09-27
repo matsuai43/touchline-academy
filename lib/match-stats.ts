@@ -462,7 +462,7 @@ export function opponentStrengthMult(ourRating: number, oppStrength: number): nu
   return clamp(1 + (oppStrength - ourRating) * 0.02, 0.7, 1.4);
 }
 export function matchXpMultiplier(m: Match, ourRating: number): number {
-  return matchImportanceMult(m.fixture.kind) * opponentStrengthMult(ourRating, m.fixture.strength);
+  return matchImportanceMult(m.fixture.kind) * (m.fixture.kind === 'friendly' && m.fixture.friendlyXp !== undefined ? m.fixture.friendlyXp : opponentStrengthMult(ourRating, m.fixture.strength));
 }
 function categoryOf(key: Stat | ExtraStat): SkillCategory {
   if (key === 'shoot' || key === 'dribble') return '攻撃';

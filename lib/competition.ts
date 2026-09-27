@@ -45,6 +45,7 @@ import {
   type SchoolTier,
 } from './school-world.ts';
 import { regionalSchoolName } from './school-names.ts';
+import { prepareFriendlies, chooseFriendly, friendlyFixture, validateFriendlies, type FriendlyState, type FriendlyChoice } from './friendlies.ts';
 import { preparePromotion, promotionFixture, recordPromotion, advancePromotionWeek, wonPromotion, bTeamPromotion, validatePromotion, type PromotionState } from './promotion.ts';
 
 // V4-4: 学校の世界（lib/school-world.ts）・地域色のある校名（lib/school-names.ts）を
@@ -223,7 +224,7 @@ const WORLD_MEMO_MAX = 200;
 /** getDistrictSchools() の内部実装。comp を直接受け取る（readCompetition() を呼ばない）ので、
  *  hydrateCompetition() 自身の中（＝comp.world がまだ整っていない可能性がある最中）からは
  *  絶対にこちらを使わない。呼べるのは comp.world が整った後の通常の読み取りパスのみ。 */
-function districtSchoolsOf(s: State, comp: CompState, districtId: DistrictId): WorldSchool[] {
+export function districtSchoolsOf(s: State, comp: CompState, districtId: DistrictId): WorldSchool[] {
   if (comp.world.homeDistrictId === districtId) return comp.world.homeSchools;
   const worldSeed = comp.world.seed ?? s.seed;
   const key = `${worldSeed}|${districtId}|${s.season}`;
@@ -462,6 +463,7 @@ export type SchoolWorldState = {
 };
 
 export type CompState = {
+  friendlies?: FriendlyState;
   representativeHistory?: Record<string, { lastSeason: number; appearances: number; streak: number }>;
   qualifierHistory?: Record<string, string[]>;
   schema: 1;
@@ -1003,6 +1005,7 @@ function advanceCompetitionSeason(s: State, comp: CompState): void {
   comp.ih = freshCup();
   comp.wc = freshCup();
   comp.promotion = { regional: null, national: null };
+  comp.friendlies = { offers: {} };
   const district = districtById(comp.districtId);
   for (const key of ['ih', 'wc'] as const) {
     comp[key].qualifier = createWorldQualifier(s, comp, district.id, key);
@@ -1143,6 +1146,7 @@ export function hydrateCompetition(s: State): void {
     if (cup.national && typeof cup.national.drawn !== 'boolean') cup.national.drawn = true;
   }
   if (comp.seasonGenerated !== s.season) advanceCompetitionSeason(s, comp);
+  prepareFriendlies(s, comp);
 }
 export function validateCompetition(s: State): void {
   const comp = withComp(s).competition;
@@ -1273,6 +1277,7 @@ export function validateCompetition(s: State): void {
   checkCup(comp.ih, 'インターハイ');
   checkCup(comp.wc, '選手権');
   if (comp.promotion !== undefined) validatePromotion(comp.promotion);
+  if (comp.friendlies !== undefined) validateFriendlies(comp.friendlies);
   if (!Array.isArray(comp.history) || comp.history.length > 20) throw Error('大会の履歴データが不正です。');
 }
 export function readCompetition(s: State): CompState {
@@ -1332,6 +1337,8 @@ export type CompFixtureKind =
 /** lib/game.ts の Fixture と完全に同じ形（kind の型だけが広い）。統括側が Fixture.kind を
  *  拡張すれば、このままキャストなしで s.pending に代入できる。 */
 export type CompFixture = {
+  friendlyXp?: number;
+  friendlyFatigue?: number;
   label: string;
   kind: CompFixtureKind;
   round: number;
@@ -1847,25 +1854,7 @@ export function competitionFixture(s: State, week: number): CompFixture | null {
       opponentTier: club.tier,
     };
   }
-  if (FRIENDLY_WEEKS.includes(week)) {
-    const jitter = hf(s.seed, s.season, week, 7171);
-    const strengthVal = clamp(Math.round(strengthOf(s) - 4 + jitter * 8), 20, 99);
-    // V4-4: 練習試合の相手も学校の世界（自県）から名前・戦術を借りる。
-    const pool = districtSchoolsOf(s, comp, comp.districtId);
-    const picked = nearestSchool(pool, strengthVal, [s.seed, s.season, week, 'friendly']);
-    const style = picked?.tactic ?? pickTactic(hf(s.seed, s.season, week, 7172));
-    return {
-      label: '練習試合',
-      kind: 'friendly',
-      round: 0,
-      strength: strengthVal,
-      opponent: picked?.name ?? regionalSchoolName(comp.districtId, [s.seed, s.season, week, 9997]),
-      style,
-      formation: pickFormation(hf(s.seed, s.season, week, 7173), style),
-      opponentDistrictId: picked?.districtId,
-      opponentTier: picked?.tier,
-    };
-  }
+  if (FRIENDLY_WEEKS.includes(week)) return friendlyFixture(s, comp, week);
   return null;
 }
 
@@ -1968,8 +1957,9 @@ export function canChoosePrefecture(s: State): boolean {
   const comp = readCompetition(s);
   return s.season >= comp.nextChoiceSeason;
 }
-export type CompetitionAction = { type: 'compPrefecture'; districtId: string };
-export function handleCompetition(s: State, a: { type: string; districtId?: string }): boolean {
+export type CompetitionAction = { type: 'compPrefecture'; districtId: string } | { type: 'friendlyChoice'; choice: FriendlyChoice | 'rest' };
+export function handleCompetition(s: State, a: { type: string; districtId?: string; choice?: string }): boolean {
+  if (a.type === 'friendlyChoice') { chooseFriendly(s, readCompetition(s), a.choice ?? ''); return true; }
   if (a.type !== 'compPrefecture') return false;
   if (!canChoosePrefecture(s)) throw Error('赴任先はまだ選べません。');
   const districtId = a.districtId;

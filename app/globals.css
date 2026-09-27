@@ -5089,6 +5089,8 @@ footer button::after,
 .auto-league-setting input { width: 22px; height: 22px; }
 .match-view { padding-bottom: 100px; }
 .main-content:has(.match-view) { overflow: clip; }
+html:has(.match-view) { scroll-padding-block: 220px 100px; }
+.match-view .fm-btn { scroll-margin-block: 220px 100px; }
 .match-view .match-actionbar { position: static; backdrop-filter: none; }
 .match-view > .scoreboard { position: sticky; top: 0; z-index: 20; padding: 10px; background: var(--card); }
 .match-view .score-row { margin: 6px 0; gap: 8px; }
@@ -5122,6 +5124,7 @@ footer button::after,
   .pitch.live { min-height: 430px; }
 }
 @media (orientation: landscape) and (max-height: 560px) {
+  .match-view .fm-btn { scroll-margin-block: 100px 80px; }
   .main-content:has(.match-view) { overflow-y: auto; overflow-x: hidden; scroll-padding: 100px 0 80px; }
   .match-view > .scoreboard { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: center; padding: 6px; }
   .match-view .match-caption { display: none; }
@@ -5129,3 +5132,9 @@ footer button::after,
   .match-view .score > strong { font-size: 24px; }
   .match-progress-controls { left: auto; right: 12px; transform: none; width: calc(100% - 170px); bottom: 4px; padding: 4px; }
 }
+
+/* V4-6: district representatives, independent of the wide bracket. */
+.representative-list { display: grid; gap: 8px; margin-bottom: 12px; }
+.representative-list summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.representative-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.representative-grid li { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 12px; }

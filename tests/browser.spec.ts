@@ -1,6 +1,6 @@
 import {test,expect,type Page} from '@playwright/test';
 import {newGame} from '../lib/game';
-import {drawPendingCup,IH_QUALIFIER_DRAW_WEEK,IH_NATIONAL_DRAW_WEEK} from '../lib/competition';
+import {advanceCupWeek,drawPendingCup,IH_QUALIFIER_DRAW_WEEK,IH_NATIONAL_DRAW_WEEK} from '../lib/competition';
 // W3日常イベント: 「試合の無い週」に確率で学校生活イベントが発生し、選択肢を選ぶまで
 // 次の練習に進めない仕様（lib/game.ts の 'train' ガード）。ブラウザ操作テストでは
 // newGame() がUI起動時に時刻ベースのシードを使うため発生タイミングは実行ごとに変わる。
@@ -51,6 +51,7 @@ test('mobile: both cup brackets show rival results inside horizontally scrollabl
  // クリックで進めるより高速で、他のUIテストと同じ手筋: withSave）。
  const s=newGame('抽選済み検証高校',4001);
  s.week=IH_QUALIFIER_DRAW_WEEK;drawPendingCup(s);
+ for (const week of [8,9,10,11]) advanceCupWeek(s,week);
  s.week=IH_NATIONAL_DRAW_WEEK;drawPendingCup(s);
  await page.addInitScript((value)=>localStorage.setItem('touchline-academy-v1',JSON.stringify(value)),s);
  await page.setViewportSize({width:375,height:812});await page.goto('/');

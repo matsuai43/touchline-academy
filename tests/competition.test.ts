@@ -71,7 +71,7 @@ void test('T-2: rival cup results advance the bracket and stronger schools survi
     s.week = IH_NATIONAL_DRAW_WEEK;
     drawPendingCup(s);
     for (const week of IH_NATIONAL_WEEKS) advanceCupWeek(s, week);
-    assert.equal(national.completedRounds, 5, 'national tournament continues even after the school loses');
+    assert.equal(national.completedRounds, 6, 'national tournament continues even after the school loses');
   }
   assert.ok(semifinalTotal / 50 > entrantTotal / 50 + 2);
   assert.ok(upperSeedChampions >= 20, `strong seeds won only ${upperSeedChampions}/50 cups`);
@@ -110,6 +110,8 @@ void test('T-2: old saves without a bracket keep their current season fixture an
   }
   const fixture = s.pending;
   const raw = JSON.parse(JSON.stringify(s));
+  delete raw.v3.competition.ih.representatives;
+  delete raw.v3.competition.wc.representatives;
   delete raw.v3.competition.ih.qualifier;
   delete raw.v3.competition.ih.national;
   delete raw.v3.competition.wc.qualifier;
@@ -121,7 +123,8 @@ void test('T-2: old saves without a bracket keep their current season fixture an
   s = act(s, { type: 'finish' });
   while (s.season === 1) s = step(s, 'rest');
   assert.ok(readCompetition(s).ih.qualifier);
-  assert.ok(readCompetition(s).wc.national);
+  assert.equal(readCompetition(s).wc.national, undefined);
+  assert.equal(readCompetition(s).wc.representatives!.districts.length, 48);
 });
 
 // ---------------------------------------------------------------------------
@@ -264,26 +267,32 @@ void test('competitionFixture never returns two fixtures for the same week in a 
 // ---------------------------------------------------------------------------
 // 難易度カーブ
 // ---------------------------------------------------------------------------
-void test('difficulty rises from prefecture qualifier toward the national final', () => {
+void test('legacy saves: difficulty rises from prefecture qualifier toward the national final', () => {
   const s = newGame('難易度検証高校', 21);
   hydrateCompetition(s);
   setDistrictNow(s, 'yamagata'); // 下位帯（係数ほぼ1.00）で基準を見る
   const comp = readCompetition(s);
+  delete comp.ih.representatives;
+  delete comp.ih.qualifier;
   const qualR0 = competitionFixture(s, IH_QUALIFIER_WEEKS[0])!;
   assert.equal(qualR0.kind, 'ih_qualifier');
   assert.ok(qualR0.strength >= 40 && qualR0.strength <= 65, `県予選の強さが目安から外れています: ${qualR0.strength}`);
   comp.ih.qualified = true; // 全国フィクスチャを取得するため直接フラグを立てる
-  const natFinal = competitionFixture(s, IH_NATIONAL_WEEKS[IH_NATIONAL_WEEKS.length - 1])!;
+  const natFinal = competitionFixture(s, IH_NATIONAL_WEEKS[4])!;
   assert.equal(natFinal.kind, 'ih_national');
   assert.ok(natFinal.strength > qualR0.strength, '全国決勝は県予選より手強いはず');
   assert.ok(natFinal.strength >= 85, `全国決勝の強さが低すぎます: ${natFinal.strength}`);
 });
 
-void test('a contested district scales cup difficulty up compared to a thin district', () => {
+void test('legacy saves: a contested district scales cup difficulty up compared to a thin district', () => {
   const weak = newGame('薄い地区高校', 21);
   setDistrictNow(weak, 'yamagata');
   const strong = newGame('激戦地区高校', 21);
   setDistrictNow(strong, 'shizuoka');
+  delete readCompetition(weak).wc.representatives;
+  delete readCompetition(strong).wc.representatives;
+  delete readCompetition(weak).ih.qualifier;
+  delete readCompetition(strong).ih.qualifier;
   readCompetition(weak).wc.qualified = true;
   readCompetition(strong).wc.qualified = true;
   for (const round of [0, 2, 4]) {

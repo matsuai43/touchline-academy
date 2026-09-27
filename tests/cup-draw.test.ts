@@ -12,6 +12,8 @@ import {
   readCompetition,
   hydrateCompetition,
   drawPendingCup,
+  advanceCupWeek,
+  IH_QUALIFIER_WEEKS,
   computeSeedIds,
   IH_QUALIFIER_DRAW_WEEK,
   IH_NATIONAL_DRAW_WEEK,
@@ -57,12 +59,13 @@ void test('T-12: 抽選でシード校（初年度は強さ上位）が互いに
 
     // 全国大会: 強さ上位8校（自校が出場していなくても、抽選そのものは季初に確定した
     // 出場校リストで行える）
+    for (const week of IH_QUALIFIER_WEEKS) advanceCupWeek(s, week);
     s.week = IH_NATIONAL_DRAW_WEEK;
     const national = comp.ih.national!;
-    const nSeeds = computeSeedIds(national, 8, false);
+    const nSeeds = computeSeedIds(national, 16, false);
     drawPendingCup(s);
     const nGroups = nSeeds.map((id) => groupOf(matchIndexOf(national, id)));
-    assert.equal(new Set(nGroups).size, 8, `全国大会のシード8校が同じ組に入っています: ${nGroups.join(',')}`);
+    assert.equal(new Set(nGroups).size, 16, `全国大会のシード8校が同じ組に入っています: ${nGroups.join(',')}`);
   }
 });
 

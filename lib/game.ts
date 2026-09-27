@@ -1850,7 +1850,7 @@ export function validateSave(x: unknown): State {
       'promotion_regional',
       'promotion_national',
     ].includes(f.kind) &&
-    num(f.round, 0, 4) &&
+    num(f.round, 0, 5) &&
     num(f.strength, 1, 200) &&
     typeof f.label === 'string' &&
     f.label.length < 100 &&
@@ -1871,6 +1871,7 @@ export function validateSave(x: unknown): State {
       !['ih', 'wc'].includes(d.cupKey) ||
       typeof d.national !== 'boolean' ||
       typeof d.seeded !== 'boolean' ||
+      (d.firstRoundBye !== undefined && typeof d.firstRoundBye !== 'boolean') ||
       typeof d.opponentName !== 'string' ||
       d.opponentName.length > 60 ||
       !num(d.opponentStrength, 1, 99) ||

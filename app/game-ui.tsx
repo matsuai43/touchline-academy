@@ -747,7 +747,7 @@ export default function Game() {
                     const stageLabel = draw.national ? '全国大会' : '県予選';
                     const choices: EventStillsChoice[] = [{ id: 'reveal', label: '結果を見る' }];
                     const resolveResult = (): EventStillsResult => ({
-                      text: `初戦の相手は${draw.opponentName}（総合力${draw.opponentStrength}・${tactics[draw.opponentStyle].name}・${draw.opponentFormation}）に決まった。`,
+                      text: draw.firstRoundBye ? '自校は1回戦不戦勝。2回戦の相手は1回戦の勝者に決まります。' : `初戦の相手は${draw.opponentName}（総合力${draw.opponentStrength}・${tactics[draw.opponentStyle].name}・${draw.opponentFormation}）に決まった。`,
                       effects: [
                         ...(draw.seeded
                           ? [{ label: '自校はシード校です', positive: true }]
@@ -770,7 +770,7 @@ export default function Game() {
                           heading={`${cupName}${stageLabel}・組み合わせ抽選`}
                           metaLine={
                             draw.seeded
-                              ? '前回大会の成績により、自校はシード校です。'
+                              ? '所属・実績・戦力をもとに、自校はシード校に選ばれました。'
                               : `${cupName}${stageLabel}の組み合わせ抽選が行われます。`
                           }
                           momentNarration={`${cupName}${stageLabel}の抽選会。主将がくじを引く。`}

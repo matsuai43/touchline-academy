@@ -377,9 +377,7 @@ export type CupTeam = {
   // 無ければ teamFormation() が id・strength・style から決定的に補う。
   formation?: Formation;
   districtId: DistrictId;
-  // V4-4: 学校の世界から名前を借りた際の所属階層（表示の「所属の札」用）。strength は
-  // 既存のカップ戦独自の帯（QUALIFIER_BAND/NATIONAL_BAND）で決めるため、world 側の
-  // strength とは別物（tier はあくまで表示用のラベル）。無ければ chip は「所属不明」扱い。
+  // 学校の所属。V4-6以降は戦力も学校の世界と一致する。旧セーブでは未設定の場合がある。
   tier?: SchoolTier;
 };
 /** CupTeam.formation が未設定でも常に布陣を返す（旧セーブのブラケット用フォールバック）。
@@ -398,6 +396,8 @@ export type CupMatch = {
   penalties: string | null;
 };
 export type CupBracket = {
+  worldBased?: boolean;
+  previousBest4?: string[];
   teams: CupTeam[];
   rounds: CupMatch[][];
   completedRounds: number;
@@ -409,6 +409,7 @@ export type CupBracket = {
   drawn: boolean;
 };
 export type CupState = {
+  representatives?: { seed: number; districts: DistrictRepresentative[] };
   qualified: boolean;
   alive: boolean;
   best: string;
@@ -419,6 +420,13 @@ export type CupState = {
    *  シード選出（前回大会成績）に使う。旧セーブは hydrateCompetition() が0で補う。 */
   qualifierRoundsWon: number;
   nationalRoundsWon: number;
+};
+export type DistrictRepresentative = {
+  districtId: DistrictId;
+  finalWeek: number;
+  winner: CupTeam | null;
+  appearances: number;
+  streak: number;
 };
 function freshCup(): CupState {
   return { qualified: false, alive: true, best: '予選未突破', qualifierRoundsWon: 0, nationalRoundsWon: 0 };
@@ -454,6 +462,8 @@ export type SchoolWorldState = {
 };
 
 export type CompState = {
+  representativeHistory?: Record<string, { lastSeason: number; appearances: number; streak: number }>;
+  qualifierHistory?: Record<string, string[]>;
   schema: 1;
   districtId: DistrictId;
   /** この season 以降に赴任先を選び直せる（初期選択は season 1 から可能）。 */
@@ -683,7 +693,7 @@ export function computeLeagueTable(
   }
   // 自校が実際にプレイした試合（記録があるものだけ。旧セーブは記録が無ければ0試合）。
   for (const r of team.results) {
-    const roundIndex = LEAGUE_WEEKS.indexOf(r.week);
+    const roundIndex = team.schedule.findIndex((entry) => entry.week === r.week);
     results.self.push({
       week: r.week,
       roundIndex,
@@ -715,7 +725,7 @@ export function computeLeagueTable(
   const slots = roundSlotSeq(rrSeed, season);
   const elapsed = Math.min(team.played, LEAGUE_WEEKS.length);
   for (let i = 0; i < elapsed; i++) {
-    const week = LEAGUE_WEEKS[i];
+    const week = team.schedule[i].week;
     const slot = slots[i];
     const basePairs = rounds[slot.roundIdx];
     const pairs = slot.leg === 0 ? basePairs : basePairs.map(([a, b]) => [b, a] as [number, number]);
@@ -994,10 +1004,17 @@ function advanceCompetitionSeason(s: State, comp: CompState): void {
   comp.wc = freshCup();
   comp.promotion = { regional: null, national: null };
   const district = districtById(comp.districtId);
-  comp.ih.qualifier = createCupBracket(s, comp, district, 'ih', false);
-  comp.ih.national = createCupBracket(s, comp, district, 'ih', true);
-  comp.wc.qualifier = createCupBracket(s, comp, district, 'wc', false);
-  comp.wc.national = createCupBracket(s, comp, district, 'wc', true);
+  for (const key of ['ih', 'wc'] as const) {
+    comp[key].qualifier = createWorldQualifier(s, comp, district.id, key);
+    comp[key].representatives = {
+      seed: s.seed,
+      districts: DISTRICTS.map((d) => ({
+        districtId: d.id,
+        finalWeek: (key === 'ih' ? 8 : 27) + (d.id === district.id ? 3 : Math.floor(hf(s.seed, s.season, strHash(key), strHash(d.id)) * 4)),
+        winner: null, appearances: 0, streak: 0,
+      })),
+    };
+  }
   comp.teamA.clubs = makeClubs(s, comp, comp.teamA.tier, 'A');
   // この季の総当たり組み合わせを決める乱数状態をここで凍結する（s.seed はこの後も
   // rand() 呼び出しのたびに進み続けるため、後で他校同士の試合を再現する時は必ず
@@ -1200,16 +1217,30 @@ export function validateCompetition(s: State): void {
       cup.best.length > 60 ||
       // T-12: 翌シーズンのシード選出に使う勝ち上がり回数（県予選0〜4、全国0〜5）。
       !num(cup.qualifierRoundsWon, 0, 4) ||
-      !num(cup.nationalRoundsWon, 0, 5)
+      !num(cup.nationalRoundsWon, 0, 6)
     )
       throw Error(`${label}のデータが不正です。`);
-    for (const [stage, bracket, count] of [['県予選', cup.qualifier, 16], ['全国', cup.national, 32]] as const) {
+    if (cup.representatives) {
+      const representatives = cup.representatives;
+      if (!num(representatives.seed, 0, 4294967295) || !Array.isArray(representatives.districts) || representatives.districts.length !== 48 ||
+          new Set(representatives.districts.map((entry) => entry.districtId)).size !== 48) throw Error('全国代表データが不正です。');
+      for (const entry of representatives.districts) {
+        if (!DISTRICTS.some((d) => d.id === entry.districtId) || !Number.isInteger(entry.finalWeek) ||
+            !(label === 'インターハイ' ? IH_QUALIFIER_WEEKS : WC_QUALIFIER_WEEKS).includes(entry.finalWeek) ||
+            !num(entry.appearances, 0, 100000) || !num(entry.streak, 0, entry.appearances)) throw Error('全国代表データが不正です。');
+        if (entry.winner && (entry.winner.districtId !== entry.districtId || typeof entry.winner.id !== 'string' || typeof entry.winner.name !== 'string' || entry.winner.name.length > 60 ||
+            !num(entry.winner.strength, 1, 99) || !TACTIC_LIST.includes(entry.winner.style) || entry.appearances < 1)) throw Error('全国代表校データが不正です。');
+      }
+      if (cup.national && representatives.districts.some((entry) => !entry.winner)) throw Error('全国代表がそろっていません。');
+    }
+    for (const [stage, bracket, count] of [['県予選', cup.qualifier, 16], ['全国', cup.national, cup.representatives ? 48 : 32]] as const) {
       if (bracket === undefined) continue; // pre-T-2 saves continue the current season unchanged
       if (!Array.isArray(bracket.teams) || bracket.teams.length !== count ||
-          !Array.isArray(bracket.rounds) || bracket.rounds.length !== Math.log2(count) ||
+          !Array.isArray(bracket.rounds) || bracket.rounds.length !== Math.ceil(Math.log2(count)) ||
           !num(bracket.completedRounds, 0, bracket.rounds.length) ||
           typeof bracket.drawn !== 'boolean')
         throw Error(`${label}${stage}のトーナメント表が不正です。`);
+      if (bracket.previousBest4 !== undefined && (!Array.isArray(bracket.previousBest4) || bracket.previousBest4.length > 4 || bracket.previousBest4.some((id) => typeof id !== 'string'))) throw Error('シード実績データが不正です。');
       const ids = new Set<string>();
       for (const team of bracket.teams) {
         if (!team || typeof team.id !== 'string' || !team.id || ids.has(team.id) ||
@@ -1222,7 +1253,7 @@ export function validateCompetition(s: State): void {
       }
       for (let r = 0; r < bracket.rounds.length; r++) {
         const matches = bracket.rounds[r];
-        if (!Array.isArray(matches) || matches.length !== (count >> (r + 1)))
+        if (!Array.isArray(matches) || matches.length !== ((count === 48 ? 64 : count) >> (r + 1)))
           throw Error(`${label}${stage}の対戦表が不正です。`);
         for (const match of matches) {
           if (!match ||
@@ -1237,6 +1268,8 @@ export function validateCompetition(s: State): void {
       }
     }
   };
+  if (comp.qualifierHistory && (typeof comp.qualifierHistory !== 'object' || Object.values(comp.qualifierHistory).some((ids) => !Array.isArray(ids) || ids.length > 4 || ids.some((id) => typeof id !== 'string')))) throw Error('予選履歴データが不正です。');
+  if (comp.representativeHistory && (typeof comp.representativeHistory !== 'object' || Object.values(comp.representativeHistory).some((h) => !h || !num(h.lastSeason, 1, 100000) || !num(h.appearances, 1, 100000) || !num(h.streak, 1, h.appearances)))) throw Error('代表履歴データが不正です。');
   checkCup(comp.ih, 'インターハイ');
   checkCup(comp.wc, '選手権');
   if (comp.promotion !== undefined) validatePromotion(comp.promotion);
@@ -1251,15 +1284,19 @@ export function readCompetition(s: State): CompState {
 // 年間カレンダー（48週）
 // ---------------------------------------------------------------------------
 // U18リーグ: 7クラブ×ホーム&アウェー=14試合。IH/WC の予選・全国と衝突しない14週に固定配置。
-export const LEAGUE_WEEKS = [0, 1, 3, 4, 5, 6, 7, 12, 14, 15, 21, 22, 23, 25];
+export const LEAGUE_WEEKS = [0, 1, 3, 4, 5, 6, 7, 12, 14, 15, 22, 23, 25, 26];
 // 練習試合: 空き週に6週配置。
 export const FRIENDLY_WEEKS = [2, 13, 24, 32, 42, 46];
-// インターハイ（夏）: 6月に県予選4ラウンド、8月に全国5ラウンド。
+// インターハイ（夏）: 県予選4ラウンド、全国6ラウンド（旧セーブは5ラウンド）。
 export const IH_QUALIFIER_WEEKS = [8, 9, 10, 11];
-export const IH_NATIONAL_WEEKS = [16, 17, 18, 19, 20];
-// 選手権（冬）: 11月に県予選4ラウンド、1月に全国5ラウンド。
+export const IH_NATIONAL_WEEKS = [16, 17, 18, 19, 20, 21];
+// 選手権（冬）: 県予選4ラウンド、全国6ラウンド（旧セーブは5ラウンド）。
 export const WC_QUALIFIER_WEEKS = [27, 28, 29, 30];
-export const WC_NATIONAL_WEEKS = [36, 37, 38, 39, 40];
+export const WC_NATIONAL_WEEKS = [36, 37, 38, 39, 40, 41];
+export function nationalWeeks(cup: CupState, key: 'ih' | 'wc'): number[] {
+  const weeks = key === 'ih' ? IH_NATIONAL_WEEKS : WC_NATIONAL_WEEKS;
+  return cup.representatives ? weeks : weeks.slice(0, 5);
+}
 
 // T-12: 組み合わせ抽選が起きる週。県予選は初戦の2週前、全国大会は県予選の決勝が
 // 終わった直後の週（＝全国大会の初戦よりずっと前）。実際の抽選イベントは、この週に
@@ -1322,6 +1359,7 @@ function pickFormation(u: number, style: Tactic): Formation {
 
 const QUALIFIER_LABEL_PREFIX = ['1回戦', '準々決勝', '準決勝', '決勝'];
 const NATIONAL_LABEL_PREFIX = ['1回戦', '2回戦', '準々決勝', '準決勝', '決勝'];
+const NATIONAL_48_LABELS = ['1回戦', '2回戦', '3回戦', '準々決勝', '準決勝', '決勝'];
 // 県予選 45〜65 → 決勝は 65〜75 に近づく。
 const QUALIFIER_BAND: [number, number][] = [
   [45, 55],
@@ -1342,54 +1380,65 @@ function emptyCupMatch(homeId: string | null = null, awayId: string | null = nul
   return { homeId, awayId, winnerId: null, home: null, away: null, penalties: null };
 }
 
-function createCupBracket(
-  s: State,
-  comp: CompState,
-  district: District,
-  cupKey: 'ih' | 'wc',
-  national: boolean,
-): CupBracket {
-  const count = national ? 32 : 16;
-  const salt = strHash(cupKey) + (national ? 3100 : 1100);
-  const districts = national
-    ? [district, ...DISTRICTS.filter((d) => d.id !== district.id)
-      .sort((a, b) => hf(s.seed, s.season, salt, strHash(a.id)) - hf(s.seed, s.season, salt, strHash(b.id)))
-      .slice(0, count - 1)]
-    : Array.from({ length: count }, () => district);
-  // V4-4: 名前・所属階層は学校の世界から借りる（実際の勝敗に使う strength/raw は従来どおり）。
-  const usedIds = new Set<string>();
-  const teams: CupTeam[] = districts.map((d, i) => {
-    const base = [s.seed, s.season, salt, i];
-    const raw = national
-      ? 68 + hf(...base, 1) * 19 + (d.strength - 1) * 12
-      : (45 + hf(...base, 1) * 20) * (1 + (district.strength - 1) * 0.5);
-    const strengthVal = clamp(Math.round(raw), 20, 99);
-    const pool = districtSchoolsOf(s, comp, d.id);
-    const picked = nearestSchool(pool, strengthVal, [s.seed, s.season, salt, i], usedIds);
-    if (picked) usedIds.add(picked.id);
-    const style = picked?.tactic ?? pickTactic(hf(...base, 2));
-    return {
-      id: `${cupKey}-${national ? 'n' : 'q'}-${i}`,
-      name: picked?.name ?? regionalSchoolName(d.id, [...base, 9999]),
-      strength: strengthVal,
-      style,
-      formation: pickFormation(hf(...base, 3), style),
-      districtId: d.id,
-      tier: picked?.tier,
-    };
-  });
-  // Slot 0 is the local district representative; the qualifier contains the player's school.
-  teams[0] = national
-    ? (({ tier: _tier, ...rest }) => ({ ...rest, id: `${cupKey}-representative`, name: '代表未定' }))(teams[0])
-    : { ...teams[0], id: 'self', name: s.school, tier: comp.teamA.tier, strength: Math.round([...s.players].sort((a, b) => overall(b) - overall(a)).slice(0, 11).reduce((sum, p) => sum + overall(p), 0) / 11) };
-  // T-12: 出場校は季の開始時に決めるが、組み合わせ（rounds[0]）は抽選まで空にしておく
-  // （drawn:false）。抽選は performDraw() が行う。
-  const rounds: CupMatch[][] = [];
-  for (let r = 0; r < (national ? 5 : 4); r++) {
-    const matches = count >> (r + 1);
-    rounds.push(Array.from({ length: matches }, () => emptyCupMatch()));
+/** Use real school strength and identity; youth clubs do not enter school cups. */
+function createWorldQualifier(s: State, comp: CompState, districtId: DistrictId, key: 'ih' | 'wc', own = true): CupBracket {
+  const pool = districtSchoolsOf(s, comp, districtId).filter((school) => !school.isYouth);
+  const picked: WorldSchool[] = [];
+  const quotas: [SchoolTier, number][] = [['national', 1], ['regional', 3], ['pref1', 6], ['pref2', 6]];
+  for (const [tier, quota] of quotas) {
+    picked.push(...pickStableSubset(pool.filter((school) => school.tier === tier), Math.max(0, quota - (own && comp.teamA.tier === tier ? 1 : 0)), [comp.world.seed ?? s.seed, s.season, key, districtId, tier]));
   }
-  return { teams, rounds, completedRounds: 0, drawn: false };
+  const count = own ? 15 : 16;
+  const used = new Set(picked.map((school) => school.id));
+  picked.push(...pool.filter((school) => !used.has(school.id)).sort((a, b) =>
+    Math.abs(SCHOOL_TIERS.indexOf(a.tier) - 1) - Math.abs(SCHOOL_TIERS.indexOf(b.tier) - 1) || a.id.localeCompare(b.id)).slice(0, Math.max(0, count - picked.length)));
+  const teams: CupTeam[] = picked.slice(0, count).map((school) => ({
+    id: school.id, name: school.name, strength: school.strength, style: school.tactic,
+    formation: pickFormation(hf(comp.world.seed ?? s.seed, strHash(school.id), 33), school.tactic), districtId, tier: school.tier,
+  }));
+  if (own) teams.unshift({ id: 'self', name: s.school, strength: Math.round([...s.players].sort((a, b) => overall(b) - overall(a)).slice(0, 11).reduce((sum, player) => sum + overall(player), 0) / 11), style: s.matchPlan?.tactic ?? 'balanced', formation: s.formation, districtId, tier: comp.teamA.tier });
+  return { teams, rounds: Array.from({ length: 4 }, (_, r) => Array.from({ length: 16 >> (r + 1) }, () => emptyCupMatch())), completedRounds: 0, drawn: false, worldBased: true, previousBest4: comp.qualifierHistory?.[`${key}:${districtId}`] ?? [] };
+}
+
+function recordRepresentative(s: State, comp: CompState, key: 'ih' | 'wc', entry: DistrictRepresentative, bracket: CupBracket): void {
+  const winner = cupTeam(bracket, bracket.rounds[3][0].winnerId);
+  if (!winner) return;
+  entry.winner = { ...winner };
+  comp.qualifierHistory ??= {};
+  comp.qualifierHistory[`${key}:${entry.districtId}`] = bracket.rounds[2].flatMap((m) => [m.homeId!, m.awayId!]);
+  comp.representativeHistory ??= {};
+  const historyKey = `${key}:${entry.districtId}:${winner.id}`;
+  const old = comp.representativeHistory[historyKey];
+  entry.appearances = (old?.appearances ?? 0) + 1;
+  entry.streak = old?.lastSeason === s.season - 1 ? old.streak + 1 : 1;
+  comp.representativeHistory[historyKey] = { lastSeason: s.season, appearances: entry.appearances, streak: entry.streak };
+  const appearance = entry.appearances === 1 ? '初出場' : entry.streak > 1 ? `${entry.streak}年連続・${entry.appearances}回目` : `${entry.appearances}回目`;
+  s.feed = [`${key === 'ih' ? 'インターハイ' : '選手権'} ${districtById(entry.districtId).name}代表: ${winner.name}（${appearance}）`, ...s.feed].slice(0, 30);
+}
+
+function advanceRepresentatives(s: State, comp: CompState, key: 'ih' | 'wc', week: number): void {
+  const cup = comp[key];
+  if (!cup.representatives) return;
+  const simulation = { ...s, seed: cup.representatives.seed };
+  for (const entry of cup.representatives.districts) {
+    if (entry.winner || week < entry.finalWeek) continue;
+    const own = entry.districtId === cup.qualifier?.teams.find((team) => team.id === 'self')?.districtId;
+    const bracket = own ? cup.qualifier : createWorldQualifier(simulation, comp, entry.districtId, key, false);
+    if (!bracket || (own && bracket.completedRounds < 4)) continue;
+    if (!own) {
+      const districtSimulation = { ...simulation, seed: h32(simulation.seed, strHash(entry.districtId)) };
+      performDraw(districtSimulation, comp, key, false, bracket);
+      for (let round = 0; round < 4; round++) completeCupRound(districtSimulation, bracket, key, false, round);
+    }
+    recordRepresentative(s, comp, key, entry, bracket);
+  }
+  if (!cup.national && cup.representatives.districts.every((entry) => entry.winner)) {
+    cup.national = {
+      teams: cup.representatives.districts.map((entry) => ({ ...entry.winner! })),
+      rounds: Array.from({ length: 6 }, (_, r) => Array.from({ length: 64 >> (r + 1) }, () => emptyCupMatch())),
+      completedRounds: 0, drawn: false, worldBased: true,
+    };
+  }
 }
 
 function cupTeam(bracket: CupBracket, id: string | null): CupTeam | undefined {
@@ -1418,6 +1467,7 @@ function prepareNationalRepresentative(s: State, comp: CompState, cup: CupState,
 // T-12: 組み合わせ抽選
 // ---------------------------------------------------------------------------
 export type CupDrawResult = {
+  firstRoundBye?: boolean;
   cupKey: 'ih' | 'wc';
   national: boolean;
   /** 自校がシード（別の山）に入ったか。紙芝居で知らせる。 */
@@ -1442,17 +1492,13 @@ function selfHistoricalSeed(comp: CompState, cupKey: 'ih' | 'wc', national: bool
   return (rounds ?? 0) >= SEED_ROUNDS_THRESHOLD;
 }
 
-/** シード校のID集合（strength上位。自校が前回大会で好成績なら強制的にシードへ）。
- *  他校は季ごとに乱数生成される架空校で前季との同一性を持たないため、
- *  「前回大会成績」による選出は自校にのみ適用し、他校は毎季のstrengthで代替する
- *  （初年度の「評判・強さの上位」という仕様と実質的に同じ基準に揃うため、
- *  毎季この方式で統一する）。 */
-// export: テストが「シードが実際に別の組へ分かれているか」を、strength の同点により
-// 実装と食い違う独自の並べ替えをせずに検証できるようにするため。
+/** 県予選は前回ベスト4と所属階層、全国は戦力でシードを選ぶ。旧表は従来の戦力順。 */
 export function computeSeedIds(bracket: CupBracket, seedCount: number, forceSelf: boolean): string[] {
-  const sorted = [...bracket.teams].sort(
-    (a, b) => b.strength - a.strength || strHash(a.id) - strHash(b.id),
-  );
+  const qualifier = bracket.worldBased && bracket.teams.length === 16;
+  const previous = new Set(bracket.previousBest4 ?? []);
+  const sorted = [...bracket.teams].sort((a, b) =>
+    (qualifier ? Number(previous.has(b.id)) - Number(previous.has(a.id)) || SCHOOL_TIERS.indexOf(b.tier ?? 'pref3') - SCHOOL_TIERS.indexOf(a.tier ?? 'pref3') : 0) ||
+    b.strength - a.strength || strHash(a.id) - strHash(b.id));
   const seeds = sorted.slice(0, seedCount).map((t) => t.id);
   if (forceSelf && bracket.teams.some((t) => t.id === 'self') && !seeds.includes('self')) {
     seeds[seeds.length - 1] = 'self';
@@ -1471,23 +1517,45 @@ function performDraw(
   national: boolean,
   bracket: CupBracket,
 ): CupDrawResult | null {
-  const seedCount = national ? 8 : 4;
-  const forceSelf = selfHistoricalSeed(comp, cupKey, national);
+  const expanded = national && bracket.teams.length === 48;
+  const seedCount = national ? (expanded ? 16 : 8) : 4;
+  const forceSelf = !expanded && selfHistoricalSeed(comp, cupKey, national);
   const seedIds = computeSeedIds(bracket, seedCount, forceSelf);
   const seedSet = new Set(seedIds);
   const others = bracket.teams.map((t) => t.id).filter((id) => !seedSet.has(id));
   const salt = strHash(cupKey) + (national ? 42000 : 41000);
   const seedOrder = shuffledSeq(s.seed, s.season, salt + 1, seedIds.length).map((i) => seedIds[i]);
   const otherOrder = shuffledSeq(s.seed, s.season, salt + 2, others.length).map((i) => others[i]);
-  const groupSize = bracket.teams.length / seedIds.length;
-  const slots: string[] = Array.from({ length: bracket.teams.length });
+  const groupSize = expanded ? 4 : bracket.teams.length / seedIds.length;
+  const slots: (string | null)[] = Array.from({ length: expanded ? 64 : bracket.teams.length });
   let otherCursor = 0;
   for (let g = 0; g < seedIds.length; g++) {
     const start = g * groupSize;
+    if (expanded) {
+      slots[start] = seedOrder[g];
+      slots[start + 1] = null;
+      slots[start + 2] = otherOrder[otherCursor++];
+      slots[start + 3] = otherOrder[otherCursor++];
+      continue;
+    }
     const seedSlot = start + Math.floor(hf(s.seed, s.season, salt, g, 3) * groupSize);
     for (let i = 0; i < groupSize; i++) {
       const idx = start + i;
       slots[idx] = idx === seedSlot ? seedOrder[g] : otherOrder[otherCursor++];
+    }
+  }
+  // Keep all four seeds in separate groups, with a nearby unseeded first opponent for self.
+  if (bracket.worldBased && !national && slots.includes('self') && !seedSet.has('self')) {
+    const self = cupTeam(bracket, 'self')!;
+    const eligible = bracket.teams.filter((team) => team.id !== 'self' && !seedSet.has(team.id)).sort((a, b) => Math.abs(a.strength - self.strength) - Math.abs(b.strength - self.strength) || a.id.localeCompare(b.id));
+    const opponent = eligible[0];
+    const pairs = slots.map((id, i) => ({ id, i })).filter(({ id, i }) => i % 2 === 0 && !seedSet.has(id!) && !seedSet.has(slots[i + 1]!));
+    const pair = pairs[Math.floor(hf(s.seed, s.season, salt, 4) * pairs.length)];
+    if (pair && opponent) {
+      for (const [id, target] of [['self', pair.i], [opponent.id, pair.i + 1]] as const) {
+        const from = slots.indexOf(id);
+        [slots[from], slots[target]] = [slots[target], slots[from]];
+      }
     }
   }
   const matches = bracket.rounds[0];
@@ -1500,15 +1568,16 @@ function performDraw(
   if (!selfMatch) return null; // 自校が出場していない大会（例: 全国大会に自校が未出場）は静かに済ませる
   const opponentId = selfMatch.homeId === 'self' ? selfMatch.awayId : selfMatch.homeId;
   const opponent = cupTeam(bracket, opponentId);
-  if (!opponent) return null;
+  if (!opponent && !expanded) return null;
   return {
     cupKey,
     national,
     seeded: seedSet.has('self'),
-    opponentName: opponent.name,
-    opponentStrength: opponent.strength,
-    opponentFormation: teamFormation(opponent),
-    opponentStyle: opponent.style,
+    opponentName: opponent?.name ?? '1回戦不戦勝（2回戦の相手は未定）',
+    firstRoundBye: expanded && !opponent,
+    opponentStrength: opponent?.strength ?? 1,
+    opponentFormation: opponent ? teamFormation(opponent) : '4-4-2',
+    opponentStyle: opponent?.style ?? 'balanced',
     label: `${cupKey === 'ih' ? 'インターハイ' : '選手権'}${national ? '全国大会' : '県予選'}`,
   };
 }
@@ -1614,7 +1683,9 @@ function completeCupRound(s: State, bracket: CupBracket, cupKey: 'ih' | 'wc', na
   const matches = bracket.rounds[round];
   for (let i = 0; i < matches.length; i++) {
     const match = matches[i];
-    if (!match.homeId || !match.awayId) throw Error('大会の勝ち上がりが不正です。');
+    const bye = national && bracket.teams.length === 48 && round === 0 && !!match.homeId !== !!match.awayId;
+    if (bye) match.winnerId = match.homeId ?? match.awayId;
+    else if (!match.homeId || !match.awayId) throw Error('大会の勝ち上がりが不正です。');
     if (!match.winnerId) {
       const a = cupTeam(bracket, match.homeId)!;
       const b = cupTeam(bracket, match.awayId)!;
@@ -1641,10 +1712,16 @@ export function advanceCupWeek(s: State, week: number): void {
       completeCupRound(s, cup.qualifier, cupKey, false, qRound);
       if (qRound === 3) prepareNationalRepresentative(s, comp, cup, cupKey);
     }
-    const nRound = (cupKey === 'ih' ? IH_NATIONAL_WEEKS : WC_NATIONAL_WEEKS).indexOf(week);
+    advanceRepresentatives(s, comp, cupKey, week);
+    const nRound = nationalWeeks(cup, cupKey).indexOf(week);
     if (nRound >= 0 && cup.national) {
       prepareNationalRepresentative(s, comp, cup, cupKey);
+      const before = cup.national.completedRounds;
       completeCupRound(s, cup.national, cupKey, true, nRound);
+      if (before < cup.national.completedRounds && nRound === cup.national.rounds.length - 1) {
+        const winner = cupTeam(cup.national, cup.national.rounds[nRound][0].winnerId)!;
+        s.feed = [`${cupKey === 'ih' ? 'インターハイ' : '選手権'}全国優勝: ${winner.name}（${districtById(winner.districtId).name}代表）`, ...s.feed].slice(0, 30);
+      }
     }
   }
 }
@@ -1655,7 +1732,7 @@ function bracketFixture(s: State, bracket: CupBracket, kind: CompFixtureKind, ro
   const opponentId = match.homeId === 'self' ? match.awayId : match.homeId;
   const opponent = cupTeam(bracket, opponentId);
   const isQualifier = kind.endsWith('qualifier');
-  const labels = isQualifier ? QUALIFIER_LABEL_PREFIX : NATIONAL_LABEL_PREFIX;
+  const labels = isQualifier ? QUALIFIER_LABEL_PREFIX : bracket.teams.length === 48 ? NATIONAL_48_LABELS : NATIONAL_LABEL_PREFIX;
   return {
     label: `${kind.startsWith('ih') ? 'インターハイ' : '選手権'}${isQualifier ? '県予選・' : '全国・'}${labels[round]}`,
     kind,
@@ -1680,7 +1757,8 @@ function cupFixture(
   const bands = isQualifier ? QUALIFIER_BAND : NATIONAL_BAND;
   const labels = isQualifier ? QUALIFIER_LABEL_PREFIX : NATIONAL_LABEL_PREFIX;
   const band = bands[Math.min(round, bands.length - 1)];
-  const label = labels[Math.min(round, labels.length - 1)];
+  const expanded = !isQualifier && comp[kind.startsWith('ih') ? 'ih' : 'wc'].representatives;
+  const label = expanded ? NATIONAL_48_LABELS[round] : labels[Math.min(round, labels.length - 1)];
   const cupName = kind.startsWith('ih') ? 'インターハイ' : '選手権';
   const stagePrefix = isQualifier ? '県予選・' : '全国・';
   const jitter = hf(s.seed, s.season, strHash(kind), round, 8181);
@@ -1725,9 +1803,11 @@ export function competitionFixture(s: State, week: number): CompFixture | null {
       ? bracketFixture(s, comp.ih.qualifier, 'ih_qualifier', round) ?? { ...cupFixture(s, comp, district, 'ih_qualifier', round), opponent: '勝者未定' }
       : cupFixture(s, comp, district, 'ih_qualifier', round);
   }
-  if (IH_NATIONAL_WEEKS.includes(week)) {
+  if (nationalWeeks(comp.ih, 'ih').includes(week)) {
     if (!comp.ih.qualified || !comp.ih.alive) return null;
     const round = week - IH_NATIONAL_WEEKS[0];
+    if (comp.ih.representatives && !comp.ih.national) return null;
+    if (round === 0 && comp.ih.national?.teams.length === 48 && comp.ih.national.rounds[0].some((m) => (m.homeId === 'self' && !m.awayId) || (m.awayId === 'self' && !m.homeId))) return null;
     return comp.ih.national
       ? bracketFixture(s, comp.ih.national, 'ih_national', round) ?? { ...cupFixture(s, comp, district, 'ih_national', round), opponent: '勝者未定' }
       : cupFixture(s, comp, district, 'ih_national', round);
@@ -1739,14 +1819,16 @@ export function competitionFixture(s: State, week: number): CompFixture | null {
       ? bracketFixture(s, comp.wc.qualifier, 'wc_qualifier', round) ?? { ...cupFixture(s, comp, district, 'wc_qualifier', round), opponent: '勝者未定' }
       : cupFixture(s, comp, district, 'wc_qualifier', round);
   }
-  if (WC_NATIONAL_WEEKS.includes(week)) {
+  if (nationalWeeks(comp.wc, 'wc').includes(week)) {
     if (!comp.wc.qualified || !comp.wc.alive) return null;
     const round = week - WC_NATIONAL_WEEKS[0];
+    if (comp.wc.representatives && !comp.wc.national) return null;
+    if (round === 0 && comp.wc.national?.teams.length === 48 && comp.wc.national.rounds[0].some((m) => (m.homeId === 'self' && !m.awayId) || (m.awayId === 'self' && !m.homeId))) return null;
     return comp.wc.national
       ? bracketFixture(s, comp.wc.national, 'wc_national', round) ?? { ...cupFixture(s, comp, district, 'wc_national', round), opponent: '勝者未定' }
       : cupFixture(s, comp, district, 'wc_national', round);
   }
-  if (LEAGUE_WEEKS.includes(week)) {
+  if (comp.teamA.schedule.some((entry) => entry.week === week)) {
     const entry = comp.teamA.schedule.find((e) => e.week === week);
     if (!entry) return null;
     const club = comp.teamA.clubs[entry.clubIndex];
@@ -1865,8 +1947,9 @@ export function resolveCompetitionMatch(s: State, m: ResolvableMatch): void {
       cup.alive = false;
       cup.best = `${f.label}敗退`;
     } else {
-      cup.best = f.round === 4 ? '全国優勝' : `${f.label}突破`;
-      if (f.round === 4) {
+      const finalRound = (cup.national?.rounds.length ?? 5) - 1;
+      cup.best = f.round === finalRound ? '全国優勝' : `${f.label}突破`;
+      if (f.round === finalRound) {
         s.records.trophies++;
         s.reputation = clamp(s.reputation + 6);
         addFunds(s, 30, '大会の勝ち上がり（全国優勝）');

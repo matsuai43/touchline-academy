@@ -326,3 +326,13 @@ npm test 228件、Playwright 69件、型緑、lint 28件。push 済み。
 - V4-1（交代画面・疲労）とV4-4（学校の世界）を並行実装中に中断。未コミット。詳細は HANDOFF_V4-1.md / HANDOFF_V4-4.md。
 - 中断時点の単体テストは一部失敗（疲労の回復式の期待値、match-stats の決定性、競技系テストの速度低下など）。再開時はまず全テストを緑に戻す。
 - 要確認: V4-1 が balance.test.ts の7季目のA人数の下限を1→0.5に緩めた。意図を保つ形か再検討する。
+
+## 2026-09-27 V4-2 毎月の育成方針（DESIGN_V4 6章）実装、利用上限で中断
+- lib/training-policy.ts: ポジション×学年の一括設定（groups）・個別上書き(individual)・先月の伸び(previousMonthGrowth)を追加。
+  resolveEffectivePolicy/resolvePolicyView で「個別 ?? 一括 ?? おまかせ」を1箇所に集約。方針名を能力名にそろえた（走力/突破/持久・パワー）。
+- app/training-policy-ui.tsx を全面書き換え（一括設定グリッド・方針と能力の対応表・1人1行の個人方針表＋絞り込み・重点育成選手を1画面に）。
+  app/game-ui.tsx（ダイアログタイトル・onSelectPlayer配線・resolvePolicyView化）、app/squad-ui.tsx（同）、app/ability-sheet.tsx（growthKeyLabel export）も連動修正。
+  globals.css 末尾に V4-2 ブロック追加。育成の見通し(G4/ETA)は指示により未実装。
+- tests/training-policy.test.ts に9件追加（計19件、単体実行で緑確認済み）。tests/training-policy-ui.spec.ts を全面書き換え（5件、緑確認済み）。
+  npx playwright test 全体 73/73 緑（要 npm run build 後）。typecheck 0件。lint 29件（ベースライン通り）。
+- npm test 全体一括実行 246/246 pass を確認済み（利用上限直前にバックグラウンドで完了）。実装・検証ともに完了。詳細は HANDOFF_V4-2.md。未コミット。

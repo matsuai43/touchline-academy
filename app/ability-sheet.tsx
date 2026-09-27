@@ -104,7 +104,8 @@ export function PolicyBadge({ policy }: { policy: PlayerPolicy }) {
   );
 }
 // 「今月の伸び」表示用のラベル解決（Stat / ExtraStat / DetailPos のいずれか）。
-function growthKeyLabel(key: string): string {
+// V4-2: training-policy-ui.tsx の「先月伸びた能力」表示でも同じ解決を使うため export する。
+export function growthKeyLabel(key: string): string {
   if (Object.hasOwn(stats, key)) return stats[key as Stat];
   if (Object.hasOwn(extraStatNames, key)) return extraStatNames[key as ExtraStat];
   if (Object.hasOwn(detailInfo, key)) return detailInfo[key as DetailPos].name;

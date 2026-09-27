@@ -4779,3 +4779,286 @@ footer button::after,
   align-items: center;
 }
 /* ===== /V4-4 ===== */
+
+/* ===== V4-2 今月の育成方針 (DESIGN_V4 6章) ===== */
+/* 「今月の育成方針」ダイアログ全体（app/training-policy-ui.tsx: TrainingPolicyPanel）。
+   6.1 一括設定・6.2 方針と能力の対応・U3 選手ごとの方針・6.3 重点育成選手の4区画を
+   縦に並べる。375〜390px幅で横スクロールが出ないよう、各区画は flex-wrap で折り返す。 */
+.training-policy-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.training-policy-lead {
+  font-size: 13px;
+}
+.policy-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  min-width: 0;
+}
+.policy-section-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
+}
+.policy-section-desc {
+  font-size: 12px;
+}
+
+/* 6.1: ポジション×学年の一括設定グリッド。行=GK/DF/MF/FW、列=1〜3年。 */
+.policy-group-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.policy-group-row {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  min-width: 0;
+}
+.policy-group-row-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: var(--tag-neutral-bg);
+  color: var(--tag-neutral-fg);
+  font-weight: 700;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.policy-group-row-cells {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.policy-group-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  min-width: 0;
+}
+.policy-group-cell-year {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.policy-group-select {
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 12px;
+}
+
+/* 6.2: 方針→伸びる能力の対応表（選手画面の能力名そのまま）。 */
+.policy-explain-table {
+  width: 100%;
+  min-width: 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+.policy-explain-table th,
+.policy-explain-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--divider);
+  vertical-align: top;
+  word-break: break-word;
+}
+.policy-explain-table thead th {
+  font-weight: 700;
+  color: var(--muted-foreground);
+  border-bottom: 2px solid var(--border);
+}
+.policy-explain-table thead th:first-child,
+.policy-explain-table tbody th {
+  width: 38%;
+  font-weight: 700;
+}
+
+/* U3: 選手ごとの方針の絞り込みチップ（タップ領域44px以上）。 */
+.policy-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin: 2px 0;
+}
+.policy-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.policy-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted-foreground);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.policy-filter-chip.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--accent);
+}
+
+/* U3: 1人1行の個人方針（ポジション札・名前学年・主な能力2つ・方針・先月の伸び・個別札）。
+   横スクロールはさせず、幅が足りなければ折り返す。 */
+.policy-row-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.policy-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  min-width: 0;
+}
+.policy-row-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.policy-row-pos {
+  flex-shrink: 0;
+}
+.policy-row-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  padding: 4px 2px;
+  min-height: 44px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  flex: 1 1 140px;
+  min-width: 0;
+}
+.policy-row-name > span {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  min-width: 0;
+}
+.policy-row-name small {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.policy-row-individual-tag {
+  flex-shrink: 0;
+  background: var(--tag-alt-bg);
+  color: var(--tag-alt-fg);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.policy-row-abilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.policy-row-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.policy-row-select {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.policy-row-select select {
+  flex: 1 1 120px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--foreground);
+  font-size: 13px;
+}
+.policy-row-growth {
+  font-size: 12px;
+}
+
+/* 6.3: 重点育成選手（1人・成長1.5倍）。既存の focus アクション・選手詳細と両方から指定できる。 */
+.policy-focus {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.policy-focus-field select {
+  min-height: 44px;
+}
+.policy-focus-hint {
+  font-size: 12px;
+}
+
+.training-policy-done {
+  width: 100%;
+  justify-content: center;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+}
+@media (max-width: 640px) {
+  .policy-group-row-cells {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .policy-group-select {
+    font-size: 12px;
+    padding: 5px 3px;
+  }
+}
+/* ===== /V4-2 ===== */

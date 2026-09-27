@@ -34,6 +34,7 @@ import {
   MoodBadge,
   PolicyBadge,
 } from './ability-sheet';
+import { resolvePolicyView } from '@/lib/training-policy';
 
 export { PositionBadge, ArchetypeBadge, SkillChips };
 
@@ -360,7 +361,7 @@ export function SquadPanel({
                   </TableCell>
                   <TableCell>
                     {s.v3.trainingPolicy.players[p.id] && (
-                      <PolicyBadge policy={s.v3.trainingPolicy.players[p.id]} />
+                      <PolicyBadge policy={resolvePolicyView(s, p)} />
                     )}
                   </TableCell>
                   <TableCell>

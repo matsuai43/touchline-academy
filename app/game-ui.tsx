@@ -33,6 +33,7 @@ import { EventStills, type EventStillsChoice, type EventStillsResult } from './e
 import { getEventScenePanels } from '@/lib/event-scenes';
 import { Progress } from '@/components/ui/progress';
 import { TrainingPolicyBanner, TrainingPolicyPanel } from './training-policy-ui';
+import { resolvePolicyView } from '@/lib/training-policy';
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -1510,7 +1511,7 @@ export default function Game() {
                   <AbilitySheet
                     p={player}
                     ps={s.v3.squad.players[player.id]}
-                    policy={s.v3.trainingPolicy.players[player.id]}
+                    policy={resolvePolicyView(s, player)}
                   />
                   <SquadProfile ps={s.v3.squad.players[player.id]} />
                 </>
@@ -1629,10 +1630,10 @@ export default function Game() {
           } else setPolicyOpen(true);
         }}
       >
-        <DialogContent className="game-dialog policy-dialog">
-          <DialogTitle>今月の個人方針</DialogTitle>
+        <DialogContent className="game-dialog policy-dialog training-policy-dialog">
+          <DialogTitle>今月の育成方針</DialogTitle>
           <DialogDescription>
-            選手ごとに伸ばしたい能力を選べます。月の途中でも変更できます。
+            ポジション・学年ごとの一括設定、個別の選手方針、重点育成選手をこの画面でまとめて決められます。
           </DialogDescription>
           <TrainingPolicyPanel
             s={s}
@@ -1641,6 +1642,7 @@ export default function Game() {
               run({ type: 'trainingPolicyReviewed' });
               setPolicyOpen(false);
             }}
+            onSelectPlayer={setSelected}
           />
         </DialogContent>
       </Dialog>

@@ -1,7 +1,16 @@
 // T3-2: 選手ごとの月次トレーニング方針。
-import { newGame, act, validateSave, type State, type Training } from '../lib/game.ts';
-import { PLAY_STYLES, MASTERY_THRESHOLD, basePos, type DetailPos } from '../lib/squad.ts';
-import { needsMonthlyReview, monthBlock, POLICY_KEYS } from '../lib/training-policy.ts';
+import { newGame, act, validateSave, stats, type State, type Training } from '../lib/game.ts';
+import { PLAY_STYLES, MASTERY_THRESHOLD, basePos, extraStatNames, type DetailPos } from '../lib/squad.ts';
+import {
+  needsMonthlyReview,
+  monthBlock,
+  POLICY_KEYS,
+  POSITION_GROUPS,
+  GRADE_YEARS,
+  groupKey,
+  policyInfo,
+  resolveEffectivePolicy,
+} from '../lib/training-policy.ts';
 import { getCurrentLifeEvent } from '../lib/school-life.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -191,4 +200,118 @@ void test('T3-2: legacy saves (trainingPolicy missing) hydrate to "auto" for eve
   assert.equal(Object.keys(loaded.v3.trainingPolicy.players).length, loaded.players.length);
   for (const p of loaded.players) assert.equal(loaded.v3.trainingPolicy.players[p.id].key, 'auto');
   assert.deepEqual(validateSave(loaded), loaded);
+});
+
+// ---------------------------------------------------------------------------
+// V4-2 (DESIGN_V4 6章): ポジション×学年の一括設定・個別上書き・重点育成の同一画面化。
+// ---------------------------------------------------------------------------
+
+void test('V4-2: fresh game has all 12 position×grade groups defaulted to "auto"', () => {
+  const s = newGame('', 601);
+  assert.equal(Object.keys(s.v3.trainingPolicy.groups).length, POSITION_GROUPS.length * GRADE_YEARS.length);
+  for (const pos of POSITION_GROUPS)
+    for (const year of GRADE_YEARS) assert.equal(s.v3.trainingPolicy.groups[groupKey(pos, year)], 'auto');
+});
+
+void test('V4-2: group setting resolution — changing a group\'s policy changes the effective policy for every non-individual player in that group, and only that group', () => {
+  let s = newGame('', 602);
+  const df1 = s.players.find((p) => p.pos === 'DF' && p.year === 1);
+  assert.ok(df1, 'DF1年生が見つかりません');
+  s = act(s, { type: 'trainingPolicyGroupSet', pos: 'DF', year: 1, policy: 'defend' });
+  assert.equal(s.v3.trainingPolicy.groups[groupKey('DF', 1)], 'defend');
+  assert.equal(resolveEffectivePolicy(s, s.players.find((p) => p.id === df1!.id)!).key, 'defend');
+  // 他の学年・他ポジションの選手は変わらない（'auto'のまま）。
+  const df2 = s.players.find((p) => p.pos === 'DF' && p.year === 2);
+  if (df2) assert.equal(resolveEffectivePolicy(s, df2).key, 'auto');
+  const mf1 = s.players.find((p) => p.pos === 'MF' && p.year === 1);
+  if (mf1) assert.equal(resolveEffectivePolicy(s, mf1).key, 'auto');
+});
+
+void test('V4-2: an individually-overridden player keeps their own policy even after the group setting changes ("個別"のまま)', () => {
+  let s = newGame('', 603);
+  const df1 = s.players.find((p) => p.pos === 'DF' && p.year === 1)!;
+  s = act(s, { type: 'trainingPolicySet', id: df1.id, policy: 'mental' });
+  assert.equal(s.v3.trainingPolicy.players[df1.id].individual, true);
+  s = act(s, { type: 'trainingPolicyGroupSet', pos: 'DF', year: 1, policy: 'defend' });
+  // 個別設定した選手は一括設定の変更に影響されない。
+  assert.equal(resolveEffectivePolicy(s, df1).key, 'mental');
+  // 同じ集団の別の（個別未設定の）選手は一括設定に従う。
+  const otherDf1 = s.players.find((p) => p.pos === 'DF' && p.year === 1 && p.id !== df1.id);
+  if (otherDf1) assert.equal(resolveEffectivePolicy(s, otherDf1).key, 'defend');
+});
+
+void test('V4-2: clearing an individual override reverts the player to the current group setting', () => {
+  let s = newGame('', 604);
+  const fw1 = s.players.find((p) => p.pos === 'FW' && p.year === 1)!;
+  s = act(s, { type: 'trainingPolicyGroupSet', pos: 'FW', year: 1, policy: 'shoot' });
+  s = act(s, { type: 'trainingPolicySet', id: fw1.id, policy: 'speed' });
+  assert.equal(resolveEffectivePolicy(s, fw1).key, 'speed');
+  s = act(s, { type: 'trainingPolicyClearIndividual', id: fw1.id });
+  assert.equal(s.v3.trainingPolicy.players[fw1.id].individual, false);
+  assert.equal(resolveEffectivePolicy(s, fw1).key, 'shoot');
+});
+
+void test('V4-2: "keep" cannot be set as a group policy outside the GK group', () => {
+  const s = newGame('', 605);
+  assert.throws(() => act(s, { type: 'trainingPolicyGroupSet', pos: 'DF', year: 1, policy: 'keep' }));
+  const changed = act(s, { type: 'trainingPolicyGroupSet', pos: 'GK', year: 1, policy: 'keep' });
+  assert.equal(changed.v3.trainingPolicy.groups[groupKey('GK', 1)], 'keep');
+});
+
+void test('V4-2: legacy saves without groups/individual/previousMonthGrowth hydrate deterministically and survive validateSave', () => {
+  const s = newGame('', 606);
+  const legacy = JSON.parse(JSON.stringify(s));
+  delete legacy.v3.trainingPolicy.groups;
+  for (const key of Object.keys(legacy.v3.trainingPolicy.players)) {
+    delete legacy.v3.trainingPolicy.players[key].individual;
+    delete legacy.v3.trainingPolicy.players[key].previousMonthGrowth;
+  }
+  const loaded = validateSave(legacy);
+  assert.equal(Object.keys(loaded.v3.trainingPolicy.groups).length, POSITION_GROUPS.length * GRADE_YEARS.length);
+  for (const pos of POSITION_GROUPS)
+    for (const year of GRADE_YEARS) assert.equal(loaded.v3.trainingPolicy.groups[groupKey(pos, year)], 'auto');
+  for (const p of loaded.players) {
+    assert.equal(loaded.v3.trainingPolicy.players[p.id].individual, false);
+    assert.deepEqual(loaded.v3.trainingPolicy.players[p.id].previousMonthGrowth, {});
+  }
+  assert.deepEqual(validateSave(loaded), loaded);
+});
+
+void test('V4-2: previousMonthGrowth captures the finished month\'s growth when the block advances, then monthlyGrowth resets', () => {
+  let s = newGame('', 607);
+  const pid = s.players[0].id;
+  s = act(s, { type: 'trainingPolicySet', id: pid, policy: 'defend' });
+  s = act(s, { type: 'train', training: 'attack' });
+  const midMonthGrowth = { ...s.v3.trainingPolicy.players[pid].monthlyGrowth };
+  assert.ok(Object.keys(midMonthGrowth).length > 0, '今月の伸びが記録されているはず');
+  // 次のブロックへ週を進める（monthBlockは4週ごと）。
+  s.week = 4;
+  s = act(s, { type: 'trainingPolicyReviewed' }); // 何らかのactionでhydrateを一度通す
+  assert.deepEqual(s.v3.trainingPolicy.players[pid].previousMonthGrowth, midMonthGrowth);
+  assert.deepEqual(s.v3.trainingPolicy.players[pid].monthlyGrowth, {});
+});
+
+void test('V4-2: renamed policy labels match the exact ability names shown on the player screen', () => {
+  assert.equal(policyInfo.speed.name, stats.speed);
+  assert.equal(policyInfo.dribble.name, extraStatNames.dribble);
+  assert.equal(policyInfo.physical.name, `${extraStatNames.stamina}・${extraStatNames.power}`);
+  assert.equal(policyInfo.shoot.name, stats.shoot);
+  assert.equal(policyInfo.pass.name, stats.pass);
+  assert.equal(policyInfo.defend.name, stats.defend);
+  assert.equal(policyInfo.mental.name, stats.mental);
+  assert.equal(policyInfo.keep.name, stats.keep);
+});
+
+void test('V4-2: determinism — the same seed and the same sequence of group/individual actions produce an identical resulting state', () => {
+  const run = () => {
+    let s = newGame('', 608);
+    s = act(s, { type: 'trainingPolicyGroupSet', pos: 'MF', year: 2, policy: 'pass' });
+    const mf2 = s.players.find((p) => p.pos === 'MF' && p.year === 2);
+    if (mf2) s = act(s, { type: 'trainingPolicySet', id: mf2.id, policy: 'mental' });
+    s = act(s, { type: 'train', training: 'balance' });
+    return s;
+  };
+  const a = run();
+  const b = run();
+  assert.deepEqual(a, b);
 });

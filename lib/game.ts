@@ -334,6 +334,15 @@ export const training: Record<
     stats: [],
   },
 };
+// V4-8: 週間メニュー画面の「疲労(1日) ±X」プレビュー用に、advanceTrainingDay内の
+// 疲労更新式（V4-1(5.2)の疲労比例回復）を1人分だけ切り出したもの。advanceTrainingDay
+// 自身もこの関数を呼ぶことで、プレビュー表示と実際の疲労変化が常に一致するようにする。
+export function trainingFatigueDelta(tr: Training, fatigue: number): number {
+  const isRest = tr === 'rest';
+  const t = training[tr];
+  const recovery = isRest ? 12 + fatigue * 0.115 : 2.35 + fatigue * 0.038;
+  return isRest ? -recovery : t.fatigue / 6 - recovery;
+}
 export const tactics: Record<Tactic, { name: string; desc: string }> = {
   balanced: { name: 'バランス', desc: '消耗を抑え、攻守の均衡を保つ' },
   possession: {
@@ -869,9 +878,13 @@ function advanceTrainingDay(s: State, tr: Training): { injured: boolean } {
       }
     }
     // V4-1(5.2): 回復を疲れに比例させる（疲れた選手ほど戻りやすく、際限なく
-    // 積み上がらない）。練習日 3→3+疲労×0.05、休養日 15→15+疲労×0.15。
-    const recovery = isRest ? 15 + p.fatigue * 0.15 : 3 + p.fatigue * 0.05;
-    p.fatigue = clamp(p.fatigue + (isRest ? -recovery : t.fatigue / 6 - recovery));
+    // 積み上がらない）。練習日 3→2.35+疲労×0.038、休養日 15→12+疲労×0.115。
+    // V4-1a(バランス調整): 元の3+疲労×0.05 / 15+疲労×0.15 は、疲労が低いときの
+    // 回復量が旧仕様（固定3/15）を常に上回るため、平均疲労が main より下がり
+    // 育成が速くなりすぎていた（scratchpad の長期シミュレーションで実測）。
+    // 基準値を下げて、同シミュレーションでの平均疲労（部員全体・先発とも）が
+    // main とほぼ一致するように調整した。式自体は trainingFatigueDelta() に切り出し済み。
+    p.fatigue = clamp(p.fatigue + trainingFatigueDelta(tr, p.fatigue));
   }
   s.cohesion = clamp(
     s.cohesion + (tr === 'possession' ? 4 : isRest ? -1 : 1) / 6,
@@ -1268,11 +1281,18 @@ function grantMatchPositionExperience(s: State, profMult: Map<number, number>): 
   }
 }
 // V4-1(5.2): 1区間の疲労を、スタミナで全戦術に効かせる（旧仕様はハイプレスのみ）。
-// 5 × (1 + (50−スタミナ)/150)。ハイプレスはさらに ×1.5。
+// 5 × (1 + (45−スタミナ)×0.007)。ハイプレスはさらに ×1.6。
+// V4-1a(バランス調整): 平均スタミナは約45（squad.ts の deriveExtra 参照。旧仕様の
+// フォールバック値45とも一致）なので、中心を50ではなく45に置き、通常の選手の
+// 非ハイプレス時疲労が旧仕様の固定5と一致するようにした。係数0.007とハイプレス
+// 倍率1.6は、tests/balance.test.ts T-3（スタミナ30/90差でdiff>3）と
+// tests/fatigue.test.ts（先発平均と最も疲れた先発の差が30以内）を両立しつつ、
+// 長期シミュレーション（3.3・3.4）でのA選手到達曲線が main と同水準になるよう、
+// scratchpad の main/wip 比較シミュレーションで実測して選んだ値。
 function matchStaminaCost(s: State, p: Player, tactic: Tactic): number {
   const stamina = s.v3.squad.players[p.id]?.stamina ?? 45;
-  const base = 5 * (1 + (50 - stamina) / 150);
-  return tactic === 'press' ? base * 1.5 : base;
+  const base = 5 * (1 + (45 - stamina) * 0.007);
+  return tactic === 'press' ? base * 1.6 : base;
 }
 function simulateSegment(s: State) {
   const m = s.match!;

@@ -22,7 +22,13 @@ import { playScene, playSfx, primeAudio } from '@/lib/audio';
 import { MatchView, Metric, Meter, Choices, Pitch } from './match-ui';
 import { FatigueMeter } from './fatigue-meter';
 import { CompetitionStatusSection, CompetitionTournamentSection } from './competition-ui';
-import { readCompetition, competitionFixture } from '@/lib/competition';
+import { TierChip } from './tier-chip';
+import {
+  readCompetition,
+  competitionFixture,
+  type SchoolTier,
+  type DistrictId,
+} from '@/lib/competition';
 import { EventStills, type EventStillsChoice, type EventStillsResult } from './event-scenes';
 import { getEventScenePanels } from '@/lib/event-scenes';
 import { Progress } from '@/components/ui/progress';
@@ -77,6 +83,7 @@ import {
   roster,
   dateLabel,
   training,
+  trainingFatigueDelta,
   tactics,
   DOW_NAMES,
   MATCH_MAX_SUBS,
@@ -121,12 +128,6 @@ const trainingIcons: Record<Training, typeof Dumbbell> = {
   rest: HeartPulse,
   position: MapPin,
 };
-// S1: lib/game.ts の training[].fatigue は「従来の週あたり」の目安値のまま残している
-// （互換・参照用）。日次コマンドでの実際の1日あたりの疲労変化は
-// 休養=-15固定、それ以外=t.fatigue/6-3（自然回復込み）なので、表示用に換算する。
-function dailyFatigueDelta(key: Training): number {
-  return key === 'rest' ? -15 : Math.round(training[key].fatigue / 6 - 3);
-}
 // T-13: 各メインタブの中身をサブタブ（セグメント切り替え）で分けるための共通部品。
 // Base UI の Tabs（components/ui/tabs.tsx）を使い回すことで role="tablist"／aria-selected／
 // キーボード操作（矢印キー）を自前実装せずに満たす。main-nav（メインタブ）とは見た目を
@@ -445,6 +446,22 @@ export default function Game() {
     (worst, p) => (!worst || p.fatigue > worst.fatigue ? p : worst),
     null,
   );
+  // V4-8: 週間メニューの「疲労(1日) ±X」プレビュー（旧: 固定の概算式）を、
+  // lib/game.ts の実際の疲労比例回復式（trainingFatigueDelta）に合わせる。
+  // 練習は部員全員にかかるため、代表値は部員全体の平均疲労を使う（先発だけではない）。
+  const squadFatigue = s.players.length
+    ? s.players.reduce((a, p) => a + p.fatigue, 0) / s.players.length
+    : 0;
+  // V4-8: 試合日カードの相手所属チップ。s.pending は lib/game.ts の Fixture型だが、
+  // 学校の世界から借りた相手のときは lib/competition.ts の CompFixture として作られ、
+  // opponentTier/opponentDistrictId を余分に持つ（Fixture型には無いフィールドなので、
+  // 表示専用の読み取りとして緩くキャストする。無ければ TierChip は何も描画しない）。
+  const pendingOpponentTier = (
+    s.pending as unknown as { opponentTier?: SchoolTier } | null
+  )?.opponentTier;
+  const pendingOpponentDistrictId = (
+    s.pending as unknown as { opponentDistrictId?: DistrictId } | null
+  )?.opponentDistrictId;
   // W2配線: 予定表・シーズン状況はすべて lib/competition.ts の大会データ（s.v3.competition）から
   // 導出する。旧 s.qualified/s.alive/s.summerAlive は試合結果の反映先ではなくなったため、表示にも使わない。
   const comp = readCompetition(s);
@@ -778,32 +795,47 @@ export default function Game() {
                     <div className="fixture-icon">
                       <Trophy />
                     </div>
-                    <div>
+                    <div className="fixture-info">
                       <span className="eyebrow">MATCH DAY</span>
                       <h2>{s.pending.label}</h2>
                       <p>
-                        vs {s.pending.opponent} ・ 総合力 {s.pending.strength}{' '}
-                        ・ {tactics[s.pending.style].name} ・ {fixtureFormation(s.pending)}
+                        vs {s.pending.opponent}
+                        {/* V4-8: 対戦相手の所属の札（DESIGN_V4 3.2章）。学校の世界から借りた
+                            相手のときだけ opponentTier/opponentDistrictId が付く（旧セーブ・
+                            架空の練習試合相手などは無いので何も出ない）。 */}
+                        <TierChip
+                          tier={pendingOpponentTier}
+                          districtId={pendingOpponentDistrictId}
+                        />
+                        <span>
+                          {' '}
+                          ・ 総合力 {s.pending.strength} ・ {tactics[s.pending.style].name} ・{' '}
+                          {fixtureFormation(s.pending)}
+                        </span>
                       </p>
                       {formationHint(fixtureFormation(s.pending)) && (
                         <p>{formationHint(fixtureFormation(s.pending))}</p>
                       )}
                     </div>
-                    <button
-                      className="secondary"
-                      onClick={() => setTab('team')}
-                    >
-                      編成を確認
-                    </button>
-                    <button
-                      className="primary"
-                      onClick={() => {
-                        playSfx('whistle');
-                        run({ type: 'start' });
-                      }}
-                    >
-                      試合へ進む <ArrowRight size={18} />
-                    </button>
+                    {/* V4-8: 幅375〜390pxで説明文とボタンが横並びに詰まって読みにくかったため、
+                        ボタンをまとめて別の行（狭幅では文章の下）に回す。 */}
+                    <div className="fixture-actions">
+                      <button
+                        className="secondary"
+                        onClick={() => setTab('team')}
+                      >
+                        編成を確認
+                      </button>
+                      <button
+                        className="primary"
+                        onClick={() => {
+                          playSfx('whistle');
+                          run({ type: 'start' });
+                        }}
+                      >
+                        試合へ進む <ArrowRight size={18} />
+                      </button>
+                    </div>
                   </section>
                 ) : null}
                 {/* T-13: クラブハウスが縦に長かったため、以下をサブタブで分ける。
@@ -855,6 +887,10 @@ export default function Game() {
                       {(Object.keys(training) as Training[]).map((key) => {
                         const t = training[key],
                           Icon = trainingIcons[key];
+                        // V4-8: 部員全体の平均疲労を「代表的な疲労値」として渡し、
+                        // 実際の1日あたりの疲労変化式（lib/game.ts trainingFatigueDelta）で
+                        // プレビューする（表示は四捨五入のみ）。
+                        const delta = Math.round(trainingFatigueDelta(key, squadFatigue));
                         return (
                           <label
                             className={`training-card ${plan === key ? 'selected' : ''}`}
@@ -867,8 +903,8 @@ export default function Game() {
                             <strong>{t.name}</strong>
                             <span>{t.desc}</span>
                             <small className={key === 'rest' ? 'lime' : ''}>
-                              疲労(1日) {dailyFatigueDelta(key) > 0 ? '+' : ''}
-                              {dailyFatigueDelta(key)}
+                              疲労(1日) {delta > 0 ? '+' : ''}
+                              {delta}
                             </small>
                           </label>
                         );

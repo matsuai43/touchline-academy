@@ -37,15 +37,12 @@ import {
   schoolsByTier,
   pickStableSubset,
   nearestSchool,
-  tierLabel,
   districtRegion,
   districtsInRegion,
   districtsInSide,
-  isLeagueTier,
   SCHOOL_TIERS,
   type WorldSchool,
   type SchoolTier,
-  type DistrictRegionInfo,
 } from './school-world.ts';
 import { regionalSchoolName } from './school-names.ts';
 
@@ -212,12 +209,28 @@ export function districtById(id: DistrictId): District {
 function districtStrengthOf(districtId: DistrictId): number {
   return districtById(districtId).strength;
 }
+// V4-4 perf: districtSchoolsOf()（≒他県のbuildDistrictWorld再生成）は tierPool 経由で
+// regional/national階層のたびに地域/EAST・WEST全県ぶん呼ばれるため、メモ化なしだと
+// 週送り・季送りのたびに同じ他県の24校を何度も再計算してしまう（体感で数十秒〜のロス）。
+// buildDistrictWorld は (seed, districtId, districtStrength, season) だけで決まる純粋関数
+// なので、この3つ（+districtId）をキーに結果をメモ化する。s.seed が変わらない限り
+// districtStrengthOf(districtId) も常に同じ値なのでキーに含める必要はない。
+// 無制限に育たないよう、件数が上限を超えたら丸ごとクリアする（複数seed/複数季をまたぐ
+// テストでもメモリが際限なく増えない、単純で決定的な方針）。
+const worldMemo = new Map<string, WorldSchool[]>();
+const WORLD_MEMO_MAX = 200;
 /** getDistrictSchools() の内部実装。comp を直接受け取る（readCompetition() を呼ばない）ので、
  *  hydrateCompetition() 自身の中（＝comp.world がまだ整っていない可能性がある最中）からは
  *  絶対にこちらを使わない。呼べるのは comp.world が整った後の通常の読み取りパスのみ。 */
 function districtSchoolsOf(s: State, comp: CompState, districtId: DistrictId): WorldSchool[] {
   if (comp.world.homeDistrictId === districtId) return comp.world.homeSchools;
-  return buildDistrictWorld(s.seed, districtId, districtStrengthOf(districtId), s.season);
+  const key = `${s.seed}|${districtId}|${s.season}`;
+  const cached = worldMemo.get(key);
+  if (cached) return cached;
+  const built = buildDistrictWorld(s.seed, districtId, districtStrengthOf(districtId), s.season);
+  if (worldMemo.size >= WORLD_MEMO_MAX) worldMemo.clear();
+  worldMemo.set(key, built);
+  return built;
 }
 /** 指定県の学校の世界（24校）。自県（comp.world.homeDistrictId）なら保存済みの
  *  （＝季ごとに強さが少しずつ揺れた）ものを返し、他県はその場で同じ種から決定的に
@@ -596,6 +609,10 @@ export type LeagueStandingRow = {
   ga: number;
   gd: number;
   points: number;
+  // V4-4: 所属の札（DESIGN_V4 3.2章）表示用。旧セーブ由来のクラブ（世界導入前に生成）には
+  // 無いことがあるため任意。自校の行（isSelf）には設定しない。
+  districtId?: DistrictId;
+  tier?: SchoolTier;
 };
 export type LeagueRivalResult = {
   week: number;
@@ -738,6 +755,8 @@ export function computeLeagueTable(
       name: c.name,
       isSelf: false,
       youth: c.youth,
+      districtId: c.districtId,
+      tier: c.tier,
       ...acc[c.id],
       gd: acc[c.id].gf - acc[c.id].ga,
     })),
@@ -766,14 +785,14 @@ export function leagueRemaining(comp: CompState, which: 'A' | 'B' = 'A'): number
 export function leagueNextFixture(
   comp: CompState,
   which: 'A' | 'B' = 'A',
-): { opponent: string; leg: 0 | 1; week: number } | null {
+): { opponent: string; leg: 0 | 1; week: number; districtId?: DistrictId; tier?: SchoolTier } | null {
   const team = which === 'B' ? comp.teamB : comp.teamA;
   if (!team) return null;
   const entry = team.schedule[team.played];
   if (!entry) return null;
   const club = team.clubs[entry.clubIndex];
   if (!club) return null;
-  return { opponent: club.name, leg: entry.leg, week: entry.week };
+  return { opponent: club.name, leg: entry.leg, week: entry.week, districtId: club.districtId, tier: club.tier };
 }
 
 // ---------------------------------------------------------------------------
@@ -1318,8 +1337,8 @@ function createCupBracket(
   });
   // Slot 0 is the local district representative; the qualifier contains the player's school.
   teams[0] = national
-    ? { ...teams[0], id: `${cupKey}-representative`, name: '代表未定' }
-    : { ...teams[0], id: 'self', name: s.school, strength: Math.round([...s.players].sort((a, b) => overall(b) - overall(a)).slice(0, 11).reduce((sum, p) => sum + overall(p), 0) / 11) };
+    ? (({ tier: _tier, ...rest }) => ({ ...rest, id: `${cupKey}-representative`, name: '代表未定' }))(teams[0])
+    : { ...teams[0], id: 'self', name: s.school, tier: comp.teamA.tier, strength: Math.round([...s.players].sort((a, b) => overall(b) - overall(a)).slice(0, 11).reduce((sum, p) => sum + overall(p), 0) / 11) };
   // T-12: 出場校は季の開始時に決めるが、組み合わせ（rounds[0]）は抽選まで空にしておく
   // （drawn:false）。抽選は performDraw() が行う。
   const rounds: CupMatch[][] = [];
@@ -1334,7 +1353,7 @@ function cupTeam(bracket: CupBracket, id: string | null): CupTeam | undefined {
   return bracket.teams.find((team) => team.id === id);
 }
 
-function prepareNationalRepresentative(s: State, cup: CupState, cupKey: 'ih' | 'wc'): void {
+function prepareNationalRepresentative(s: State, comp: CompState, cup: CupState, cupKey: 'ih' | 'wc'): void {
   const national = cup.national;
   const qualifier = cup.qualifier;
   if (!national || !qualifier || national.completedRounds > 0) return;
@@ -1345,8 +1364,8 @@ function prepareNationalRepresentative(s: State, cup: CupState, cupKey: 'ih' | '
   const winner = cupTeam(qualifier, winnerId);
   if (!winner) return;
   national.teams[0] = winnerId === 'self'
-    ? { ...placeholder, id: 'self', name: s.school, strength: strengthOf(s) }
-    : { ...placeholder, name: winner.name, strength: winner.strength, style: winner.style, formation: teamFormation(winner) };
+    ? { ...placeholder, id: 'self', name: s.school, strength: strengthOf(s), tier: comp.teamA.tier }
+    : { ...placeholder, name: winner.name, strength: winner.strength, style: winner.style, formation: teamFormation(winner), tier: winner.tier };
   // T-12: rounds[0] の組み合わせは抽選（performDraw）が後で決めるため、ここでは
   // teams[0] の中身（代表校の正体）を更新するだけでよい（以前はここで
   // rounds[0][0].homeId を直接埋めていたが、抽選前提の構造では意味を持たない）。
@@ -1575,11 +1594,11 @@ export function advanceCupWeek(s: State, week: number): void {
     const qRound = (cupKey === 'ih' ? IH_QUALIFIER_WEEKS : WC_QUALIFIER_WEEKS).indexOf(week);
     if (qRound >= 0 && cup.qualifier) {
       completeCupRound(s, cup.qualifier, cupKey, false, qRound);
-      if (qRound === 3) prepareNationalRepresentative(s, cup, cupKey);
+      if (qRound === 3) prepareNationalRepresentative(s, comp, cup, cupKey);
     }
     const nRound = (cupKey === 'ih' ? IH_NATIONAL_WEEKS : WC_NATIONAL_WEEKS).indexOf(week);
     if (nRound >= 0 && cup.national) {
-      prepareNationalRepresentative(s, cup, cupKey);
+      prepareNationalRepresentative(s, comp, cup, cupKey);
       completeCupRound(s, cup.national, cupKey, true, nRound);
     }
   }

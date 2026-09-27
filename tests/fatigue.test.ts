@@ -26,8 +26,9 @@ function simulateSeasons(seed: number, seasons: number) {
   while (s.season <= seasons && guard++ < 60000) {
     if (s.match) {
       // ハイプレスで固定し、疲労が最も出やすい条件でシミュレーションする。
-      if (s.match.tactic !== 'press') s = act(s, { type: 'tactic', tactic: 'press' });
-      s = act(s, s.match.done ? { type: 'finish' } : { type: 'segment' });
+      const m = s.match;
+      if (m.tactic !== 'press') s = act(s, { type: 'tactic', tactic: 'press' });
+      s = act(s, m.done ? { type: 'finish' } : { type: 'segment' });
     } else if (s.pending) {
       s = act(s, { type: 'start' });
       const list = starters(s);

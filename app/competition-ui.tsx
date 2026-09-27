@@ -44,6 +44,8 @@ import {
   type CupState,
   type CupBracket,
 } from '@/lib/competition';
+// V4-8: TierChip は app/game-ui.tsx の試合日カードでも使うため app/tier-chip.tsx に切り出した。
+import { TierChip } from './tier-chip';
 
 function Stars({ count }: { count: number }) {
   return (
@@ -194,7 +196,14 @@ function LeagueStandingsSection({ state, which }: { state: State; which: 'A' | '
         <div className="lt-stat">
           <span className="lt-stat-label">次節の相手</span>
           <span className="lt-stat-value">
-            {next ? `${next.opponent}（${next.leg === 0 ? 'ホーム' : 'アウェー'}）` : 'シーズン終了'}
+            {next ? (
+              <span className="school-tier-chip-row">
+                {next.opponent}（{next.leg === 0 ? 'ホーム' : 'アウェー'}）
+                <TierChip tier={next.tier} districtId={next.districtId} />
+              </span>
+            ) : (
+              'シーズン終了'
+            )}
           </span>
         </div>
         <div className="lt-stat">
@@ -254,6 +263,7 @@ function LeagueStandingsSection({ state, which }: { state: State; which: 'A' | '
                       >
                         {row.name}
                         {row.youth && <span className="lt-youth-badge">ユース</span>}
+                        <TierChip tier={row.tier} districtId={row.districtId} />
                       </button>
                     )}
                   </TableCell>
@@ -621,9 +631,10 @@ function DrawPendingList({
       <p className="text-xs text-muted-foreground">出場校（{bracket.teams.length}校）</p>
       <ul className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:grid-cols-3">
         {bracket.teams.map((team) => (
-          <li key={team.id} className={team.id === 'self' ? 'font-semibold' : ''}>
+          <li key={team.id} className={`school-tier-chip-row ${team.id === 'self' ? 'font-semibold' : ''}`}>
             {team.name}
             {team.id === 'self' ? '（自校）' : ''}
+            <TierChip tier={team.tier} districtId={national ? team.districtId : undefined} asRepresentative={national} />
           </li>
         ))}
       </ul>
@@ -654,12 +665,21 @@ function CupBracketView({
             <div className="flex flex-1 flex-col justify-around gap-2">
               {matches.map((match, index) => (
                 <div key={index} className="rounded-lg border border-border bg-card p-2 text-xs" aria-label={`${cupRoundLabels[stage][round]}第${index + 1}試合`}>
-                  {([match.homeId, match.awayId] as const).map((id, side) => (
-                    <div key={side} className={`flex items-center justify-between gap-2 py-0.5 ${id === match.winnerId ? 'font-bold' : ''}`}>
-                      <span className="min-w-0 truncate">{id ? teams.get(id)?.name ?? '勝者未定' : '勝者未定'}{id === 'self' ? '（自校）' : ''}</span>
-                      <span>{match.home === null ? '—' : side === 0 ? match.home : match.away}</span>
-                    </div>
-                  ))}
+                  {([match.homeId, match.awayId] as const).map((id, side) => {
+                    const t = id ? teams.get(id) : undefined;
+                    return (
+                      <div key={side} className={`flex items-center justify-between gap-2 py-0.5 ${id === match.winnerId ? 'font-bold' : ''}`}>
+                        <span className="flex min-w-0 items-center gap-1">
+                          <span className="min-w-0 truncate">
+                            {t?.name ?? '勝者未定'}
+                            {id === 'self' ? '（自校）' : ''}
+                          </span>
+                          <TierChip tier={t?.tier} districtId={stage === 'national' ? t?.districtId : undefined} asRepresentative={stage === 'national'} />
+                        </span>
+                        <span>{match.home === null ? '—' : side === 0 ? match.home : match.away}</span>
+                      </div>
+                    );
+                  })}
                   {match.penalties && <div className="mt-1 text-muted-foreground">PK {match.penalties}</div>}
                 </div>
               ))}
@@ -723,6 +743,21 @@ export function CompetitionStatusSection({
           <CupStatus name="選手権" cup={comp.wc} />
         </div>
       </section>
+
+      <details className="school-world-note rounded-xl border border-border/60 bg-card p-3">
+        <summary className="cursor-pointer text-sm font-semibold">
+          登場する学校について
+        </summary>
+        <div className="mt-2 flex flex-col gap-2 text-xs text-muted-foreground">
+          <p>登場する学校はすべて架空です。</p>
+          <p>
+            リーグは4つの階層に分かれています。
+            <br />
+            県リーグ2部 → 県リーグ1部 → 地域リーグ（現実のプリンスリーグに相当） →
+            全国リーグ EAST/WEST（現実のプレミアリーグに相当）。
+          </p>
+        </div>
+      </details>
 
       <LeagueSection state={state} />
 

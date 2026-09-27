@@ -91,9 +91,8 @@ test('player dialog and substitution dialog always release the page; substitutio
  for(let n=0;n<5;n++){
   await page.getByRole('button',{name:'交代する選手を選ぶ'}).click();
   await expect(overlay).toHaveCount(1);
-  const columns=page.locator('.sub-column');
-  await columns.nth(0).locator('.sub-pick').first().click();
-  await columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first().click();
+  await page.locator('.sub-step-out .sub-pick').first().click();
+  await page.locator('.sub-step-in .sub-pick:not([aria-disabled="true"])').first().click();
   // T1: 組は一度「予約に追加」してから、まとめて確定する。
   await page.getByRole('button',{name:'予約に追加'}).click();
   await page.getByRole('button',{name:'1人の交代を確定'}).click();

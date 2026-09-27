@@ -42,8 +42,8 @@ void test('20 players, three balanced classes, unique starting eleven',()=>{cons
 // S1: 1回のtrain操作は「1日」になった。週0はU18リーグの試合が組まれているが、
 // 月曜1日分の練習だけでは日曜(試合日)にまだ届かないため、その場ではpendingにならない。
 void test('training grows players; focused training grows faster; original stays immutable',()=>{const s=newGame('',42),id=s.players[0].id;const focused=act(s,{type:'focus',id});const a=act(s,{type:'train',training:'attack'}),b=act(focused,{type:'train',training:'attack'});assert.equal(s.week,0);assert.equal(s.day,0);assert.equal(a.week,0);assert.equal(a.day,1,'1回のtrainは1日だけ進む');assert.equal(a.pending,null,'月曜1日だけでは日曜の試合にまだ届かない');const gain=a.players[0].stats.shoot-s.players[0].stats.shoot;assert.ok(gain>0);assert.ok(Math.abs((b.players[0].stats.shoot-s.players[0].stats.shoot)/gain-1.5)<.01);});
-// V4-1(5.2): 休養日の回復は疲労に比例する（15+疲労×0.15）。疲労80なら27回復して53。
-void test('rest restores fatigue for one day, and training cannot skip pending fixtures',()=>{let s=newGame('',12);s.players.forEach(p=>p.fatigue=80);s=act(s,{type:'train',training:'rest'});assert.equal(s.players[0].fatigue,53,'休養1日は疲労80なら-27');if(s.pending)s=play(s);s.week=3;s=toMatchDay(s,'balance');assert.ok(s.pending);assert.throws(()=>act(s,{type:'train',training:'balance'}));});
+// V4-1(5.2): 休養日の回復は疲労に比例する（12+疲労×0.115）。疲労80なら21.2回復して58.8。
+void test('rest restores fatigue for one day, and training cannot skip pending fixtures',()=>{let s=newGame('',12);s.players.forEach(p=>p.fatigue=80);s=act(s,{type:'train',training:'rest'});assert.equal(s.players[0].fatigue,58.8,'休養1日は疲労80なら-21.2');if(s.pending)s=play(s);s.week=3;s=toMatchDay(s,'balance');assert.ok(s.pending);assert.throws(()=>act(s,{type:'train',training:'balance'}));});
 // S3: 交代は最大5人まで。交代投入できるのはベンチ入り（Aチームの先発以外9人）の選手のみ。
 void test('match commands, substitution limit (5) restricted to bench players, and save/resume at halftime',()=>{
   let s=newGame('',55);
@@ -152,13 +152,13 @@ void test('S1: a single day only applies 1/6 of the weekly effect, six days of t
   let sixDays=s;
   for(let i=0;i<6;i++)sixDays=act(sixDays,{type:'train',training:'physical'});
   assert.equal(sixDays.day,6);
-  // V4-1(5.2): 回復は疲労に比例する（練習日 3+疲労×0.05）ため、日ごとに疲労が変わり
+  // V4-1(5.2): 回復は疲労に比例する（練習日 2.35+疲労×0.038）ため、日ごとに疲労が変わり
   // 単純な定数では表せない。同じ式を6日分たどって期待値を作る（physicalの週あたり疲労+14）。
   const p0=s.players[0].id;
   const before=s.players.find(p=>p.id===p0)!.fatigue;
   const after=sixDays.players.find(p=>p.id===p0)!.fatigue;
   let expected=before;
-  for(let i=0;i<6;i++)expected+=14/6-(3+expected*0.05);
+  for(let i=0;i<6;i++)expected+=14/6-(2.35+expected*0.038);
   assert.ok(Math.abs(after-expected)<0.01,`6日合計の疲労変化が想定とズレています: ${after-before} (expected ${expected-before})`);
 });
 void test('S1: autoWeek follows the stored weekly menu until match day, stopping early on a newly triggered life event',()=>{

@@ -130,7 +130,7 @@ export function buildDistrictWorld(
   const scored = idxs
     .map((idx) => ({ idx, score: hf(seed, dh, idx, 301) }))
     .sort((a, b) => b.score - a.score);
-  const tierOf: SchoolTier[] = new Array(SCHOOL_COUNT);
+  const tierOf: SchoolTier[] = Array.from({ length: SCHOOL_COUNT });
   let cursor = 0;
   for (const tier of ALLOC_ORDER) {
     for (let i = 0; i < counts[tier]; i++) {

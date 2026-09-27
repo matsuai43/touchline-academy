@@ -156,16 +156,24 @@ void test('manager care applies once per week at week-end (day===6 gate, not the
     cur = act(cur, { type: 'train', training: 'balance' });
   }
   assert.equal(cur.day, 5);
+  // V4-1(5.2): 回復が疲労に比例するようになったため（練習日の回復は
+  // 2.35+疲労×0.038、lib/game.ts の advanceTrainingDay 参照）、単純な
+  // 「1日あたり固定-3」の式では期待値が出せない。同じ漸化式をここでも
+  // 1日ずつ辿って期待値を作る（ケアの週次-4はこの漸化式に含めず、別途引く）。
+  let expected = f;
+  for (let i = 0; i < 5; i++) expected += 7 / 6 - (2.35 + expected * 0.038);
   assert.ok(
-    Math.abs(cur.players[0].fatigue - (f + 5 * (7 / 6 - 3))) < 1e-9,
+    Math.abs(cur.players[0].fatigue - expected) < 1e-9,
     '月〜金はまだケアの-4が適用されていないはず',
   );
   if (cur.event) cur = act(cur, { type: 'event', choice: 'team' });
   cur = resolveLife(cur);
   const trained = act(cur, { type: 'train', training: 'balance' });
   assert.equal(trained.day, 6);
+  expected += 7 / 6 - (2.35 + expected * 0.038);
+  expected -= 4;
   assert.ok(
-    Math.abs(trained.players[0].fatigue - (f + 6 * (7 / 6 - 3) - 4)) < 1e-9,
+    Math.abs(trained.players[0].fatigue - expected) < 1e-9,
     '週の練習日が終わる土曜の時点でケアの-4が1回だけ適用されるはず',
   );
   const before = trained.morale;

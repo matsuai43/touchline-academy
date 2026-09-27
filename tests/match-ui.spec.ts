@@ -47,28 +47,35 @@ test('substitution dialog: reserve one pair, cancel resets, and confirming the b
   const overlay = page.locator('[data-slot="dialog-overlay"]');
   await expect(overlay).toHaveCount(1);
 
-  const columns = page.locator('.sub-column');
-  const pitchPick = columns.nth(0).locator('.sub-pick').first();
-  const benchPick = columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first();
-
-  // 「予約に追加」は、下げる選手・入れる選手の両方を選ぶまでは表示されない。
-  await expect(page.getByRole('button', { name: '予約に追加' })).toHaveCount(0);
+  // V4-1: 2段階・1列の流れ。ステップ1で下げる選手を選ぶと自動でステップ2に進む。
+  const outStep = page.locator('.sub-step-out');
+  await expect(outStep).toBeVisible();
+  const pitchPick = outStep.locator('.sub-pick').first();
+  const outName = await pitchPick.locator('.sub-pick-name').innerText();
   await pitchPick.click();
-  await expect(pitchPick).toHaveClass(/selected/);
+  await expect(outStep).toHaveCount(0);
+  const inStep = page.locator('.sub-step-in');
+  await expect(inStep).toBeVisible();
+  await expect(page.locator('.sub-outgoing-banner')).toContainText(outName);
+
+  // 「予約に追加」は下げる選手を選んだ時点で表示されるが、入れる選手も選ぶまでは
+  // aria-disabled（DADS: disabled属性は使わず、押せるまま理由を示す）。
+  const addBtn = page.getByRole('button', { name: '予約に追加' });
+  await expect(addBtn).toHaveAttribute('aria-disabled', 'true');
+  const benchPick = inStep.locator('.sub-pick:not([aria-disabled="true"])').first();
   await benchPick.click();
   await expect(benchPick).toHaveClass(/selected/);
-  const addBtn = page.getByRole('button', { name: '予約に追加' });
-  await expect(addBtn).toBeEnabled();
+  await expect(addBtn).not.toHaveAttribute('aria-disabled', 'true');
 
-  // 「選び直す」で確定前ならいつでも取り消せる。
+  // 「選び直す」で確定前ならいつでも取り消せて、ステップ1（下げる選手選び）に戻る。
   await page.getByRole('button', { name: '選び直す' }).click();
-  await expect(page.getByRole('button', { name: '予約に追加' })).toHaveCount(0);
-  await expect(pitchPick).not.toHaveClass(/selected/);
+  await expect(page.locator('.sub-step-out')).toBeVisible();
 
   // 選び直して今度は予約に追加する。まだ交代は成立しない（予約段階）。
-  await pitchPick.click();
-  await benchPick.click();
-  const incomingName = await benchPick.locator('.sub-pick-name').innerText();
+  await page.locator('.sub-step-out .sub-pick').first().click();
+  const benchPick2 = page.locator('.sub-step-in .sub-pick:not([aria-disabled="true"])').first();
+  const incomingName = await benchPick2.locator('.sub-pick-name').innerText();
+  await benchPick2.click();
   await page.getByRole('button', { name: '予約に追加' }).click();
   await expect(overlay).toHaveCount(1);
   await expect(page.locator('.sub-reserved-row')).toHaveCount(1);
@@ -78,9 +85,9 @@ test('substitution dialog: reserve one pair, cancel resets, and confirming the b
   await page.getByRole('button', { name: '1人の交代を確定' }).click();
   await expect(overlay).toHaveCount(0);
   await expect(page.getByText('交代 1 / 5')).toBeVisible();
-  // 交代した選手が、今度はピッチ側の一覧に現れる。
+  // 交代した選手が、今度は「下げる選手を選ぶ」一覧に現れる。
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
-  await expect(columns.nth(0).getByText(incomingName, { exact: true })).toBeVisible();
+  await expect(page.locator('.sub-step-out').getByText(incomingName, { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -94,17 +101,17 @@ test('batch substitution: reserving several pairs and confirming once increases 
 
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
   const overlay = page.locator('[data-slot="dialog-overlay"]');
-  const columns = page.locator('.sub-column');
 
-  // 1組目: ピッチ1人目 → ベンチの空いている先頭。
-  await columns.nth(0).locator('.sub-pick').first().click();
-  await columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first().click();
+  // 1組目: 下げる選手1人目 → 入れる選手の空いている先頭。
+  await page.locator('.sub-step-out .sub-pick').first().click();
+  await page.locator('.sub-step-in .sub-pick:not([aria-disabled="true"])').first().click();
   await page.getByRole('button', { name: '予約に追加' }).click();
   await expect(page.locator('.sub-reserved-row')).toHaveCount(1);
 
-  // 2組目: ピッチ2人目 → ベンチの（1組目を除いた）空いている先頭。
-  await columns.nth(0).locator('.sub-pick').nth(1).click();
-  await columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first().click();
+  // 2組目: 下げる選手2人目（予約済みでも一覧の並びは変わらない） → 入れる選手の
+  // （1組目を除いた）空いている先頭。
+  await page.locator('.sub-step-out .sub-pick').nth(1).click();
+  await page.locator('.sub-step-in .sub-pick:not([aria-disabled="true"])').first().click();
   await page.getByRole('button', { name: '予約に追加' }).click();
   await expect(page.locator('.sub-reserved-row')).toHaveCount(2);
   await expect(page.getByText('交代 0 / 5（予約 2）')).toBeVisible();
@@ -121,9 +128,8 @@ test('batch substitution: a reservation can be withdrawn individually before con
   await withSave(page, startedMatch('予約取消検証高校', 20260923));
   await page.goto('/');
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
-  const columns = page.locator('.sub-column');
-  await columns.nth(0).locator('.sub-pick').first().click();
-  await columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first().click();
+  await page.locator('.sub-step-out .sub-pick').first().click();
+  await page.locator('.sub-step-in .sub-pick:not([aria-disabled="true"])').first().click();
   await page.getByRole('button', { name: '予約に追加' }).click();
   await expect(page.locator('.sub-reserved-row')).toHaveCount(1);
 
@@ -139,22 +145,22 @@ test('substitution cap: a sixth reservation is blocked with a reason once the 5-
   await withSave(page, startedMatch('交代上限検証高校', 777));
   await page.goto('/');
   const overlay = page.locator('[data-slot="dialog-overlay"]');
-  const columns = page.locator('.sub-column');
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
-  // 5組を予約する（ピッチの先頭5人 → 毎回、空いているベンチの先頭）。
+  // 5組を予約する（下げる選手の先頭5人 → 毎回、空いている入れる選手の先頭）。
   for (let n = 0; n < 5; n++) {
-    await columns.nth(0).locator('.sub-pick').nth(n).click();
-    await columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first().click();
+    await page.locator('.sub-step-out .sub-pick').nth(n).click();
+    await page.locator('.sub-step-in .sub-pick:not([aria-disabled="true"])').first().click();
     await page.getByRole('button', { name: '予約に追加' }).click();
   }
   await expect(page.locator('.sub-reserved-row')).toHaveCount(5);
   await expect(page.getByRole('button', { name: '5人の交代を確定' })).toBeVisible();
+  await expect(page.locator('.sub-step-out')).toBeVisible();
 
   // 6組目を選ぼうとしても、予約枠を使い切った理由が表示され、予約は増えない。
   // 枠を使い切ると選手ボタンは aria-disabled になる（DADS: 押せるまま理由を示す）。Playwright は
   // aria-disabled を無効扱いして待ち続けるため force で押し、理由が出ることを確かめる。
-  await columns.nth(0).locator('.sub-pick').nth(5).click({ force: true });
-  await columns.nth(1).locator('.sub-pick').first().click({ force: true });
+  await page.locator('.sub-step-out .sub-pick').nth(5).click({ force: true });
+  await page.locator('.sub-step-in .sub-pick').first().click({ force: true });
   await expect(page.getByText('交代枠（5人）を使い切りました（予約中5人を含む）。')).toBeVisible();
   await page.getByRole('button', { name: '予約に追加' }).click({ force: true });
   await expect(page.locator('.sub-reserved-row')).toHaveCount(5);
@@ -177,13 +183,15 @@ test('substitution dialog: picking an outgoing player shows bench proficiency ra
   await withSave(page, startedMatch('適性表示検証高校', 3131));
   await page.goto('/');
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
-  const columns = page.locator('.sub-column');
 
-  // 下げる選手を選ぶ前は、ピッチ側にも自分の適性ランクが大きく表示されている。
-  await expect(columns.nth(0).locator('.sub-pick').first().locator('.rank-badge.rank-lg')).toBeVisible();
+  // 下げる選手の一覧はポジション名の見出しで示される（能力・習熟度バッジではない）。
+  await expect(
+    page.locator('.sub-step-out .sub-pick').first().locator('.position.detail-badge'),
+  ).toBeVisible();
 
-  await columns.nth(0).locator('.sub-pick').first().click();
-  const benchRanks = columns.nth(1).locator('.sub-pick .rank-badge.rank-lg');
+  await page.locator('.sub-step-out .sub-pick').first().click();
+  // 入れる選手の一覧は、そのポジションでの習熟度ランクが高い順に並ぶ。
+  const benchRanks = page.locator('.sub-step-in .sub-pick .rank-badge.rank-lg');
   const count = await benchRanks.count();
   expect(count).toBeGreaterThan(0);
   const titles = await benchRanks.evaluateAll((els) =>
@@ -204,10 +212,9 @@ test('substitution: outgoing banner, reservation row and post-confirm pitch view
   await withSave(page, startedMatch('ポジション表示検証高校', 424242));
   await page.goto('/');
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
-  const columns = page.locator('.sub-column');
-  const pitchPick = columns.nth(0).locator('.sub-pick').first();
+  const pitchPick = page.locator('.sub-step-out .sub-pick').first();
 
-  // ピッチ上の選手の各行に、習熟度ランクとは別枠でポジション名の見出しが出る。
+  // 下げる選手の各行に、ポジション名の見出しが出る。
   await expect(pitchPick.locator('.position.detail-badge')).toBeVisible();
 
   const outName = await pitchPick.locator('.sub-pick-name').innerText();
@@ -218,16 +225,16 @@ test('substitution: outgoing banner, reservation row and post-confirm pitch view
   await expect(banner).toContainText('を下げる');
   await expect(banner).toContainText('（');
 
-  // ベンチ側にも、どの枠に入るのかが習熟度と一緒に文字で示される。
-  const benchPick = columns.nth(1).locator('.sub-pick:not([aria-disabled="true"])').first();
+  // 入れる選手側にも、どの枠に入るのかが習熟度と一緒に文字で示される。
+  const benchPick = page.locator('.sub-step-in .sub-pick:not([aria-disabled="true"])').first();
   await expect(benchPick.locator('.sub-pick-meta')).toContainText('に入った場合の習熟度');
   await benchPick.click();
   await page.getByRole('button', { name: '予約に追加' }).click();
 
-  // 予約リストの行:「枠のポジション名：下げる選手 → 入れる選手（習熟度 X）」の形。
+  // 予約リストの行:「枠のポジション名」＋「下げる：X ⇄ 入れる：Y（習熟度 Z）」の形。
   const reservedRow = page.locator('.sub-reserved-row').first();
-  await expect(reservedRow).toContainText('：');
-  await expect(reservedRow).toContainText('→');
+  await expect(reservedRow).toContainText('下げる');
+  await expect(reservedRow).toContainText('入れる');
   await expect(reservedRow).toContainText('習熟度');
 
   await page.getByRole('button', { name: '1人の交代を確定' }).click();
@@ -237,9 +244,9 @@ test('substitution: outgoing banner, reservation row and post-confirm pitch view
   await expect(page.locator('.pitch-slot').first()).toBeVisible();
   await expect(page.locator('.pitch-sub-mark')).toHaveCount(1);
 
-  // 交代ダイアログを開き直しても、その選手の行にポジション名の見出しが残る。
+  // 交代ダイアログを開き直しても、その選手の行に「交代出場」の印が残る。
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
-  await expect(columns.nth(0).getByText('交代出場')).toBeVisible();
+  await expect(page.locator('.sub-step-out').getByText('交代出場')).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -324,7 +331,7 @@ test('mobile 390px: substitution dialog and match result fit the viewport', asyn
   await withSave(page, startedMatch('モバイル交代検証高校', 555));
   await page.goto('/');
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
-  await expect(page.locator('.sub-column').first()).toBeVisible();
+  await expect(page.locator('.sub-step-out').first()).toBeVisible();
   // 押しやすさ: 選手選択ボタンは44px以上の高さを確保する。
   const box = await page.locator('.sub-pick').first().boundingBox();
   expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
@@ -406,7 +413,9 @@ test('substitution dialog: shows a "習熟度" label next to the rank badges and
   await expect(legend).toContainText('今いる枠への慣れ');
   await expect(legend).toContainText('入った場合の慣れ');
 
-  // バッジの横（上）に「習熟度」の文字ラベルが付き、能力ランクと見分けられる。
+  // 下げる選手を選ぶと、続く「入れる選手」一覧の各行のバッジの横（上）に「習熟度」の
+  // 文字ラベルが付き、能力ランクと見分けられる。
+  await page.locator('.sub-step-out .sub-pick').first().click();
   await expect(page.locator('.sub-pick-rank-label').first()).toHaveText('習熟度');
   const labelCount = await page.locator('.sub-pick-rank-label').count();
   expect(labelCount).toBeGreaterThan(1);

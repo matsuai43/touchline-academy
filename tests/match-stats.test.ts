@@ -65,11 +65,16 @@ function fullSeason(s: State, seasons: number): State {
 void test('v3.5: match results (score/shots/xg/highlights/won) are stable for fixed seeds', () => {
   const fixtures: [number, { home: number; away: number; shots: [number, number]; xg: number[]; won: boolean; possession: number; highlightCount: number }][] = [
     // T-5: 引き分けを増やすため得点期待値の基準を下げた（0.29/0.28→0.15/0.145、比の効きを ratio^1.4 に強化）。
-    [1001, { home: 1, away: 0, shots: [4, 8], xg: [0.902, 2.175], won: true, possession: 50, highlightCount: 0 }],
-    [20260923, { home: 2, away: 2, shots: [5, 6], xg: [1.266, 1.443], won: false, possession: 48, highlightCount: 1 }],
-    [555001, { home: 2, away: 3, shots: [4, 6], xg: [0.941, 1.705], won: false, possession: 46, highlightCount: 0 }],
-    [4242, { home: 1, away: 2, shots: [5, 4], xg: [1.533, 1.25], won: false, possession: 53, highlightCount: 2 }],
-    [777777, { home: 1, away: 0, shots: [3, 3], xg: [1.095, 0.735], won: true, possession: 45, highlightCount: 1 }],
+    // V4-1(5.2): 試合中の疲労をスタミナで全戦術に効かせるようにした（旧仕様は非ハイプレス時は
+    // 疲労固定5、ハイプレスのみスタミナ依存）。同じ乱数シードでも試合中の実効能力
+    // （strength()）の推移が変わり、そこから先の得点判定の乱数消費が変わるため、
+    // このスナップショットは新しい式での実際の値に更新した（決定性そのものは保たれている
+    // ことを確認済み＝同シードで何度実行しても同じ値になる）。
+    [1001, { home: 7, away: 0, shots: [11, 2], xg: [3.408, 0.598], won: true, possession: 55, highlightCount: 1 }],
+    [20260923, { home: 4, away: 1, shots: [10, 4], xg: [2.645, 1.021], won: true, possession: 51, highlightCount: 0 }],
+    [555001, { home: 3, away: 1, shots: [5, 3], xg: [1.282, 0.876], won: true, possession: 49, highlightCount: 1 }],
+    [4242, { home: 1, away: 2, shots: [6, 3], xg: [1.93, 0.883], won: false, possession: 55, highlightCount: 2 }],
+    [777777, { home: 1, away: 0, shots: [4, 2], xg: [1.328, 0.453], won: true, possession: 53, highlightCount: 1 }],
   ];
   for (const [seed, expected] of fixtures) {
     const s = finishedMatch('固定値検証高校', seed);

@@ -1924,8 +1924,11 @@ footer button {
   .fixture-banner {
     padding: 20px;
   }
-  .fixture-banner > .secondary,
-  .fixture-banner > .primary {
+  .fixture-banner > .fixture-actions {
+    flex: 1;
+  }
+  .fixture-banner > .fixture-actions > .secondary,
+  .fixture-banner > .fixture-actions > .primary {
     flex: 1;
   }
   .fixture-icon {
@@ -4684,7 +4687,14 @@ footer button::after,
   text-transform: uppercase; letter-spacing: 0.04em; }
 .sub-list { display: flex; flex-direction: column; gap: 6px; max-height: 420px;
   overflow-y: auto; padding-right: 2px; }
-.sub-pick { flex-wrap: wrap; align-items: flex-start; }
+/* V4-8バグ修正: 各行(.sub-pick)は .sub-list（flex-column, max-height, overflow-y:auto）の
+   flexアイテムで、デフォルトの flex-shrink:1 のままだと、全行の合計の高さが
+   max-height(420px)を超えたとき、各行が中身（ポジション名＋名前＋疲労ゲージ等、
+   2行分の折り返し）に必要な高さより低く圧縮され、はみ出した中身が次の行と重なって
+   読めなくなっていた（overflow:visibleのため見た目上の重なりとして現れる。
+   ブラウザで実際に検証して発見・特定した）。行を圧縮させず、代わりに
+   .sub-list 側の overflow-y:auto でスクロールさせる。 */
+.sub-pick { flex-wrap: wrap; align-items: flex-start; flex-shrink: 0; }
 .sub-pos-col { flex-shrink: 0; padding-top: 2px; }
 .sub-pick-rank { flex-shrink: 0; display: flex; flex-direction: column;
   align-items: center; gap: 2px; }
@@ -4722,7 +4732,50 @@ footer button::after,
 @media (max-width: 640px) {
   .sub-pick-rank .rank-badge.rank-lg { font-size: 22px; padding: 4px 9px; min-width: 36px; }
 }
+
+/* V4-8: 試合日カード（クラブハウス）。相手の所属チップは vs表記の直後に置く。 */
+.fixture-info p .school-tier-chip { margin: 0 4px; vertical-align: 1px; }
+.fixture-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+/* 幅375〜390pxでは、説明文の横にボタン2つが並ぶと詰まって読みにくいため、
+   ボタンをまとめて文章の下の行に回す（DESIGN_V4 10章・S1）。 */
+@media (max-width: 540px) {
+  .fixture-banner { flex-direction: column; align-items: stretch; }
+  .fixture-actions { width: 100%; }
+  .fixture-actions > .secondary,
+  .fixture-actions > .primary {
+    flex: 1;
+    min-height: 44px;
+  }
+}
 /* ===== /V4-1 ===== */
 
 /* ===== V4-4 学校の世界・所属の札 (DESIGN_V4 2-3章) ===== */
+.school-tier-chip {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--tag-neutral-bg);
+  color: var(--tag-neutral-fg);
+  white-space: nowrap;
+}
+.school-tier-chip--national {
+  background: var(--tag-alt-bg);
+  color: var(--tag-alt-fg);
+}
+.school-tier-chip-row {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.school-world-note summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
 /* ===== /V4-4 ===== */

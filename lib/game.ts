@@ -1628,6 +1628,10 @@ function simulatePenaltyKick(s: State): void {
     finishMatch(s);
   }
 }
+// V4: 県予選の序盤が格下中心になり、参入戦・48校の全国大会で公式戦の勝利数が増えたため、
+// 公式戦1勝あたりの評判を 1 から下げて、評判の伸び（→新入生の素質・Aランクの出現時期）を
+// v3.5（本番）と同じペースに保つ。長期シミュレーションで本番と比較して決めた値。
+export const OFFICIAL_WIN_REPUTATION = 0.9;
 function finishMatch(s: State): void {
   const m = s.match!;
   m.done = true;
@@ -1642,7 +1646,7 @@ function finishMatch(s: State): void {
   if (m.won) {
     s.records.wins++;
     s.seasonWins++;
-    s.reputation = clamp(s.reputation + (m.fixture.kind === 'friendly' ? 0.25 : 1));
+    s.reputation = clamp(s.reputation + (m.fixture.kind === 'friendly' ? 0.25 : OFFICIAL_WIN_REPUTATION));
     s.morale = clamp(s.morale + 7);
     addFunds(
       s,

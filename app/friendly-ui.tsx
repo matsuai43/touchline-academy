@@ -11,7 +11,7 @@ export function FriendlyApplication({ state, run }: { state: State; run: (action
   const editable = state.week < offer.week;
   const selected = offer.candidates.find((candidate) => candidate.choice === (offer.choice ?? 'peer'));
   const status = offer.choice === 'rest' ? '休養' : `${selected?.school.name}（${offer.choice ? friendlyLabels[offer.choice] : '未選択・同格を自動選択'}）`;
-  return <details className="panel friendly-application">
+  return <details id="friendly-application" className="panel friendly-application">
     <summary>練習試合の申し込み <span>{status}</span></summary>
     <p className="muted">{weekCalendarLabel(offer.week)}に開催。未選択なら同格の相手を選びます。遠征も部費はかかりません。</p>
     {!editable && <p>申し込みは締め切りました。次の練習試合は、その1週前に選べます。</p>}

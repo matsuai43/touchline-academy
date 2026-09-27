@@ -45,6 +45,7 @@ import {
   type SchoolTier,
 } from './school-world.ts';
 import { regionalSchoolName } from './school-names.ts';
+import { makeSchoolGoals, assessSchoolGoals, validateSchoolGoals, type SchoolGoals, type SchoolAssessment } from './school-goals.ts';
 import { prepareFriendlies, chooseFriendly, friendlyFixture, validateFriendlies, type FriendlyState, type FriendlyChoice } from './friendlies.ts';
 import { preparePromotion, promotionFixture, recordPromotion, advancePromotionWeek, wonPromotion, bTeamPromotion, validatePromotion, type PromotionState } from './promotion.ts';
 
@@ -463,6 +464,8 @@ export type SchoolWorldState = {
 };
 
 export type CompState = {
+  schoolGoals?: SchoolGoals;
+  schoolAssessment?: SchoolAssessment;
   friendlies?: FriendlyState;
   representativeHistory?: Record<string, { lastSeason: number; appearances: number; streak: number }>;
   qualifierHistory?: Record<string, string[]>;
@@ -886,6 +889,7 @@ function finalizeTeamA(s: State, comp: CompState, prevSeason: number): void {
   // 昇格・降格はこの順位表（他校同士の試合も実消化した最終順位）で決める。
   const { rows } = computeLeagueTable(s, comp, prevSeason);
   const rank = rows.findIndex((r) => r.isSelf) + 1;
+  assessSchoolGoals(s, comp, rank);
   const tierIdx = LEAGUE_TIERS.indexOf(team.tier);
   let newTier = team.tier;
   if ((comp.promotion ? (team.tier === 'pref2' ? rank <= 2 : wonPromotion(comp, team.tier)) : rank <= 2) && tierIdx < LEAGUE_TIERS.length - 1) newTier = LEAGUE_TIERS[tierIdx + 1];
@@ -1041,6 +1045,7 @@ function advanceCompetitionSeason(s: State, comp: CompState): void {
   } else {
     comp.teamB = null;
   }
+  comp.schoolGoals = makeSchoolGoals(s, comp);
   comp.seasonGenerated = s.season;
 }
 
@@ -1278,6 +1283,7 @@ export function validateCompetition(s: State): void {
   checkCup(comp.wc, '選手権');
   if (comp.promotion !== undefined) validatePromotion(comp.promotion);
   if (comp.friendlies !== undefined) validateFriendlies(comp.friendlies);
+  validateSchoolGoals(comp);
   if (!Array.isArray(comp.history) || comp.history.length > 20) throw Error('大会の履歴データが不正です。');
 }
 export function readCompetition(s: State): CompState {

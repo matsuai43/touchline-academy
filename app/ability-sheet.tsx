@@ -79,6 +79,9 @@ export function PositionBadge({ detail }: { detail: DetailPos }) {
     </span>
   );
 }
+export function MasteryBadge({ value }: { value: number }) {
+  return <span className="mastery-badge" title={`習熟度 ${value}`}><RankBadge value={value} label="習熟度" size="sm" /><span>{value >= 80 ? '得意' : value >= 50 ? '可' : '不慣れ'}</span></span>;
+}
 export function ArchetypeBadge({ archetype }: { archetype: Archetype }) {
   const a = archetypes[archetype];
   return (

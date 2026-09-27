@@ -1,12 +1,10 @@
 'use client';
 import {
-  Portrait,
   IdentityDetails,
   DevelopmentView,
   ManagerNote,
   PotentialBadge,
 } from './development-ui';
-import { personalities } from '@/lib/development';
 import { formationSlots, detailInfo, isBenchPlayer, DETAIL_POS, basePos, thinSlots, type DetailPos } from '@/lib/squad';
 import {
   SquadPanel,
@@ -32,8 +30,12 @@ import {
 import { EventStills, type EventStillsChoice, type EventStillsResult } from './event-scenes';
 import { getEventScenePanels } from '@/lib/event-scenes';
 import { Progress } from '@/components/ui/progress';
-import { TrainingPolicyBanner, TrainingPolicyPanel } from './training-policy-ui';
+import { TrainingPolicyPanel } from './training-policy-ui';
 import { FriendlyApplication } from './friendly-ui';
+import { HomeOverview } from './home-overview';
+import { WeekCalendar, trainingAbilities, trainingLoad } from './week-calendar';
+import { LineupBoard } from './lineup-board';
+import { SchoolGoalsPanel } from './school-goals-ui';
 import { resolvePolicyView } from '@/lib/training-policy';
 
 import { useEffect, useRef, useState } from 'react';
@@ -87,7 +89,6 @@ import {
   training,
   trainingFatigueDelta,
   tactics,
-  DOW_NAMES,
   MATCH_MAX_SUBS,
   facilityUpgradeCost,
   LINEUP_POLICIES,
@@ -486,14 +487,12 @@ export default function Game() {
     },
   };
   const cupsAlive = comp.ih.alive || comp.wc.alive;
-  const cupsQualified =
-    (comp.ih.qualified && comp.ih.alive) || (comp.wc.qualified && comp.wc.alive);
   const coachTip = s.pending
     ? '試合の前に編成を確認。疲労の少ない選手を起用しましょう。'
     : starterFatigue > 55
       ? '疲労がたまっています。休養を入れて、けがと能力低下を防ぎましょう。'
       : s.week < 7
-        ? 'まずは総合練習で基礎づくり。4週目に最初の練習試合です。'
+        ? 'まずは総合練習で基礎づくり。3週目に最初の練習試合です。'
         : !cupsAlive
           ? '今季の大会は終了。下級生の重点育成で来季につなげましょう。'
           : '相手の戦術を読み、育成と休養を組み合わせて大会に備えましょう。';
@@ -582,53 +581,7 @@ export default function Game() {
           ) : (
             <>
               <TabsContent value="club">
-                <ManagerNote s={s} />
-                <section className="club-hero">
-                  <div className="hero-squad">
-                    {s.players.slice(0, 3).map((p) => (
-                      <div key={p.id}>
-                        <Portrait
-                          index={p.identity.portrait}
-                          name={p.name}
-                          size="large"
-                        />
-                        <b>{p.name}</b>
-                        <small>
-                          {personalities[p.identity.personality].name}
-                        </small>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="hero-shade" />
-                  <div className="hero-content">
-                    <span className="pill">
-                      <span className="dot" />{' '}
-                      {cupsQualified
-                        ? '全国への挑戦'
-                        : cupsAlive
-                          ? '全国を目指す、新しい一週間'
-                          : '次の世代へ、つなぐ時間'}
-                    </span>
-                    <h2>
-                      {s.pending
-                        ? 'さあ、ピッチへ。'
-                        : s.week >= 44
-                          ? 'この仲間と、最後まで。'
-                          : '一人ひとりを育て、\n未来のチームへ。'}
-                    </h2>
-                    <p>
-                      {s.pending
-                        ? `${s.pending.label} / ${s.pending.opponent}`
-                        : '練習を決める。仲間を信じる。\nあなたの采配で、この部の未来を変えよう。'}
-                    </p>
-                    <div className="hero-bottom">
-                      <span>
-                        <Flag size={16} /> {s.best}
-                      </span>
-                      <span>部員 {s.players.length}名</span>
-                    </div>
-                  </div>
-                </section>
+                <HomeOverview state={s} next={nextFixture} run={run} onPolicy={() => setPolicyOpen(true)} />
                 {s.event &&
                   (() => {
                     // W9/D1: クラブイベントは、週の学校生活イベント（LifeEventPanel）と同じ
@@ -792,7 +745,6 @@ export default function Game() {
                     run({ type: 'life', choiceId });
                   }}
                 />
-                <TrainingPolicyBanner s={s} onOpen={() => setPolicyOpen(true)} />
                 {s.pending ? (
                   <section className="fixture-banner">
                     <div className="fixture-icon">
@@ -875,21 +827,7 @@ export default function Game() {
                       </div>
                       <span className="muted">月〜土は1日ごと・日曜は試合</span>
                     </div>
-                    {/* 今週6日間の予定と、どこまで実施済みかを1行で見せる（S1）。
-                        s.day より前の枠は実施済み、s.day は今日、それより先は予定。 */}
-                    {!s.pending && (
-                      <p className="muted" style={{ margin: '0 0 10px' }}>
-                        今週：
-                        {s.weeklyMenu.map((t, i) => (
-                          <span key={i}>
-                            {i > 0 ? ' / ' : ''}
-                            {DOW_NAMES[i]}
-                            {i < s.day ? '済' : i === s.day ? '(今日)' : ''}
-                            {training[t].name.slice(0, 2)}
-                          </span>
-                        ))}
-                      </p>
-                    )}
+                    <WeekCalendar state={s} run={run} />
                     {/* 練習メニューを選ぶだけでは何も進行しない（ローカルなプレビュー
                         状態）ため、試合・イベント待ちの間も選ばせて構わない。実際に
                         日を進める操作は下のボタン側でガードする。 */}
@@ -916,9 +854,10 @@ export default function Game() {
                               <RadioGroupItem value={key} />
                             </div>
                             <strong>{t.name}</strong>
-                            <span>{t.desc}</span>
+                            <span>伸びる能力：{trainingAbilities(key)}</span>
+                            <span>負荷：{trainingLoad(key)}</span>
                             <small className={key === 'rest' ? 'lime' : ''}>
-                              疲労(1日) {delta > 0 ? '+' : ''}
+                              休息を含む疲労差 {delta > 0 ? '+' : ''}
                               {delta}
                             </small>
                           </label>
@@ -977,52 +916,11 @@ export default function Game() {
                         >
                           今日は{training[plan].name}で1日進める
                         </button>
-                        <button
-                          className="primary"
-                          aria-disabled={!!s.event || !!s.v3.life.current}
-                          onClick={() => {
-                            playSfx('click');
-                            run({ type: 'autoWeek' });
-                          }}
-                        >
-                          試合日まで進める <ArrowRight size={18} />
-                        </button>
+
                       </div>
                     )}
                     <label className="auto-league-setting"><input type="checkbox" checked={s.autoLeagueMatches} onChange={(e) => run({ type: 'autoLeagueMatches', on: e.target.checked })} />リーグ戦はおまかせで進める</label>
-                    <details className="weekly-menu-editor">
-                      <summary>週間メニューを編集</summary>
-                      <p className="muted">
-                        「試合日まで進める」はここで決めたメニューで自動進行します。
-                      </p>
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          gap: '10px',
-                        }}
-                      >
-                        {s.weeklyMenu.map((t, i) => (
-                          <label className="field" key={i} style={{ minWidth: '120px' }}>
-                            {DOW_NAMES[i]}曜
-                            <select
-                              value={t}
-                              onChange={(e) => {
-                                const menu = [...s.weeklyMenu];
-                                menu[i] = e.target.value as Training;
-                                run({ type: 'setMenu', menu });
-                              }}
-                            >
-                              {(Object.keys(training) as Training[]).map((key) => (
-                                <option key={key} value={key}>
-                                  {training[key].name}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        ))}
-                      </div>
-                    </details>
+
                   </section>
                 )}
                 {clubSection === 'status' && (
@@ -1089,8 +987,7 @@ export default function Game() {
                       </section>
                     </div>
                     {/* T4.2: 部費の見える化。「設備強化まであと◯」のゲージと直近の収入5件。
-                        実際の設備強化ボタンは「選手・編成」タブに残したまま（経済バランスは
-                        変えず、表示だけをここに足す）。 */}
+                        V4-8: 設備強化も同じ場所で操作する。 */}
                     <section className="panel club-funds" aria-label="部費">
                       <div className="section-head">
                         <h2>
@@ -1114,6 +1011,26 @@ export default function Game() {
                       ) : (
                         <p className="muted">練習設備は最高レベルです。</p>
                       )}
+                    <div className="facility">
+                      <div>
+                        <h3>練習設備 Lv.{s.facilities}</h3>
+                        <p>
+                          練習効率 ＋{(s.facilities - 1) * 14}% ・ 部費{' '}
+                          {s.funds}
+                        </p>
+                      </div>
+                      <button
+                        className="secondary"
+                        aria-disabled={
+                          s.funds < facilityUpgradeCost(s.facilities) || s.facilities >= 5
+                        }
+                        onClick={() => run({ type: 'upgrade' })}
+                      >
+                        {s.facilities === 5
+                          ? '最高レベル'
+                          : `強化する / ${facilityUpgradeCost(s.facilities)}`}
+                      </button>
+                    </div>
                       <h3 className="v2-subhead">直近の収入</h3>
                       {s.fundHistory.length ? (
                         <ul className="funds-history">
@@ -1132,6 +1049,7 @@ export default function Game() {
                 )}
                 {clubSection === 'notes' && (
                   <>
+                    <ManagerNote s={s} />
                     <div className="bottom-grid">
                       <section className="coach-note">
                         <span className="coach-icon">
@@ -1190,6 +1108,7 @@ export default function Game() {
                         おすすめ編成
                       </button>
                     </div>
+                    <LineupBoard state={s} run={run} onPlayer={(p) => setSelected(p.id)}>
                     <Choices
                       label="おまかせ編成の方針"
                       value={s.autoLineupPolicy}
@@ -1226,6 +1145,7 @@ export default function Game() {
                         label: v,
                       }))}
                     />
+                    </LineupBoard>
                     {/* ユーザー要望（2026-09-26）: 現在のフォーメーションで習熟度D(50)以上の
                         候補がAチームにいない枠があれば知らせる。lib/squad.ts の thinSlots を
                         使い、色だけでなくアイコン＋文章で伝える（--warning系トークンは
@@ -1255,31 +1175,8 @@ export default function Game() {
                         </span>
                       </output>
                     )}
-                    <Pitch s={s} onPick={(p) => setSelected(p.id)} />
-                    <p className="muted instruction">
-                      選手を押すと能力と起用先を変更できます。起用先は詳細ポジション（例:
-                      CB・DM・CFなど）で決まり、同じ系統内なら低下はわずか、系統をまたぐ配置は総合力が大きく下がります。黄色の輪はGK/DF/MF/FWの系統をまたぐ適性外です。
-                    </p>
-                    <div className="facility">
-                      <div>
-                        <h3>練習設備 Lv.{s.facilities}</h3>
-                        <p>
-                          練習効率 ＋{(s.facilities - 1) * 14}% ・ 部費{' '}
-                          {s.funds}
-                        </p>
-                      </div>
-                      <button
-                        className="secondary"
-                        aria-disabled={
-                          s.funds < facilityUpgradeCost(s.facilities) || s.facilities >= 5
-                        }
-                        onClick={() => run({ type: 'upgrade' })}
-                      >
-                        {s.facilities === 5
-                          ? '最高レベル'
-                          : `強化する / ${facilityUpgradeCost(s.facilities)}`}
-                      </button>
-                    </div>
+
+
                   </section>
                 )}
                 {teamSection === 'roster' && (
@@ -1287,16 +1184,7 @@ export default function Game() {
                 )}
               </TabsContent>
               <TabsContent value="season">
-                <div className="season-overview panel">
-                  <div>
-                    <span className="eyebrow">ROAD TO THE NATIONAL TITLE</span>
-                    <h2>この一年が、部の歴史になる。</h2>
-                    <p>
-                      {s.best} / 今季 {s.seasonWins}勝・{s.seasonGoals}得点
-                    </p>
-                  </div>
-                  <Trophy size={52} />
-                </div>
+                <SchoolGoalsPanel state={s} />
                 {/* T-13: 大会・日程タブが縦に長かったため、「日程」「リーグ順位」
                     「トーナメント」のサブタブに分ける。CompetitionPanel は
                     app/competition-ui.tsx 側で CompetitionStatusSection（赴任地・

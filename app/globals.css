@@ -5150,3 +5150,66 @@ html:has(.match-view) { scroll-padding-block: 220px 100px; }
 .friendly-options input { width: 20px; height: 20px; flex-shrink: 0; }
 .friendly-rest { grid-column: 1 / -1; }
 @media (max-width: 640px) { .friendly-options { grid-template-columns: 1fr; } }
+
+/* V4-8: weekly planning, compact home, pitch-led lineup and season objectives. */
+.page-heading { margin-bottom: 12px; padding-block: 8px; }
+.page-heading h1 { font-size: 22px; }
+.page-heading .eyebrow { display: none; }
+.home-overview { display: grid; gap: 10px; }
+.home-next-head, .board-strength { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.home-next-head h2 { margin: 0; font-size: 20px; }
+.home-next-head > strong { font-size: 14px; }
+.home-opponent { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; }
+.home-overview .muted { font-size: 12px; margin: 0; }
+.home-strength { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; font-size: 12px; }
+.home-strength > span:nth-child(2) { text-align: center; }
+.home-strength > span:nth-child(3) { text-align: right; }
+.home-strength > div { grid-column: 1 / -1; background: var(--muted-foreground); height: 6px; }
+.home-strength i { display: block; height: 100%; background: var(--primary); border-right: 2px solid var(--card); }
+.home-todos { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; }
+.home-todos button { min-height: 44px; }
+.week-calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; margin-block: 8px; }
+.week-calendar > * { min-width: 0; min-height: 72px; display: flex; flex-direction: column; gap: 5px; border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: var(--card); color: var(--foreground); font-size: 12px; text-align: left; }
+.week-calendar > [aria-current] { outline: 2px solid var(--primary); outline-offset: -2px; }
+.week-calendar > * > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.week-training-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.week-training-options button { align-items: flex-start; flex-direction: column; text-align: left; font-size: 12px; }
+.board-strength { flex-wrap: wrap; margin-bottom: 12px; font-size: 14px; }
+.board-strength output { font-size: 12px; }
+.lineup-pitch { min-height: 580px; }
+.lineup-pitch .pitch-player > .portrait, .lineup-pitch .pitch-player > .number { display: none; }
+.lineup-pitch .pitch-player { width: 62px; }
+.lineup-pitch .pitch-condition { width: 60px; }
+.lineup-pitch [aria-pressed="true"] { outline: 3px solid var(--foreground); outline-offset: 3px; }
+.mastery-badge { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; white-space: nowrap; }
+.board-selection { font-size: 12px; margin-block: 12px; }
+.board-selection button { margin: 8px 8px 0 0; }
+.board-bench-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.board-bench-grid > button { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; padding: 10px; font-size: 12px; }
+.board-bench-grid > button[aria-pressed="true"] { outline: 2px solid var(--primary); }
+.board-bench-grid > button > span { display: flex; align-items: center; gap: 4px; }
+.board-settings { margin-top: 16px; }
+.board-settings summary, .school-goals summary, .mr-screen summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: 14px; font-weight: 700; }
+.board-settings summary::before, .school-goals summary::before, .mr-screen summary::before { content: '＋'; margin-right: 8px; }
+.board-settings[open] summary::before, .school-goals details[open] summary::before, .mr-screen details[open] > summary::before { content: '−'; }
+.school-goals h2 { font-size: 18px; }
+.school-goal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-block: 10px; }
+.school-goal-grid p { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.school-goals details p { font-size: 12px; margin-block: 10px; }
+.mr-quick-summary { display: grid; gap: 10px; margin-block: 10px; font-size: 14px; }
+.mr-quick-summary p { display: flex; flex-direction: column; gap: 4px; }
+.mr-detail[open] { display: flex; flex-direction: column; gap: 16px; }
+.mr-detail > summary { border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+@media (max-width: 640px) {
+  .page-heading h1 { font-size: 18px; }
+  .home-overview { padding: 14px; }
+  .home-advance { position: fixed; bottom: 8px; left: 12px; right: 12px; width: calc(100% - 24px); min-height: 48px; z-index: 30; justify-content: center; }
+  .main-content:has(.home-advance) { padding-bottom: 90px; }
+  .week-calendar { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .week-calendar > * { padding: 6px; }
+  .board-bench-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .school-goal-grid { grid-template-columns: 1fr; }
+  .lineup-pitch { min-height: 550px; }
+  .lineup-pitch .pitch-player { width: 56px; }
+  .lineup-pitch .pitch-condition { width: 56px; }
+}

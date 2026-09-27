@@ -6,7 +6,10 @@
 // （lib/match-rating.ts、10点満点・決定的）と、この試合で得た部費の表示枠を持つ。
 import { useState, type ReactNode } from 'react';
 import { Portrait } from './development-ui';
-import { PositionBadge } from './ability-sheet';
+import { PositionBadge, MasteryBadge, MoodBadge } from './ability-sheet';
+import { FatigueMeter } from './fatigue-meter';
+import { TierChip } from './tier-chip';
+import { type CompFixture } from '@/lib/competition';
 import {
   extraStatNames,
   detailInfo,
@@ -372,7 +375,7 @@ export function MatchResult({
       <div className="mr-head">
         <span className="eyebrow">MATCH RESULT</span>
         <h1>{m.fixture.label}</h1>
-        <p className="muted">対戦相手：{m.fixture.opponent}</p>
+        <p className="muted">対戦相手：{m.fixture.opponent} <TierChip tier={(m.fixture as CompFixture).opponentTier} districtId={(m.fixture as CompFixture).opponentDistrictId} asRepresentative={m.fixture.kind.endsWith('national')} /></p>
         <div className="mr-scoreline">
           <b>{s.school}</b>
           <strong>
@@ -385,6 +388,13 @@ export function MatchResult({
           {m.penalties ? `（PK ${m.penalties}）` : ''}
         </p>
         {m.minute > 90 && <p className="muted">延長戦：{m.minute}分まで実施</p>}
+        <div className="mr-quick-summary" aria-label="試合のまとめ">
+          <p><strong>自校の得点者</strong><span>{ratings.filter((r) => r.goals > 0).map((r) => `${r.name} ${r.goals}得点`).join('・') || 'なし'}</span></p>
+          <p><strong>MOM</strong>{motmPlayer && top ? <button className="text-link" onClick={() => onPlayer(motmPlayer)}>{motmPlayer.name}・評価{top.rating.toFixed(1)}</button> : <span>記録なし</span>}</p>
+          <p><strong>伸びた選手</strong><span>{growth.filter((g) => g.statDiffs.some((d) => d.diff > 0) || g.extraDiffs.some((d) => d.diff > 0)).slice(0, 3).map((g) => `${g.name}（${[...g.statDiffs, ...g.extraDiffs].filter((d) => d.diff > 0).slice(0, 2).map((d) => `${d.label}${fmtDiff(d.diff)}`).join('・')}）`).join(' / ') || '能力の変化は0.1未満'}</span></p>
+          <p><strong>けがの状態</strong><span>{s.players.filter((p) => m.used.includes(p.id) && p.injury > 0).map((p) => `${p.name}（療養${Math.ceil(p.injury)}週）`).join('・') || '出場選手のけがなし'}</span></p>
+        </div>
+        <details className="mr-match-numbers"><summary>試合の数字・PK戦を見る</summary>
         {m.pk && (
           <section className="panel pk-panel" aria-label="PK戦の結果">
             <h2>PK戦の記録</h2>
@@ -442,7 +452,9 @@ export function MatchResult({
             </>
           )}
         </div>
+        </details>
       </div>
+      <details className="mr-detail"><summary>選手の評価・成長・試合の詳細を見る</summary>
       {motmPlayer && top && (
         <button type="button" className="motm-card" onClick={() => onPlayer(motmPlayer)}>
           <span className="eyebrow">
@@ -479,6 +491,9 @@ export function MatchResult({
                   </b>
                   <span className="mr-rating-meta">
                     <PositionBadge detail={r.detail} />
+                    <MasteryBadge value={s.v3.squad.players[r.id]?.prof[r.detail] ?? 0} />
+                    <MoodBadge value={s.v3.squad.players[r.id]?.mood ?? 50} size="sm" />
+                    <FatigueMeter value={s.players.find((p) => p.id === r.id)?.fatigue ?? 0} size="sm" />
                     {r.started ? '先発' : '途中出場'} ・ {r.minutes}分
                     {r.goals > 0 ? ` ・ 得点 ${r.goals}` : ''}
                   </span>
@@ -680,6 +695,7 @@ export function MatchResult({
           </p>
         )}
       </div>
+      </details>
       <button type="button" className="primary mr-close" onClick={() => run({ type: 'finish' })}>
         部に戻る <ArrowRight size={18} />
       </button>

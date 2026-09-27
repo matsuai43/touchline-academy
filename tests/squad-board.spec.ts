@@ -35,6 +35,7 @@ test('戦術ボード: 4-3-3で右ウイングにD以上の候補がいないと
   await expect(page.getByRole('status').filter({ hasText: '右ウイング' })).toBeVisible();
 
   // 4-4-2 には右ウイングの枠が無いため、切り替えると注意表示が消える。
+  await page.getByText('編成の設定', { exact: true }).click();
   await page.getByRole('radio', { name: '4-4-2', exact: true }).check();
   await expect(warning).toHaveCount(0);
 

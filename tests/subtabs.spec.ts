@@ -44,6 +44,7 @@ test.describe('T-13: 戦術ボードの4択が375/390px幅で見切れない', (
       await startFresh(page);
       await page.getByRole('tab', { name: '選手・編成', exact: true }).click();
       // 「おまかせ編成の方針」は4択（総合力重視/適性ポジション重視/調子重視/育成重視）。
+      await page.getByText('編成の設定', { exact: true }).click();
       await expect(page.getByRole('radio', { name: '育成重視', exact: true })).toBeVisible();
       expect(await overflowPx(page), '戦術ボードで横にはみ出している').toBe(0);
     });
@@ -53,6 +54,7 @@ test.describe('T-13: 戦術ボードの4択が375/390px幅で見切れない', (
     await page.setViewportSize({ width: 844, height: 390 });
     await startFresh(page);
     await page.getByRole('tab', { name: '選手・編成', exact: true }).click();
+    await page.getByText('編成の設定', { exact: true }).click();
     await expect(page.getByRole('radio', { name: '育成重視', exact: true })).toBeVisible();
     expect(await overflowPx(page), '戦術ボードで横にはみ出している').toBe(0);
   });

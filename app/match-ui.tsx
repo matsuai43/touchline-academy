@@ -13,7 +13,7 @@ import { Portrait } from './development-ui';
 import { MatchCommands, VoicePanel } from './development-ui';
 import MatchCinema from './match-cinema';
 import { MatchResult } from './match-result';
-import { RankBadge, PositionBadge, MoodBadge } from './ability-sheet';
+import { RankBadge, PositionBadge, MoodBadge, MasteryBadge } from './ability-sheet';
 import { FatigueMeter } from './fatigue-meter';
 import { playSfx } from '@/lib/audio';
 import { rankOf } from '@/lib/ability-rank';
@@ -126,10 +126,14 @@ export function Pitch({
   s,
   onPick,
   live = false,
+  previewPlayer = null,
+  selectedId,
 }: {
   s: State;
   onPick?: (p: Player) => void;
   live?: boolean;
+  previewPlayer?: Player | null;
+  selectedId?: number;
 }) {
   const detailSlots = formationSlots(s.formation);
   const positions = slots(s.formation);
@@ -140,7 +144,7 @@ export function Pitch({
   const ratings = live ? new Map(matchRatings(s).map((r) => [r.id, r.rating])) : null;
   return (
     <div
-      className={`pitch ${live ? 'live' : ''}`}
+      className={`pitch ${live ? 'live' : 'lineup-pitch'}`}
       aria-label={live ? '試合の戦術図' : 'スターティングイレブンの配置'}
     >
       <svg
@@ -167,6 +171,7 @@ export function Pitch({
           <button
             className={`pitch-player ${p.pos !== pos ? 'mismatch' : ''} ${p.injury ? 'injured' : ''} ${subbedIn ? 'subbed-in' : ''}`}
             key={p.id}
+            aria-pressed={!live ? selectedId === p.id : undefined}
             style={{ left: `${x}%`, top: `${y}%` }}
             onClick={() => onPick?.(p)}
             title={`起用先：${slotName}（${slotDetail}）${subbedIn ? '・交代出場' : ''}`}
@@ -187,9 +192,7 @@ export function Pitch({
                 </span>
               )}
             </span>
-            {live ? <span className="pitch-condition"><FatigueMeter value={p.fatigue} size="sm" /><span>評価 {ratings?.get(p.id)?.toFixed(1) ?? '—'}</span></span> : <span className="energy">
-              <i style={{ width: `${100 - p.fatigue}%` }} />
-            </span>}
+            <span className="pitch-condition"><FatigueMeter value={p.fatigue} size="sm" />{live ? <span>評価 {ratings?.get(p.id)?.toFixed(1) ?? '—'}</span> : <><MasteryBadge value={profFor(s, (previewPlayer ?? p).id, slotDetail)} /><MoodBadge value={s.v3.squad.players[p.id]?.mood ?? 50} size="sm" /></>}</span>
           </button>
         );
       })}

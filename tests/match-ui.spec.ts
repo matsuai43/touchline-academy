@@ -41,6 +41,11 @@ test('substitution dialog: reserve one pair, cancel resets, and confirming the b
   page.on('pageerror', (e) => errors.push(e.message));
   await withSave(page, startedMatch('交代検証高校', 4242));
   await page.goto('/');
+  await page.locator('.match-view, .mr-screen').first().waitFor();
+  if (await page.locator('.mr-screen').count()) {
+    await page.locator('.mr-match-numbers > summary').click();
+    await page.locator('.mr-detail > summary').click();
+  }
   await expect(page.getByText('交代 0 / 5', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
@@ -98,6 +103,11 @@ test('batch substitution: reserving several pairs and confirming once increases 
   page.on('pageerror', (e) => errors.push(e.message));
   await withSave(page, startedMatch('まとめて交代検証高校', 91011));
   await page.goto('/');
+  await page.locator('.match-view, .mr-screen').first().waitFor();
+  if (await page.locator('.mr-screen').count()) {
+    await page.locator('.mr-match-numbers > summary').click();
+    await page.locator('.mr-detail > summary').click();
+  }
 
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
   const overlay = page.locator('[data-slot="dialog-overlay"]');
@@ -127,6 +137,11 @@ test('batch substitution: a reservation can be withdrawn individually before con
 }) => {
   await withSave(page, startedMatch('予約取消検証高校', 20260923));
   await page.goto('/');
+  await page.locator('.match-view, .mr-screen').first().waitFor();
+  if (await page.locator('.mr-screen').count()) {
+    await page.locator('.mr-match-numbers > summary').click();
+    await page.locator('.mr-detail > summary').click();
+  }
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
   await page.locator('.sub-step-out .sub-pick').first().click();
   await page.locator('.sub-step-in .sub-pick:not([aria-disabled="true"])').first().click();
@@ -144,6 +159,11 @@ test('substitution cap: a sixth reservation is blocked with a reason once the 5-
 }) => {
   await withSave(page, startedMatch('交代上限検証高校', 777));
   await page.goto('/');
+  await page.locator('.match-view, .mr-screen').first().waitFor();
+  if (await page.locator('.mr-screen').count()) {
+    await page.locator('.mr-match-numbers > summary').click();
+    await page.locator('.mr-detail > summary').click();
+  }
   const overlay = page.locator('[data-slot="dialog-overlay"]');
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
   // 5組を予約する（下げる選手の先頭5人 → 毎回、空いている入れる選手の先頭）。
@@ -182,6 +202,11 @@ test('substitution dialog: picking an outgoing player shows bench proficiency ra
 }) => {
   await withSave(page, startedMatch('適性表示検証高校', 3131));
   await page.goto('/');
+  await page.locator('.match-view, .mr-screen').first().waitFor();
+  if (await page.locator('.mr-screen').count()) {
+    await page.locator('.mr-match-numbers > summary').click();
+    await page.locator('.mr-detail > summary').click();
+  }
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
 
   // 下げる選手の一覧はポジション名の見出しで示される（能力・習熟度バッジではない）。
@@ -211,6 +236,11 @@ test('substitution: outgoing banner, reservation row and post-confirm pitch view
   page.on('pageerror', (e) => errors.push(e.message));
   await withSave(page, startedMatch('ポジション表示検証高校', 424242));
   await page.goto('/');
+  await page.locator('.match-view, .mr-screen').first().waitFor();
+  if (await page.locator('.mr-screen').count()) {
+    await page.locator('.mr-match-numbers > summary').click();
+    await page.locator('.mr-detail > summary').click();
+  }
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
   const pitchPick = page.locator('.sub-step-out .sub-pick').first();
 
@@ -257,6 +287,11 @@ test('match result screen: shows ratings for every player who appeared, MOTM mat
   page.on('pageerror', (e) => errors.push(e.message));
   await withSave(page, finishedMatch('結果画面検証高校', 99001));
   await page.goto('/');
+  await page.locator('.match-view, .mr-screen').first().waitFor();
+  if (await page.locator('.mr-screen').count()) {
+    await page.locator('.mr-match-numbers > summary').click();
+    await page.locator('.mr-detail > summary').click();
+  }
   await expect(page.getByText('MATCH RESULT', { exact: true })).toBeVisible();
   // スタッツ比較（シュート・得点期待値・保持率）は結果画面の見出しに表示される。
   const matchStats = page.locator('.match-stats');
@@ -313,6 +348,11 @@ test('match cinema: only one .cinema section renders while the match is live', a
   page.on('pageerror', (e) => errors.push(e.message));
   await withSave(page, startedMatch('試合図重複検証高校', 2024));
   await page.goto('/');
+  await page.locator('.match-view, .mr-screen').first().waitFor();
+  if (await page.locator('.mr-screen').count()) {
+    await page.locator('.mr-match-numbers > summary').click();
+    await page.locator('.mr-detail > summary').click();
+  }
   await expect(page.locator('.cinema')).toHaveCount(1);
 
   const advance = page.getByRole('button', { name: /次の15分を進める|後半の15分を進める/ });
@@ -330,6 +370,11 @@ test('mobile 390px: substitution dialog and match result fit the viewport', asyn
   await page.setViewportSize({ width: 390, height: 844 });
   await withSave(page, startedMatch('モバイル交代検証高校', 555));
   await page.goto('/');
+  await page.locator('.match-view, .mr-screen').first().waitFor();
+  if (await page.locator('.mr-screen').count()) {
+    await page.locator('.mr-match-numbers > summary').click();
+    await page.locator('.mr-detail > summary').click();
+  }
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
   await expect(page.locator('.sub-step-out').first()).toBeVisible();
   // 押しやすさ: 選手選択ボタンは44px以上の高さを確保する。
@@ -342,6 +387,11 @@ test('mobile 390px: substitution dialog and match result fit the viewport', asyn
 
   await withSave(page, finishedMatch('モバイル結果検証高校', 556));
   await page.goto('/');
+  await page.locator('.match-view, .mr-screen').first().waitFor();
+  if (await page.locator('.mr-screen').count()) {
+    await page.locator('.mr-match-numbers > summary').click();
+    await page.locator('.mr-detail > summary').click();
+  }
   await expect(page.getByText('MATCH RESULT', { exact: true })).toBeVisible();
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
@@ -370,6 +420,7 @@ test('T-10: mobile shootout lets the manager choose a kicker, saves each kick an
   for (let i = 0; i < 30 && !(await page.getByText('MATCH RESULT', { exact: true }).count()); i++) {
     await page.getByRole('button', { name: '次のキックへ' }).click();
   }
+  await page.locator('.mr-match-numbers > summary').click();
   await expect(page.getByRole('heading', { name: 'PK戦の記録' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
@@ -391,6 +442,7 @@ test('T-10: extra time remains playable with tactics until 120 minutes', async (
   await expect(page.getByRole('button', { name: '延長後半を進める' })).toBeVisible();
   await page.getByRole('button', { name: '延長後半を進める' }).click();
   await expect(page.getByText('MATCH RESULT', { exact: true })).toBeVisible();
+  await page.locator('.mr-match-numbers > summary').click();
   await expect(page.getByText('延長戦：120分まで実施')).toBeVisible();
 });
 
@@ -404,6 +456,11 @@ test('substitution dialog: shows a "習熟度" label next to the rank badges and
   page.on('pageerror', (e) => errors.push(e.message));
   await withSave(page, startedMatch('習熟度ラベル検証高校', 777));
   await page.goto('/');
+  await page.locator('.match-view, .mr-screen').first().waitFor();
+  if (await page.locator('.mr-screen').count()) {
+    await page.locator('.mr-match-numbers > summary').click();
+    await page.locator('.mr-detail > summary').click();
+  }
   await page.getByRole('button', { name: '交代する選手を選ぶ' }).click();
 
   // 画面上部の凡例: ランクの意味（能力の高さではないこと）とピッチ/ベンチでの意味の違い。
@@ -432,6 +489,11 @@ test('match result screen: stats table switches columns per category and totals 
   page.on('pageerror', (e) => errors.push(e.message));
   await withSave(page, finishedMatch('スタッツ表検証高校', 31415));
   await page.goto('/');
+  await page.locator('.match-view, .mr-screen').first().waitFor();
+  if (await page.locator('.mr-screen').count()) {
+    await page.locator('.mr-match-numbers > summary').click();
+    await page.locator('.mr-detail > summary').click();
+  }
   await expect(page.getByRole('heading', { name: '選手ごとのスタッツ' })).toBeVisible();
 
   // 部門別の最多の見出し。
@@ -481,6 +543,11 @@ test('match result screen: shows an explanatory message instead of the stats tab
   delete legacy.match.opponentTotals;
   await withSave(page, legacy);
   await page.goto('/');
+  await page.locator('.match-view, .mr-screen').first().waitFor();
+  if (await page.locator('.mr-screen').count()) {
+    await page.locator('.mr-match-numbers > summary').click();
+    await page.locator('.mr-detail > summary').click();
+  }
   await expect(page.getByRole('heading', { name: '選手ごとのスタッツ' })).toBeVisible();
   await expect(page.getByText('この試合は選手別の記録がありません。')).toBeVisible();
   await expect(page.locator('.mr-stats table')).toHaveCount(0);
@@ -497,6 +564,11 @@ test('mobile 375px: match result stats table scrolls within itself without widen
   await page.setViewportSize({ width: 375, height: 812 });
   await withSave(page, finishedMatch('375px結果検証高校', 88));
   await page.goto('/');
+  await page.locator('.match-view, .mr-screen').first().waitFor();
+  if (await page.locator('.mr-screen').count()) {
+    await page.locator('.mr-match-numbers > summary').click();
+    await page.locator('.mr-detail > summary').click();
+  }
   await expect(page.getByRole('heading', { name: '選手ごとのスタッツ' })).toBeVisible();
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
